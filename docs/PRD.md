@@ -3,9 +3,14 @@
 **A drop-in, real-time messaging engine for any Rails 8+ app.**
 Direct messages, group chats, reactions, attachments, read receipts — Hotwire-native, polymorphic, and wired into the rest of our gem ecosystem (`moderation`/`banbanban`, `goodmail`, future `notifications`/push) so a developer gets messaging **and** its Trust & Safety + notifications story by configuring once.
 
-> Status: draft, reconciled with CarHey's Trust & Safety PR #28 as of 2026-06-02. Moderation interop matches the CarHey-tested shape (`Moderation::Reportable`, `Moderation::ContentFilterable`, `Moderation::Flag`, `Moderation.config.filter_policy`, `Moderation::Block`). **Notifications/push are governed by the host Multi-Channel Notifications PRD, which adopts Noticed v3 + `action_push_native`** — `chats` integrates with that bus (§8), not the moderate gem's interim `Moderation.notify` PORO. Noticed is not yet installed in CarHey; chats' notification wiring lands with the Noticed rollout.
+> **Status: SHIPPED as v0.1.0 (2026-06-09).** This PRD is kept as the original design document; the README and the code are the source of truth now. What shipped vs. this draft:
 >
-> Build order: **CarHey first** (replace the interim "Requests message" field + the `/messages` "Próximamente" placeholder), then extract to a standalone gem. CarHey is the testing ground; the gem is the goal.
+> - **Built gem-first** (not CarHey-first): by build time the moderation system had already been extracted as the `moderate` gem, so the proven-shape argument for incubating in-app no longer applied. The gem was built standalone with its own dummy-app suite and integrated into CarHey in the same change (Gemfile `github: "rameerez/chats"`).
+> - **Namespace drift**: everywhere this doc says `Moderation::*` / `moderates_content` / `filter_policy`, the real extracted API is `Moderate::*`, `has_reportable_content`, `moderates`, `config.filter`, `Moderate.blocked_ids_for`. The interop shipped duck-typed (no hard dependency, §7's resolution), via `config.blocked_messager_ids` + plain contract methods on `Chats::Message`/`Chats::Conversation`.
+> - **No `Chats::MessageReceipt` table**: read state shipped as a per-participant horizon (`last_read_at`), which delivers unread counts + "Seen" with zero per-message writes (the Campfire model). Receipts can be added later without breaking API — see `Chats::Participant`'s doc.
+> - **Typing indicators** shipped as a Turbo Stream custom action over the existing `Turbo::StreamsChannel` (a debounced POST + broadcast), not a bespoke `Chats::ConversationChannel` — no Action Cable identification requirements on the host.
+> - **Noticed** remains uninstalled in CarHey; the interim notifier proc schedules a debounced goodmail job exactly as §8's caveat anticipated. The `c.notifier` seam is Noticed-ready.
+> - Open question §12 (cardinality) resolved: per-pair-**per-subject** when `about:` is passed, plain per-pair otherwise — the host picks. CarHey threads per listing.
 
 ---
 
