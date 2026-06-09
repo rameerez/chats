@@ -1,0 +1,122 @@
+<%# One message bubble. CRITICAL CONSTRAINT: this partial renders ONCE per
+    broadcast and is delivered to EVERY subscriber, so nothing here may depend
+    on the viewer. Own-vs-other alignment, "Seen" placement, and showing the
+    own-message actions menu are all decided CLIENT-SIDE by the chats--thread
+    controller comparing data-sender-key against its me-value (and CSS rules
+    on .chats-message--own). Server-side authorization still gates every
+    action — hiding is cosmetic, never security.
+
+    The wrapper id (dom_id) also makes Turbo Stream appends idempotent: when
+    the sender gets both the form response AND the broadcast, Turbo removes
+    the existing element with the same id before appending — no duplicates.
+    https://turbo.hotwired.dev/reference/streams %>
+<div id="<%= dom_id(message) %>"
+     class="chats-message<%= " chats-message--system" if message.system? %><%= " chats-message--deleted" if message.deleted? %>"
+     data-chats--thread-target="message"
+     data-sender-key="<%= message.sender_key %>"
+     data-timestamp="<%= message.created_at.iso8601 %>">
+
+  <% if message.system? %>
+    <div class="chats-message__system"><%= message.body %></div>
+  <% else %>
+    <%= chats_messager_avatar(message.sender, css_class: "chats-avatar chats-message__avatar") %>
+
+    <div class="chats-message__content">
+      <% if message.conversation.group? && message.sender %>
+        <span class="chats-message__sender"><%= Chats.display_name_for(message.sender) %></span>
+      <% end %>
+
+      <div class="chats-message__bubble">
+        <% if message.deleted? %>
+          <em class="chats-message__tombstone"><%= t("chats.message.deleted") %></em>
+        <% else %>
+          <% if message.body.present? %>
+            <%# simple_format: newlines → <br>/<p>, with sanitization — body is
+                user content and must never render as raw HTML. %>
+            <%= simple_format(message.body, {}, wrapper_tag: "div", class: "chats-message__text") %>
+          <% end %>
+
+          <% if message.attachments? %>
+            <div class="chats-message__attachments">
+              <%# main_app.url_for, NOT bare url_for: Active Storage's routes
+                  live in the MAIN app — inside this isolated engine (and in
+                  the broadcast renderer) bare url_for would look for
+                  attachment_path on the ENGINE's routes and blow up. %>
+              <% message.files.each do |file| %>
+                <% if file.image? %>
+                  <%= link_to main_app.url_for(file), target: "_blank", rel: "noopener", class: "chats-message__image-link" do %>
+                    <%# Thumbnails only when the host can actually transform:
+                        `variable?` checks the content type, the ImageProcessing
+                        check that the variant-processing gem is installed —
+                        otherwise serving the variant URL would 500 later. %>
+                    <% representable = file.variable? && defined?(ImageProcessing) %>
+                    <%= image_tag main_app.url_for(representable ? file.variant(resize_to_limit: [480, 480]) : file),
+                          class: "chats-message__image", loading: "lazy", alt: file.filename.to_s %>
+                  <% end %>
+                <% else %>
+                  <%= link_to "📄 #{file.filename}", main_app.url_for(file), target: "_blank", rel: "noopener", class: "chats-message__file" %>
+                <% end %>
+              <% end %>
+            </div>
+          <% end %>
+        <% end %>
+
+        <span class="chats-message__meta">
+          <% if message.edited? && !message.deleted? %>
+            <span class="chats-message__edited"><%= t("chats.message.edited") %></span>
+          <% end %>
+          <time datetime="<%= message.created_at.iso8601 %>"><%= message.created_at.in_time_zone.strftime("%H:%M") %></time>
+        </span>
+      </div>
+
+      <% unless message.deleted? %>
+        <% reactions = Chats.config.reactions ? Chats::Reaction.summary_for(message) : [] %>
+        <% if reactions.any? %>
+          <div class="chats-message__reactions">
+            <%# chats_routes (the mounted proxy), NOT bare engine helpers:
+                this partial is also rendered by Turbo broadcasts, which go
+                through the HOST's renderer where engine helpers don't exist
+                unqualified. See EngineHelper#chats_routes. %>
+            <% reactions.each do |emoji, count| %>
+              <%= button_to chats_routes.conversation_message_reactions_path(message.conversation, message),
+                    method: :post, params: { emoji: emoji },
+                    class: "chats-reaction", "aria-label": t("chats.message.toggle_reaction", emoji: emoji) do %>
+                <%= emoji %><% if count > 1 %><span class="chats-reaction__count"><%= count %></span><% end %>
+              <% end %>
+            <% end %>
+          </div>
+        <% end %>
+
+        <div class="chats-message__actions">
+          <% if Chats.config.reactions %>
+            <details class="chats-menu chats-menu--reactions">
+              <summary class="chats-message__action" aria-label="<%= t("chats.message.react") %>">🙂</summary>
+              <div class="chats-menu__panel chats-menu__panel--emoji">
+                <% %w[👍 ❤️ 😂 😮 😢 🙏].each do |emoji| %>
+                  <%= button_to emoji, chats_routes.conversation_message_reactions_path(message.conversation, message),
+                        method: :post, params: { emoji: emoji }, class: "chats-emoji" %>
+                <% end %>
+              </div>
+            </details>
+          <% end %>
+
+          <%# Author-only affordances: revealed by CSS only on own bubbles
+              (.chats-message--own), enforced for real by require_ownership!. %>
+          <% if Chats.config.editing %>
+            <%= link_to t("chats.message.edit"),
+                  chats_routes.edit_conversation_message_path(message.conversation, message),
+                  class: "chats-message__action chats-message__action--own",
+                  data: { turbo_stream: true } %>
+          <% end %>
+          <% if Chats.config.deletion %>
+            <%= button_to t("chats.message.delete"),
+                  chats_routes.conversation_message_path(message.conversation, message),
+                  method: :delete,
+                  class: "chats-message__action chats-message__action--own chats-message__action--danger",
+                  form: { data: { turbo_confirm: t("chats.message.delete_confirm") } } %>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+</div>

@@ -1,0 +1,74 @@
+<%# The thread. One conversation stream powers everything live here:
+    message append/replace/remove, the read-state payload, and typing pings.
+    Bubbles arrive VIEWER-AGNOSTIC from shared broadcasts; the chats--thread
+    Stimulus controller aligns own-vs-other by comparing each bubble's
+    sender key against its `me` value (that's what makes one broadcast render
+    work for every subscriber). %>
+<%= chats_styles %>
+
+<div class="chats chats-thread"
+     data-controller="chats--thread"
+     data-chats--thread-me-value="<%= Chats.messager_key(chats_current_messager) %>"
+     data-chats--thread-read-url-value="<%= read_conversation_path(@conversation) %>"
+     data-chats--thread-seen-label-value="<%= Chats.config.read_receipts ? t("chats.thread.seen") : "" %>"
+     data-chats--thread-typing-suffix-value="<%= t("chats.thread.typing_suffix") %>"
+     data-chats--thread-group-value="<%= @conversation.group? %>">
+
+  <%= turbo_stream_from @conversation %>
+
+  <header class="chats-thread__header">
+    <%= link_to root_path, class: "chats-thread__back", "aria-label": t("chats.thread.back") do %>
+      <span aria-hidden="true">‹</span>
+    <% end %>
+
+    <%= chats_conversation_avatar(@conversation, chats_current_messager) %>
+
+    <div class="chats-thread__identity">
+      <h1 class="chats-thread__title"><%= @conversation.title_for(chats_current_messager) %></h1>
+      <% if @conversation.subject_label %>
+        <p class="chats-thread__subject"><%= @conversation.subject_label %></p>
+      <% end %>
+    </div>
+
+    <details class="chats-menu">
+      <summary class="chats-menu__trigger" aria-label="<%= t("chats.thread.options") %>">⋯</summary>
+      <div class="chats-menu__panel">
+        <% if @participant&.muted? %>
+          <%= button_to t("chats.thread.unmute"), unmute_conversation_path(@conversation), method: :post, class: "chats-menu__item" %>
+        <% else %>
+          <%= button_to t("chats.thread.mute"), mute_conversation_path(@conversation), method: :post, class: "chats-menu__item" %>
+        <% end %>
+        <% if @conversation.group? %>
+          <%= button_to t("chats.thread.leave"), leave_conversation_path(@conversation), method: :post, class: "chats-menu__item chats-menu__item--danger" %>
+        <% end %>
+      </div>
+    </details>
+  </header>
+
+  <div class="chats-thread__scroll" data-chats--thread-target="scroller">
+    <% if @more_messages && @messages.any? %>
+      <%# Lazy frame chain for infinite scroll-up: when this frame becomes
+          visible, Turbo fetches the previous keyset page (?before=oldest id),
+          whose response contains a frame with this SAME id — older messages
+          plus, recursively, the next frame. See ConversationsController#show. %>
+      <%= turbo_frame_tag "chats_page_#{@messages.first.id}",
+            src: conversation_path(@conversation, before: @messages.first.id),
+            loading: :lazy do %>
+        <div class="chats-loader"><%= t("chats.thread.loading") %></div>
+      <% end %>
+    <% end %>
+
+    <div id="<%= dom_id(@conversation, :messages) %>" class="chats-thread__messages">
+      <%= render partial: "chats/messages/message", collection: @messages, as: :message %>
+    </div>
+
+    <%= render "chats/conversations/read_state", conversation: @conversation %>
+
+    <div id="<%= dom_id(@conversation, :typing) %>"
+         class="chats-typing"
+         data-chats--thread-target="typing"
+         hidden></div>
+  </div>
+
+  <%= render "chats/messages/composer", conversation: @conversation %>
+</div>

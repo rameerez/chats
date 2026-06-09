@@ -1,0 +1,41 @@
+<%# The composer. Submits as a Turbo Stream (the sender's bubble appends from
+    the response — instant, no cable round-trip needed); the chats--composer
+    controller adds autosize, desktop Enter-to-send, throttled typing pings,
+    and reset-on-success. Plain form POST still works with JS disabled. %>
+<%= form_with model: Chats::Message.new,
+      url: conversation_messages_path(conversation),
+      class: "chats-composer",
+      data: {
+        controller: "chats--composer",
+        "chats--composer-typing-url-value": (typing_conversation_path(conversation) if Chats.config.typing_indicators),
+        action: "turbo:submit-end->chats--composer#submitted"
+      } do |form| %>
+
+  <div id="<%= dom_id(conversation, :composer_errors) %>" class="chats-composer__errors"></div>
+
+  <div class="chats-composer__bar">
+    <% if Chats.config.attachments %>
+      <label class="chats-composer__attach" aria-label="<%= t("chats.composer.attach") %>">
+        <%= form.file_field :files, multiple: true, hidden: true,
+              accept: (Chats.config.attachments == :images ? "image/*" : nil),
+              data: { "chats--composer-target": "files", action: "change->chats--composer#filesChanged" } %>
+        <span aria-hidden="true">📎</span>
+        <span class="chats-composer__file-count" data-chats--composer-target="fileCount" hidden></span>
+      </label>
+    <% end %>
+
+    <%= form.text_area :body,
+          rows: 1,
+          placeholder: t("chats.composer.placeholder"),
+          class: "chats-composer__input",
+          autocomplete: "off",
+          data: {
+            "chats--composer-target": "input",
+            action: "input->chats--composer#typed keydown.enter->chats--composer#enterSend"
+          } %>
+
+    <%= form.button type: :submit, class: "chats-composer__send", "aria-label": t("chats.composer.send") do %>
+      <span aria-hidden="true">➤</span>
+    <% end %>
+  </div>
+<% end %>

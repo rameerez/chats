@@ -1,0 +1,3 @@
+<%= turbo_stream.update dom_id(@conversation, :composer_errors) do %>
+  <p class="chats-composer__error"><%= @message.errors.full_messages.to_sentence %></p>
+<% end %>

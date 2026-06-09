@@ -1,0 +1,78 @@
+en:
+  chats:
+    inbox:
+      title: "Messages"
+      search_placeholder: "Search conversations"
+      empty_title: "No conversations yet"
+      empty_hint: "When you start a conversation, it will show up here."
+      no_results_title: "No results"
+      no_results_hint: "Nothing matched “%{query}”."
+      no_messages: "No messages yet"
+      you_prefix: "You:"
+    thread:
+      back: "Back"
+      options: "Conversation options"
+      mute: "Mute"
+      unmute: "Unmute"
+      leave: "Leave group"
+      loading: "Loading…"
+      seen: "Seen"
+      typing_suffix: "is typing…"
+    conversation:
+      empty_title: "Conversation"
+    message:
+      deleted: "Message deleted"
+      edited: "edited"
+      attachment: "Photo"
+      edit: "Edit"
+      delete: "Delete"
+      delete_confirm: "Delete this message for everyone?"
+      cancel: "Cancel"
+      save: "Save"
+      react: "React"
+      toggle_reaction: "React with %{emoji}"
+    composer:
+      placeholder: "Write a message…"
+      send: "Send"
+      attach: "Attach images"
+    buttons:
+      chat: "Message"
+    flashes:
+      blocked: "You can't message this person."
+      not_allowed: "You can't start this conversation."
+      left: "You left “%{title}”."
+      muted: "Conversation muted."
+      unmuted: "Conversation unmuted."
+
+  activerecord:
+    errors:
+      models:
+        chats/conversation:
+          attributes:
+            kind:
+              groups_disabled: "group conversations are disabled"
+        chats/participant:
+          attributes:
+            base:
+              group_full: "this group is full (max %{count} members)"
+        chats/message:
+          attributes:
+            base:
+              blocked: "You can't message this person."
+            sender:
+              blank: "is required"
+              not_a_participant: "is not a participant of this conversation"
+            body:
+              blank: "can't be empty"
+              too_long: "is too long (maximum %{count} characters)"
+            files:
+              not_allowed: "attachments are disabled"
+              too_many: "too many attachments (maximum %{count})"
+              must_be_images: "only images are allowed"
+              too_big: "files must be smaller than %{count} MB"
+        chats/reaction:
+          attributes:
+            base:
+              reactions_disabled: "reactions are disabled"
+            reactor:
+              not_a_participant: "is not a participant of this conversation"

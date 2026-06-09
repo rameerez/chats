@@ -1,0 +1,43 @@
+<%# The inbox. Subscribed to the viewer's inbox stream: new activity anywhere
+    triggers a Turbo 8 page refresh (morphing, scroll-preserving), which
+    re-renders this page per-viewer — see Chats::Broadcasts for why refreshes
+    beat surgical row patches here. %>
+<%= chats_styles %>
+<%= turbo_stream_from chats_current_messager, :chats_inbox %>
+
+<div class="chats chats-inbox">
+  <header class="chats-inbox__header">
+    <h1 class="chats-inbox__title"><%= t("chats.inbox.title") %></h1>
+  </header>
+
+  <% if Chats.config.search %>
+    <%= form_with url: conversations_path, method: :get, class: "chats-search", role: "search" do %>
+      <%= search_field_tag :q, params[:q],
+            placeholder: t("chats.inbox.search_placeholder"),
+            class: "chats-search__input",
+            autocomplete: "off" %>
+    <% end %>
+  <% end %>
+
+  <% if @conversations.any? %>
+    <ul class="chats-inbox__list">
+      <% @conversations.each do |conversation| %>
+        <%= render "chats/conversations/conversation_row",
+              conversation: conversation,
+              viewer: chats_current_messager,
+              unread_count: @unread_counts.fetch(conversation.id, 0) %>
+      <% end %>
+    </ul>
+  <% elsif params[:q].present? %>
+    <div class="chats-empty">
+      <p class="chats-empty__title"><%= t("chats.inbox.no_results_title") %></p>
+      <p class="chats-empty__hint"><%= t("chats.inbox.no_results_hint", query: params[:q]) %></p>
+    </div>
+  <% else %>
+    <div class="chats-empty">
+      <span class="chats-empty__icon" aria-hidden="true">💬</span>
+      <p class="chats-empty__title"><%= t("chats.inbox.empty_title") %></p>
+      <p class="chats-empty__hint"><%= t("chats.inbox.empty_hint") %></p>
+    </div>
+  <% end %>
+</div>

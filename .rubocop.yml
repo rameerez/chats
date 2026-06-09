@@ -1,0 +1,29 @@
+AllCops:
+  TargetRubyVersion: 3.2
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+# Hard size metrics fight readable, well-commented domain code and thorough
+# test classes; we optimize for the latter.
+Metrics:
+  Enabled: false
+
+# `a` / `b` are the natural names for a symmetric pair of messagers
+# (direct_between!(a, b), blocked_between?(a, b)).
+Naming/MethodParameterName:
+  AllowedNames: [a, b, at, id, to]
+
+# The moderate-gem duck-typed contract fixes keyword names (field:) even
+# where an implementation doesn't use them — renaming to _field would change
+# the keyword and break the contract.
+Lint/UnusedMethodArgument:
+  AllowUnusedKeywordArguments: true
+
+Layout/LineLength:
+  Max: 120
+  Exclude:
+    - chats.gemspec # the long-form rubygems description is one line by design

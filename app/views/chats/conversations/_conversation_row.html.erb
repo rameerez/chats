@@ -1,0 +1,28 @@
+<%# One inbox row. Rendered per-viewer (this page only updates via full
+    refreshes, never shared broadcasts, so viewer-specific state is fine here —
+    unlike message bubbles, which must stay viewer-agnostic). %>
+<li class="chats-row <%= "chats-row--unread" if unread_count.positive? %>">
+  <%= link_to conversation_path(conversation), class: "chats-row__link" do %>
+    <%= chats_conversation_avatar(conversation, viewer) %>
+
+    <span class="chats-row__body">
+      <span class="chats-row__top">
+        <span class="chats-row__title"><%= conversation.title_for(viewer) %></span>
+        <time class="chats-row__time" datetime="<%= conversation.last_message_at&.iso8601 %>">
+          <%= chats_timestamp(conversation.last_message_at) %>
+        </time>
+      </span>
+
+      <% if conversation.subject_label %>
+        <span class="chats-row__subject"><%= conversation.subject_label %></span>
+      <% end %>
+
+      <span class="chats-row__bottom">
+        <span class="chats-row__preview"><%= chats_preview_for(conversation, viewer) %></span>
+        <% if unread_count.positive? %>
+          <span class="chats-badge"><%= unread_count > 99 ? "99+" : unread_count %></span>
+        <% end %>
+      </span>
+    </span>
+  <% end %>
+</li>

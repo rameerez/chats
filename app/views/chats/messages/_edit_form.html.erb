@@ -1,0 +1,27 @@
+<%# Inline edit form, swapped IN PLACE of the bubble (same wrapper id, so the
+    broadcast/replace machinery keeps working while editing). Cancel simply
+    GETs the message's bubble back as a turbo_stream — no page reload. %>
+<div id="<%= dom_id(message) %>" class="chats-message chats-message--editing"
+     data-chats--thread-target="message"
+     data-sender-key="<%= message.sender_key %>"
+     data-timestamp="<%= message.created_at.iso8601 %>">
+  <%= form_with model: message,
+        url: chats_routes.conversation_message_path(message.conversation, message),
+        method: :patch,
+        class: "chats-edit" do |form| %>
+
+    <% if message.errors.any? %>
+      <p class="chats-edit__errors"><%= message.errors.full_messages.to_sentence %></p>
+    <% end %>
+
+    <%= form.text_area :body, rows: 3, class: "chats-edit__input", autofocus: true %>
+
+    <div class="chats-edit__actions">
+      <%= link_to t("chats.message.cancel"),
+            chats_routes.conversation_message_path(message.conversation, message),
+            class: "chats-edit__cancel",
+            data: { turbo_stream: true } %>
+      <%= form.submit t("chats.message.save"), class: "chats-edit__save" %>
+    </div>
+  <% end %>
+</div>

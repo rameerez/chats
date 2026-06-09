@@ -1,0 +1,16 @@
+<%# An OLDER page of messages, served into the pagination frame chain.
+    The wrapping frame id must equal the requesting frame's id (Turbo matches
+    by id), which both sides derive from the same anchor message — the
+    `before` param. Inside: the next lazy frame (when more pages exist),
+    then this page's messages, which Turbo splices in place of the loader. %>
+<%= turbo_frame_tag "chats_page_#{params[:before]}" do %>
+  <% if more && messages.any? %>
+    <%= turbo_frame_tag "chats_page_#{messages.first.id}",
+          src: conversation_path(conversation, before: messages.first.id),
+          loading: :lazy do %>
+      <div class="chats-loader"><%= t("chats.thread.loading") %></div>
+    <% end %>
+  <% end %>
+
+  <%= render partial: "chats/messages/message", collection: messages, as: :message %>
+<% end %>

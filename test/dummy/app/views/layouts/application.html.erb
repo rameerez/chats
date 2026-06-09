@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Dummy</title>
+    <%= csrf_meta_tags %>
+    <%# No javascript_importmap_tags: the suite asserts engine pins via
+        Rails.application.importmap directly; rendering the tags would need
+        propshaft digests for every pinned file in the dummy. %>
+  </head>
+  <body>
+    <%= yield %>
+  </body>
+</html>

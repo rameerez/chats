@@ -1,0 +1,6 @@
+<%# The live unread badge (embed anywhere via the chats_unread_badge helper).
+    Fixed id: it's the target Chats::Broadcasts.update_badge_of replaces.
+    Always rendered (hidden at zero) so the broadcast has an element to update. %>
+<span id="chats_unread_badge"
+      class="chats-badge chats-badge--floating"
+      <%= "hidden" unless count.positive? %>><%= count > 99 ? "99+" : count %></span>

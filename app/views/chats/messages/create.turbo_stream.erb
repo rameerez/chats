@@ -1,0 +1,6 @@
+<%# Sender-side instant append (everyone else gets the broadcast; the sender
+    receives that too, where Turbo's same-id dedup turns it into a no-op). %>
+<%= turbo_stream.append dom_id(@conversation, :messages) do %>
+  <%= render "chats/messages/message", message: @message %>
+<% end %>
+<%= turbo_stream.update dom_id(@conversation, :composer_errors), "" %>

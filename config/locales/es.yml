@@ -1,0 +1,78 @@
+es:
+  chats:
+    inbox:
+      title: "Mensajes"
+      search_placeholder: "Buscar conversaciones"
+      empty_title: "Aún no tienes conversaciones"
+      empty_hint: "Cuando empieces una conversación, aparecerá aquí."
+      no_results_title: "Sin resultados"
+      no_results_hint: "No hay nada que coincida con «%{query}»."
+      no_messages: "Sin mensajes todavía"
+      you_prefix: "Tú:"
+    thread:
+      back: "Atrás"
+      options: "Opciones de la conversación"
+      mute: "Silenciar"
+      unmute: "Activar notificaciones"
+      leave: "Salir del grupo"
+      loading: "Cargando…"
+      seen: "Visto"
+      typing_suffix: "está escribiendo…"
+    conversation:
+      empty_title: "Conversación"
+    message:
+      deleted: "Mensaje eliminado"
+      edited: "editado"
+      attachment: "Foto"
+      edit: "Editar"
+      delete: "Eliminar"
+      delete_confirm: "¿Eliminar este mensaje para todos?"
+      cancel: "Cancelar"
+      save: "Guardar"
+      react: "Reaccionar"
+      toggle_reaction: "Reaccionar con %{emoji}"
+    composer:
+      placeholder: "Escribe un mensaje…"
+      send: "Enviar"
+      attach: "Adjuntar imágenes"
+    buttons:
+      chat: "Mensaje"
+    flashes:
+      blocked: "No puedes enviar mensajes a esta persona."
+      not_allowed: "No puedes iniciar esta conversación."
+      left: "Has salido de «%{title}»."
+      muted: "Conversación silenciada."
+      unmuted: "Notificaciones activadas."
+
+  activerecord:
+    errors:
+      models:
+        chats/conversation:
+          attributes:
+            kind:
+              groups_disabled: "las conversaciones de grupo están desactivadas"
+        chats/participant:
+          attributes:
+            base:
+              group_full: "este grupo está lleno (máximo %{count} miembros)"
+        chats/message:
+          attributes:
+            base:
+              blocked: "No puedes enviar mensajes a esta persona."
+            sender:
+              blank: "es obligatorio"
+              not_a_participant: "no participa en esta conversación"
+            body:
+              blank: "no puede estar vacío"
+              too_long: "es demasiado largo (máximo %{count} caracteres)"
+            files:
+              not_allowed: "los adjuntos están desactivados"
+              too_many: "demasiados adjuntos (máximo %{count})"
+              must_be_images: "solo se permiten imágenes"
+              too_big: "los archivos deben pesar menos de %{count} MB"
+        chats/reaction:
+          attributes:
+            base:
+              reactions_disabled: "las reacciones están desactivadas"
+            reactor:
+              not_a_participant: "no participa en esta conversación"

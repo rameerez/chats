@@ -1,0 +1,5 @@
+# The :test adapter records broadcasts in memory so the suite can assert on
+# them (Turbo::Broadcastable::TestHelper / ActionCable::TestHelper read from
+# it). Real hosts use solid_cable/redis — irrelevant to the gem under test.
+test:
+  adapter: test

@@ -1,0 +1,11 @@
+<%# Viewer-agnostic read-state payload: every active participant's read
+    horizon, keyed by messager key. Broadcast-replaced whenever anyone reads
+    (Chats::Broadcasts.read_state); the chats--thread controller derives the
+    per-viewer "Seen" indicator from it client-side. %>
+<div id="<%= dom_id(conversation, :read_state) %>"
+     data-chats--thread-target="readState"
+     data-horizons="<%= conversation.participants.active.includes(:messager).each_with_object({}) { |participant, horizons|
+       next if participant.messager.nil?
+       horizons[Chats.messager_key(participant.messager)] = participant.last_read_at&.iso8601
+     }.to_json %>"
+     hidden></div>
