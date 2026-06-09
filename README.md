@@ -112,31 +112,94 @@ Two deliberate design decisions worth knowing:
 
 ## 🛡️ Trust & Safety: snaps onto the [`moderate`](https://github.com/rameerez/moderate) gem
 
-Messages are user-generated content. Instead of re-implementing report/block/filter, `chats` exposes the exact seams the `moderate` gem expects — wired with a few lines, with **no hard dependency** in either direction:
+Messages are user-generated content — App Store Guideline 1.2, Google Play's UGC policy, and the EU DSA all expect **report**, **block**, and **filter** capabilities before you ship a chat. Instead of re-implementing any of that, `chats` exposes the exact seams the `moderate` gem expects, with **no hard dependency in either direction**: each gem runs standalone, and together they behave like one system. This section is the complete recipe.
+
+### 1. One line of blocking
 
 ```ruby
 # config/initializers/chats.rb
 Chats.configure do |config|
-  # Blocked pairs can't start conversations, can't send into existing ones,
-  # and don't see each other's threads — enforced at creation, at every
-  # write, and in every inbox query:
   config.blocked_messager_ids = ->(user) { Moderate.blocked_ids_for(user) }
 end
-
-# Make messages reportable + filterable (an after-boot hook so the macros
-# re-apply on reload):
-Rails.application.config.to_prepare do
-  Chats::Message.has_reportable_content :body
-  Chats::Message.moderates :body, mode: :flag   # never block someone mid-conversation
-end
-
-# config/initializers/moderate.rb
-config.filter "Chats::Message", :body, mode: :flag
 ```
 
-`Chats::Message` and `Chats::Conversation` already implement moderate's full reportable contract (`reported_owner`, `moderation_snapshot`, `remove_reported_field!`, `report_visible_to?`, …) as plain duck-typed methods — a moderator removing a reported message body becomes the same soft-delete tombstone users see. Only participants can report a message (it's not public content), and you can't report your own.
+That single hook makes moderate's bidirectional block table the law everywhere chats makes a decision:
 
-Block enforcement is **hardcoded beneath the policy layer**: a host overriding `can_message` can never accidentally let a blocked pair talk.
+- a blocked pair **can't open** a conversation (`Chats::BlockedError`),
+- **can't send** into an existing one (a block placed mid-conversation stops the very next message),
+- and **stop seeing** each other's direct threads in the inbox and unread counts — *hidden, never deleted*: lift the block and the history reappears.
+
+Two semantics worth knowing: blocking is enforced **beneath** your `can_message` policy (a permissive or buggy policy can never let a blocked pair talk), and **group conversations are exempt from pair blocks** — the industry standard: blocking someone removes your private line, not your seat in shared spaces. If your domain should eject blocked members from groups, do it in moderate's `on_block` hook by tearing down whatever domain relationship feeds the group membership.
+
+### 2. Reportable + filtered messages
+
+```ruby
+# An after-boot hook (config.to_prepare) so the macros re-apply on every reload:
+Rails.application.config.to_prepare do
+  Chats::Message.has_reportable_content :body, :files
+  Chats::Message.moderates :body, mode: :flag    # text → built-in wordlist
+  Chats::Message.moderates :files, mode: :flag, with: :your_image_adapter
+end
+
+# config/initializers/moderate.rb — the central policy registry:
+config.filter "Chats::Message", :body, mode: :flag
+config.filter "Chats::Message", :files, mode: :flag, with: :your_image_adapter
+```
+
+Use **`:flag`, never `:block`** for chat: you don't gag someone mid-conversation on a wordlist false positive. The message sends; a pending `Moderate::Flag` lands in the moderation queue for human (or ML) review.
+
+`Chats::Message` and `Chats::Conversation` already implement moderate's full duck-typed reportable contract, so everything downstream just works:
+
+| moderate calls… | chats answers… |
+|---|---|
+| `reported_owner` | the sender (who a decision notifies, who a ban targets) |
+| `moderation_snapshot(:body)` | the body — frozen as evidence at report time, surviving later edits/deletes |
+| `remove_reported_field!(:body)` | the **soft-delete tombstone** — a moderator's removal looks exactly like a user deletion ("Message deleted"), no special admin rendering path |
+| `report_visible_to?(viewer)` | participants only (a DM isn't public content), and never the author |
+| `moderation_field_value(:files)` / change detection | attachment-aware seams so image filters classify what actually changed |
+
+### 3. The report affordance — mind the broadcast
+
+Put a report link on every bubble **someone else** sent. One nuance matters: `chats` renders each bubble **once per broadcast, viewer-agnostically** (that's what makes real-time fan-out cheap), so anything depending on `current_user` at render time — like moderate's `report_link` helper, which checks `report_visible_to?(viewer)` — would silently vanish from live-appended bubbles. Use the **signed-target URL** instead (viewer-independent), and hide it on own bubbles with the same client-side mechanism the gem uses for edit/delete:
+
+```erb
+<%# in your ejected chats/messages/_message.html.erb, inside the actions row %>
+<% if message.sender %>
+  <%= link_to "Report",
+        main_app.new_abuse_report_path(
+          target: message.to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE),
+          field: "body"
+        ),
+        class: "chats-message__action in-own-hidden" %>
+        <%# hide on .chats-message--own via your CSS; moderate's controller
+            re-checks report_visible_to? server-side, so hiding is cosmetic %>
+<% end %>
+```
+
+And give direct threads a **block** action in the thread menu (your ejected `show.html.erb`) pointing at your moderate-backed blocks endpoint. One UX trap: blocking hides the very thread the user is standing in — redirect to the inbox, not back.
+
+### 4. The admin side
+
+Reported and auto-flagged chat messages flow into moderate's standard queues (`Moderate::Report` / `Moderate::Flag` are polymorphic) with **zero chat-specific case statements**: resolving a report with content removal calls `remove_reported_field!` → the tombstone; banning goes through your configured `ban_handler`. For browsing context, point your admin tool at `Chats::Conversation` / `Chats::Message` read-only — and if you want a "flag this while browsing" affordance, file a manual flag and jump to its queue page rather than growing enforcement buttons on the browse surface:
+
+```ruby
+Moderate::Flag.flag!(
+  flaggable: message, field: "body", owner: message.reported_owner,
+  source: "manual", mode: "flag",
+  excerpt: message.body.to_s.truncate(500),
+  categories: ["manual_review"], scores: {}, context: { flagged_by_admin_id: admin.id }
+)
+```
+
+### 5. Did you wire it all? The launch checklist
+
+- [ ] `blocked_messager_ids` → `Moderate.blocked_ids_for`
+- [ ] `Chats::Message` reportable (`:body`, and `:files` if attachments are on)
+- [ ] body + files filter policies in `:flag` mode
+- [ ] report link on foreign bubbles (signed target, broadcast-safe)
+- [ ] block action on direct threads (redirecting away from the hidden thread)
+- [ ] admin queue handles chat flags/reports (it does, automatically — verify with one test)
+- [ ] a test that a block placed mid-conversation stops the next send
 
 ## 🔔 Notifications: one hook, fan out anywhere
 
