@@ -32,10 +32,13 @@ class InstallGeneratorTest < Rails::Generators::TestCase
       assert_match(/t\.references :messager, polymorphic: true, null: false, type: foreign_key_type/, migration)
       assert_match(/t\.references :sender, polymorphic: true, null: true, type: foreign_key_type/, migration)
 
-      # The race-safety backbone: unique indexes.
+      # The race-safety backbone: unique indexes. (Omakase array spacing —
+      # `[ :a, :b ]` — so installs are rubocop-clean in stock Rails apps.)
       assert_match(/add_index :chats_conversations, :direct_key, unique: true/, migration)
-      assert_match(/add_index :chats_participants, \[:conversation_id, :messager_type, :messager_id\],\s+unique: true/,
-                   migration)
+      assert_match(
+        /add_index :chats_participants, \[ :conversation_id, :messager_type, :messager_id \],\s+unique: true/,
+        migration
+      )
     end
 
     assert_file "config/initializers/chats.rb" do |initializer|

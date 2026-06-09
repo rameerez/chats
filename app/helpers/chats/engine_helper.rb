@@ -166,6 +166,8 @@ end
 # initializers (web-console does this) because `include Chats::EngineHelper`
 # would fire before the autoloader is ready. Same pattern as the moderate
 # gem's report_link helper.
-ActiveSupport.on_load(:action_view) do
-  include Chats::EngineHelper
-end if defined?(ActiveSupport)
+if defined?(ActiveSupport)
+  ActiveSupport.on_load(:action_view) do
+    include Chats::EngineHelper
+  end
+end

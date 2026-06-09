@@ -40,7 +40,7 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
       t.timestamps
     end
 
-    add_index :chats_conversations, [:subject_type, :subject_id], name: "index_chats_conversations_on_subject"
+    add_index :chats_conversations, [ :subject_type, :subject_id ], name: "index_chats_conversations_on_subject"
     add_index :chats_conversations, :direct_key, unique: true, name: "index_chats_conversations_on_direct_key"
     add_index :chats_conversations, :last_message_at, name: "index_chats_conversations_on_last_message_at"
 
@@ -68,11 +68,11 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
 
     # One seat per messager per conversation — also the lock that makes
     # concurrent add_participant! idempotent.
-    add_index :chats_participants, [:conversation_id, :messager_type, :messager_id],
+    add_index :chats_participants, [ :conversation_id, :messager_type, :messager_id ],
               unique: true, name: "index_chats_participants_uniqueness"
     # The inbox entry point: "all of MY participations" (then join
     # conversations ordered by last_message_at).
-    add_index :chats_participants, [:messager_type, :messager_id], name: "index_chats_participants_on_messager"
+    add_index :chats_participants, [ :messager_type, :messager_id ], name: "index_chats_participants_on_messager"
 
     # ---------------------------------------------------------------------------
     # chats_messages
@@ -101,8 +101,8 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
 
     # THE hot path: a conversation's message page, keyset-paginated on
     # (created_at, id) — see Chats::Message.before_message.
-    add_index :chats_messages, [:conversation_id, :created_at, :id], name: "index_chats_messages_on_conversation_and_created_at"
-    add_index :chats_messages, [:sender_type, :sender_id], name: "index_chats_messages_on_sender"
+    add_index :chats_messages, [ :conversation_id, :created_at, :id ], name: "index_chats_messages_on_conversation_and_created_at"
+    add_index :chats_messages, [ :sender_type, :sender_id ], name: "index_chats_messages_on_sender"
     add_index :chats_messages, :reply_to_id, name: "index_chats_messages_on_reply_to_id"
 
     # ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
       t.timestamps
     end
 
-    add_index :chats_reactions, [:message_id, :reactor_type, :reactor_id, :emoji],
+    add_index :chats_reactions, [ :message_id, :reactor_type, :reactor_id, :emoji ],
               unique: true, name: "index_chats_reactions_uniqueness"
 
     # NOTE: value-list vocabularies (kind, role) are validated in the MODELS

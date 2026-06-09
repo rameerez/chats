@@ -1,5 +1,19 @@
+# MERGE our excludes with rubocop's defaults (vendor/, node_modules/, …) —
+# a bare Exclude key would REPLACE them.
+inherit_mode:
+  merge:
+    - Exclude
+
 AllCops:
   TargetRubyVersion: 3.2
+  Exclude:
+    # The dummy host app mirrors GENERATED code (its chats migration is a
+    # copy of the install template, which emits Rails-omakase array spacing
+    # so installs are rubocop-clean in stock Rails apps) — don't lint it
+    # against the gem's own style.
+    - test/dummy/db/**/*
+    # Appraisal-generated Gemfiles.
+    - gemfiles/*
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes

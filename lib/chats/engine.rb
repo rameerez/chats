@@ -133,7 +133,8 @@ module Chats
     config.to_prepare do
       # Touch the helper so its bottom-of-file on_load(:action_view) hook
       # registers even if no engine code was referenced yet (see NOTE above).
-      Chats::EngineHelper
+      # (Assigned to appease Lint/Void — the constant REFERENCE is the point.)
+      _loaded = Chats::EngineHelper
 
       if Chats.config.encrypt_messages && Chats::Message.respond_to?(:encrypts)
         # Opt-in encryption at rest (config.encrypt_messages = true).
