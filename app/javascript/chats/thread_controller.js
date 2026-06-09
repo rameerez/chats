@@ -34,6 +34,10 @@ export default class extends Controller {
     me: String,
     readUrl: String,
     seenLabel: String,
+    // CSS classes for the floating "Seen" element. Hosts that eject the views
+    // and bring their own framework (Tailwind etc.) override this from the
+    // markup; the default matches the gem's bundled chats.css.
+    seenClass: { type: String, default: "chats-seen" },
     typingSuffix: String,
     group: Boolean
   }
@@ -128,7 +132,7 @@ export default class extends Controller {
   get seenElement() {
     if (!this._seenElement) {
       this._seenElement = document.createElement("div")
-      this._seenElement.className = "chats-seen"
+      this._seenElement.className = this.seenClassValue
       this._seenElement.textContent = this.seenLabelValue
     }
     return this._seenElement
