@@ -50,7 +50,8 @@ class BroadcastsTest < ActiveSupport::TestCase
         @conversation.messages.create!(sender: @alice, body: "badge me")
       end
     end
-    update = badge_streams.find { |stream| stream["action"] == "update" }
+    # replace (not update): the partial carries the badge element itself.
+    update = badge_streams.find { |stream| stream["action"] == "replace" }
     assert update
     assert_equal "chats_unread_badge", update["target"]
     assert_includes update.to_html, ">1<"

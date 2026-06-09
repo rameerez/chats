@@ -112,7 +112,10 @@ module Chats
       end
 
       def update_badge_of(messager)
-        Turbo::StreamsChannel.broadcast_update_later_to(
+        # REPLACE, not update: the partial renders the whole badge element
+        # (its id included) — an `update` would nest it inside the existing
+        # element and duplicate the id. Replace keeps it idempotent.
+        Turbo::StreamsChannel.broadcast_replace_later_to(
           messager, :chats_badge,
           target: "chats_unread_badge",
           partial: BADGE_PARTIAL,
