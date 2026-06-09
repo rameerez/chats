@@ -98,9 +98,18 @@ module Chats
           ""
         end
 
-      # Tombstones read as a statement ("Message deleted"), not as something
-      # the viewer said — no "You:" prefix.
-      prefix = I18n.t("chats.inbox.you_prefix") if message.sent_by?(viewer) && !message.deleted?
+      # Tombstones read as a statement ("Message deleted") — never prefixed.
+      # Otherwise: "You:" for own messages, and in GROUPS the sender's first
+      # name (WhatsApp-style), since "who said it" is ambiguous there. System
+      # messages (no sender) stay bare.
+      prefix =
+        if message.deleted?
+          nil
+        elsif message.sent_by?(viewer)
+          I18n.t("chats.inbox.you_prefix")
+        elsif conversation.group? && message.sender
+          "#{Chats.display_name_for(message.sender).split.first}:"
+        end
       [prefix, text].compact.join(" ")
     end
 

@@ -60,6 +60,20 @@ class EngineHelperTest < ActionView::TestCase
     assert_includes html, "AW"
   end
 
+  test "chats_preview_for prefixes group messages with the sender's first name" do
+    carol = create_user(name: "Carol Chofer")
+    group = Chats::Conversation.group!(@alice, [@bob, carol], title: "Trip")
+    carol.message!(group, "see you at the corner")
+
+    assert_equal "Carol: see you at the corner", chats_preview_for(group.reload, @alice)
+
+    @alice.message!(group, "on my way")
+    assert_includes chats_preview_for(group.reload, @alice), I18n.t("chats.inbox.you_prefix")
+
+    group.post_system_message!("Ride cancelled")
+    assert_equal "Ride cancelled", chats_preview_for(group.reload, @alice) # system: bare
+  end
+
   test "chats_preview_for summarizes the latest message" do
     conversation = conversation_between(@alice, @bob)
     assert_equal I18n.t("chats.inbox.no_messages"), chats_preview_for(conversation, @alice)
