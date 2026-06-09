@@ -155,3 +155,17 @@ module Chats
     end
   end
 end
+
+# Expose the helpers to the HOST app's views (isolated engines don't share
+# helpers automatically). The hook lives HERE, at the bottom of the file that
+# defines the constant — not in an engine initializer — so it's
+# self-resolving: whenever this file loads (eager load, autoload on first
+# use, or the engine's to_prepare touch), the constant already exists by the
+# time the hook can possibly run. Registering it from an initializer instead
+# would blow up at boot in hosts where ActionView is already loaded during
+# initializers (web-console does this) because `include Chats::EngineHelper`
+# would fire before the autoloader is ready. Same pattern as the moderate
+# gem's report_link helper.
+ActiveSupport.on_load(:action_view) do
+  include Chats::EngineHelper
+end if defined?(ActiveSupport)

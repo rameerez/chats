@@ -77,14 +77,16 @@ module Chats
       app.config.i18n.load_path += Dir[root.join("config", "locales", "**", "*.{rb,yml}").to_s]
     end
 
-    # Expose the host-facing helpers (`chat_button_to`, `chats_unread_badge`,
-    # `chats_messager_avatar`, …) in EVERY view — host and engine alike. Same
-    # move the moderate gem makes for `report_link`.
-    initializer "chats.helpers" do
-      ActiveSupport.on_load(:action_view) do
-        include Chats::EngineHelper
-      end
-    end
+    # NOTE: the host-facing helpers (`chat_button_to`, `chats_unread_badge`, …)
+    # are exposed to ActionView from the BOTTOM of engine_helper.rb itself
+    # (moderate's proven pattern), NOT from an initializer here: an
+    # `on_load(:action_view)` registered during initializers fires
+    # IMMEDIATELY in hosts where something (web-console, a mailer preview…)
+    # already loaded ActionView — and at that point the autoloader can't
+    # resolve Chats::EngineHelper yet (NameError at boot). Keeping the hook
+    # in the same file as the constant makes it self-resolving; the
+    # `to_prepare` touch below guarantees the file loads on every boot and
+    # code reload even before anything references it.
 
     # -------------------------------------------------------------------------
     # JavaScript: the engine ships three tiny Stimulus controllers (thread,
@@ -126,9 +128,13 @@ module Chats
       end
     end
 
-    # Apply boot-time configuration that has to touch model classes — runs on
-    # every reload in development so config stays applied to fresh classes.
+    # Apply boot-time configuration that has to touch autoloaded classes —
+    # runs on every reload in development so it stays applied to fresh ones.
     config.to_prepare do
+      # Touch the helper so its bottom-of-file on_load(:action_view) hook
+      # registers even if no engine code was referenced yet (see NOTE above).
+      Chats::EngineHelper
+
       if Chats.config.encrypt_messages && Chats::Message.respond_to?(:encrypts)
         # Opt-in encryption at rest (config.encrypt_messages = true).
         # `deterministic: false` (the default) is correct for free text.
