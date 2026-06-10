@@ -21,6 +21,7 @@ en:
       today: "Today"
       yesterday: "Yesterday"
       typing_suffix: "is typing…"
+      new_messages: "New messages"
     conversation:
       empty_title: "Conversation"
     message:

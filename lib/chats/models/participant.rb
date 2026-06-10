@@ -82,13 +82,21 @@ module Chats
     #     "Seen" indicator on the other side, when read receipts are on)
     #   - this messager's OWN inbox + badge refresh (their other devices/tabs
     #     should drop the unread highlight too)
+    #   - the HOST gets a `:conversation_read` notifier event — but only when
+    #     the horizon actually swallowed unread content. Hosts use it to keep
+    #     external notification surfaces truthful (e.g. mark this chat's rows
+    #     read in a notification center the moment the thread is read, so a
+    #     bell badge doesn't keep advertising messages the user has already
+    #     seen). Same notify hook as :message_created; error-isolated.
     def read!(at: Time.current)
       return self if last_read_at && last_read_at >= at
 
+      had_unread = unread?
       update!(last_read_at: at)
       broadcast_read_state if Chats.config.read_receipts
       Chats::Broadcasts.refresh_inbox_of(messager)
       Chats::Broadcasts.update_badge_of(messager)
+      Chats.notify(:conversation_read, conversation: conversation, participant: self) if had_unread
       self
     end
 

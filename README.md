@@ -207,9 +207,24 @@ Moderate::Flag.flag!(
 
 ```ruby
 config.notifier = ->(event, **payload) {
-  NewMessageNotifier.with(**payload).deliver if event == :message_created  # Noticed
+  case event
+  when :message_created
+    # payload: message:
+    NewMessageNotifier.with(record: payload[:message]).deliver  # Noticed, email, push…
+  when :conversation_read
+    # payload: conversation:, participant: — fired when a read actually
+    # consumed unread content. Use it to keep EXTERNAL notification
+    # surfaces truthful: e.g. mark this chat's rows read in your
+    # notification center the moment the thread is read, so a bell badge
+    # doesn't keep advertising messages the user has already seen.
+  end
 }
 ```
+
+> Write the lambda as `->(event, **payload)` (not `->(event, message:, **)`):
+> events carry different payloads, and a keyword the event doesn't include
+> would raise — harmlessly (the hook is error-isolated and logged), but
+> noisily.
 
 The etiquette helpers every messaging product needs ship on the participant, so a debounced "email me only once until I come back" digest is a tiny host job:
 

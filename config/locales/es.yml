@@ -21,6 +21,7 @@ es:
       today: "Hoy"
       yesterday: "Ayer"
       typing_suffix: "está escribiendo…"
+      new_messages: "Mensajes nuevos"
     conversation:
       empty_title: "Conversación"
     message:

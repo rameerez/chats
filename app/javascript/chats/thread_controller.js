@@ -1,5 +1,18 @@
 import { Controller } from "@hotwired/stimulus"
 
+// Stale-thread refresh + DOM budget (both patterns from Basecamp's
+// Campfire, https://github.com/basecamp/once-campfire — its
+// refresh_room_controller and message_paginator):
+//   * refresh when the tab was hidden long enough that the WebSocket was
+//     probably reaped (mobile WebViews suspend sockets aggressively), and
+//     whenever the Turbo Stream subscription reconnects after a drop;
+//   * cap rendered bubbles so day-long sessions in a busy group don't
+//     grow the DOM unboundedly (trimmed history stays reachable — the
+//     pagination anchor is rebuilt to re-fetch it on scroll-up).
+const REFRESH_AFTER_HIDDEN_MS = 60_000
+const MAX_RENDERED_MESSAGES = 300
+const TRIM_LEEWAY = 20
+
 // chats--thread: everything live about an open conversation.
 //
 // Bubbles arrive VIEWER-AGNOSTIC (one broadcast render is shared by every
@@ -41,6 +54,8 @@ export default class extends Controller {
   static values = {
     me: String,
     readUrl: String,
+    refreshUrl: String,
+    threadUrl: String,
     sentLabel: String,
     seenLabel: String,
     todayLabel: String,
@@ -69,6 +84,7 @@ export default class extends Controller {
       this.typingTarget.addEventListener("chats:typing", this.showTyping)
     }
     document.addEventListener("visibilitychange", this.visibilityChanged)
+    this.watchStreamSource()
   }
 
   disconnect() {
@@ -77,6 +93,7 @@ export default class extends Controller {
     }
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
+    this.sourceObserver?.disconnect()
     clearTimeout(this.typingTimer)
     cancelAnimationFrame(this.daySeparatorFrame)
     cancelAnimationFrame(this.messageGroupFrame)
@@ -86,8 +103,13 @@ export default class extends Controller {
   // --- Bubbles ---------------------------------------------------------------
 
   messageTargetConnected(element) {
+    this.trackLoadCursor(element)
     this.classify(element)
     if (this.booting) return
+    // Live appends can land out of order (multi-worker hosts broadcast from
+    // concurrent jobs). Re-slot the bubble if its predecessor is newer; the
+    // move re-fires this callback, which then proceeds in order.
+    if (this.ensureChronological(element)) return
 
     // A new bubble after initial render: keep the viewport glued to the
     // bottom for own messages and for foreign ones when already down there.
@@ -105,6 +127,7 @@ export default class extends Controller {
     this.renderReceipts()
     this.scheduleDaySeparators()
     this.scheduleMessageGroups()
+    this.trimExcessMessages()
   }
 
   classify(element) {
@@ -300,9 +323,19 @@ export default class extends Controller {
   }
 
   visibilityChanged = () => {
-    if (document.visibilityState === "visible" && this.pendingRead) {
-      this.pendingRead = false
-      this.queueRead()
+    if (document.visibilityState === "visible") {
+      // Asleep long enough for the socket to have been reaped? Catch up on
+      // anything the missed broadcasts carried.
+      if (this.hiddenAt && Date.now() - this.hiddenAt > REFRESH_AFTER_HIDDEN_MS) {
+        this.refreshThread()
+      }
+      this.hiddenAt = null
+      if (this.pendingRead) {
+        this.pendingRead = false
+        this.queueRead()
+      }
+    } else {
+      this.hiddenAt = Date.now()
     }
   }
 
@@ -375,6 +408,122 @@ export default class extends Controller {
   scrollToBottom() {
     if (!this.hasScrollerTarget) return
     this.scrollerTarget.scrollTop = this.scrollerTarget.scrollHeight
+  }
+
+  // --- Stale-thread refresh (catch up after sleep/disconnect) --------------------
+
+  // The `?since=` cursor: the newest data-updated-at-ms across rendered
+  // bubbles. updated_at (not created_at) so edits/tombstones made while
+  // asleep are caught by the refresh too.
+  trackLoadCursor(element) {
+    const ms = Number(element.dataset.updatedAtMs || 0)
+    if (ms > (this.lastLoadedAt || 0)) this.lastLoadedAt = ms
+  }
+
+  // Reconnect detection without a dedicated cable channel: turbo-rails
+  // toggles a `connected` attribute on <turbo-cable-stream-source> as the
+  // Action Cable subscription confirms/drops, so observing that attribute
+  // IS the heartbeat. (Campfire ran a HeartbeatChannel for this; the
+  // attribute observer gets the same signal for free.)
+  watchStreamSource() {
+    const source = this.element.querySelector("turbo-cable-stream-source")
+    if (!source || typeof MutationObserver === "undefined") return
+
+    this.sourceObserver = new MutationObserver(() => {
+      const connected = source.hasAttribute("connected")
+      if (connected && this.streamDropped) {
+        this.streamDropped = false
+        this.refreshThread()
+      } else if (!connected) {
+        this.streamDropped = true
+      }
+    })
+    this.sourceObserver.observe(source, { attributes: true, attributeFilter: ["connected"] })
+  }
+
+  refreshThread() {
+    if (!this.refreshUrlValue || !this.lastLoadedAt) return
+
+    const url = `${this.refreshUrlValue}?since=${this.lastLoadedAt}`
+    fetch(url, { headers: { Accept: "text/vnd.turbo-stream.html" } })
+      .then((response) => (response.ok ? response.text() : ""))
+      .then((html) => {
+        if (html) window.Turbo?.renderStreamMessage(html)
+      })
+      .catch(() => {})
+  }
+
+  // --- DOM budget -----------------------------------------------------------------
+
+  // Day-long sessions in a busy group append without bound; past
+  // MAX_RENDERED_MESSAGES (+ leeway, so we trim in batches instead of per
+  // message) drop the oldest bubbles. Only when the viewer is parked at the
+  // bottom — never yank history out from under someone reading it.
+  trimExcessMessages() {
+    const all = this.messageTargets
+    if (all.length <= MAX_RENDERED_MESSAGES + TRIM_LEEWAY) return
+    if (!this.nearBottom()) return
+
+    all.slice(0, all.length - MAX_RENDERED_MESSAGES).forEach((element) => element.remove())
+
+    // They're at the bottom of a 300+ message thread: any «new messages»
+    // divider is long since consumed.
+    this.element.querySelectorAll(".chats-thread__unread-line").forEach((line) => line.remove())
+
+    this.rebuildPaginationAnchor()
+    this.scheduleDaySeparators()
+    this.scheduleMessageGroups()
+  }
+
+  // Trimmed history must stay REACHABLE: drop pagination frames that no
+  // longer hold any bubbles (their lazy anchors point into ranges that no
+  // longer line up), then plant a fresh lazy frame anchored at the new
+  // oldest bubble — scrolling up re-fetches everything older, seamlessly,
+  // through the exact same keyset endpoint the original chain used.
+  rebuildPaginationAnchor() {
+    if (!this.hasScrollerTarget) return
+
+    this.scrollerTarget.querySelectorAll('turbo-frame[id^="chats_page_"]').forEach((frame) => {
+      if (!frame.querySelector('[data-chats--thread-target="message"]')) frame.remove()
+    })
+
+    const oldest = this.messageTargets[0]
+    if (!oldest || !this.threadUrlValue) return
+
+    // dom_id format is "chats_message_<id>" — the record id is the tail.
+    const messageId = oldest.id.split("_").pop()
+    const frameId = `chats_page_${messageId}`
+    if (!messageId || document.getElementById(frameId)) return
+
+    const frame = document.createElement("turbo-frame")
+    frame.id = frameId
+    frame.setAttribute("loading", "lazy")
+    const separator = this.threadUrlValue.includes("?") ? "&" : "?"
+    frame.src = `${this.threadUrlValue}${separator}before=${messageId}`
+    frame.innerHTML = '<div class="chats-loader"></div>'
+    this.scrollerTarget.prepend(frame)
+  }
+
+  // --- Chronology guard -------------------------------------------------------------
+
+  // Broadcast appends from concurrent host jobs can land out of order.
+  // ISO8601 strings compare lexicographically = chronologically; equal
+  // timestamps (same-second bursts) keep arrival order (stable).
+  ensureChronological(element) {
+    const timestamp = element.dataset.timestamp
+    if (!timestamp) return false
+
+    const newerThan = (node) =>
+      node?.classList?.contains("chats-message") && node.dataset.timestamp > timestamp
+
+    let anchor = element.previousElementSibling
+    if (!newerThan(anchor)) return false
+
+    while (newerThan(anchor.previousElementSibling)) {
+      anchor = anchor.previousElementSibling
+    }
+    anchor.parentElement.insertBefore(element, anchor)
+    return true
   }
 }
 

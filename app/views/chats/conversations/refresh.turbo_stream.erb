@@ -1,0 +1,13 @@
+<%# Stale-thread catch-up payload (ConversationsController#refresh):
+    append what arrived while the client slept, replace what changed.
+    Appends are idempotent by dom_id, so a message that raced in through
+    the live stream during the fetch can't duplicate. %>
+<%= turbo_stream.append dom_id(@conversation, :messages) do %>
+  <%= render partial: "chats/messages/message", collection: @new_messages, as: :message %>
+<% end if @new_messages.any? %>
+
+<% @updated_messages.each do |message| %>
+  <%= turbo_stream.replace dom_id(message),
+        partial: "chats/messages/message",
+        locals: { message: message } %>
+<% end %>

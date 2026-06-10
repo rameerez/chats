@@ -15,7 +15,9 @@
       "chats--thread-today-label-value": t("chats.thread.today"),
       "chats--thread-yesterday-label-value": t("chats.thread.yesterday"),
       "chats--thread-typing-suffix-value": t("chats.thread.typing_suffix"),
-      "chats--thread-group-value": @conversation.group?
+      "chats--thread-group-value": @conversation.group?,
+      "chats--thread-refresh-url-value": refresh_conversation_path(@conversation),
+      "chats--thread-thread-url-value": conversation_path(@conversation)
     } do %>
 
   <%= turbo_stream_from @conversation %>
@@ -63,7 +65,18 @@
     <% end %>
 
     <div id="<%= dom_id(@conversation, :messages) %>" class="chats-thread__messages">
-      <%= render partial: "chats/messages/message", collection: @messages, as: :message %>
+      <%# Explicit loop (not a collection render) so the «new messages»
+          divider can sit BEFORE the first unread bubble (WhatsApp's "the
+          catch-up starts here" line). Server-rendered on the initial page
+          only; it scrolls away naturally as the thread lives on. %>
+      <% @messages.each do |message| %>
+        <% if message.id == @first_unread_id %>
+          <div class="chats-thread__unread-line" role="separator">
+            <span><%= t("chats.thread.new_messages") %></span>
+          </div>
+        <% end %>
+        <%= render "chats/messages/message", message: message %>
+      <% end %>
     </div>
 
     <%= render "chats/conversations/read_state", conversation: @conversation %>

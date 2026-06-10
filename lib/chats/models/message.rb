@@ -66,6 +66,23 @@ module Chats
       )
     }
 
+    # Catch-up scopes for ConversationsController#refresh (the stale-thread
+    # recovery path — see the thread controller's refresh trigger). `since`
+    # is the newest `updated_at` the client has rendered:
+    #   created_since — messages that arrived while the tab was asleep
+    #                   (appended);
+    #   updated_since — messages the client HAS rendered that changed since
+    #                   (edits, soft-delete tombstones — replaced in place).
+    # `updated_since` excludes fresh rows so nothing renders twice — a Turbo
+    # append of an existing dom_id would otherwise also MOVE that bubble to
+    # the end (Turbo removes-then-appends on id collision).
+    # Pattern from Basecamp's Campfire (Rooms::RefreshesController):
+    # https://github.com/basecamp/once-campfire
+    scope :created_since, ->(time) { where("chats_messages.created_at > ?", time) }
+    scope :updated_since, lambda { |time|
+      where("chats_messages.updated_at > ?", time).where("chats_messages.created_at <= ?", time)
+    }
+
     validates :kind, inclusion: { in: KINDS }
     validates :body, presence: true, if: :system?
     validate :sender_required_for_text_messages, on: :create

@@ -4,7 +4,7 @@ module Chats
   # The inbox (index), the thread (show), starting conversations from host
   # pages (create), and the per-member actions (read/typing/leave/mute).
   class ConversationsController < ApplicationController
-    before_action :set_conversation, only: %i[show read typing leave mute unmute]
+    before_action :set_conversation, only: %i[show read typing leave mute unmute refresh]
 
     # The inbox. Everything is preloaded/batched so rendering N rows costs a
     # constant number of queries (conversations + last messages + participants
@@ -39,10 +39,53 @@ module Chats
         render partial: "chats/conversations/messages_page",
                locals: { conversation: @conversation, messages: @messages, more: @more_messages }
       else
+        # The «new messages» divider: computed BEFORE read! advances the
+        # horizon (after it, nothing is unread anymore). Anchored to the
+        # oldest unread bubble on the rendered page; when the backlog runs
+        # deeper than one page it pins to the top of the page instead —
+        # the scroll-up frame chain holds the rest.
+        if @participant&.unread?
+          @first_unread_id = @participant.unread_messages.where(id: @messages.map(&:id)).oldest_first.pick(:id) ||
+                             @messages.first&.id
+        end
+
         # Opening the thread reads it. (Live appends while the thread stays
         # open are read via the thread controller's POST to #read.)
         @participant&.read!
       end
+    end
+
+    # Stale-thread catch-up: appends messages created — and replaces ones
+    # edited/tombstoned — since the newest `updated_at` the client has
+    # rendered (`?since=` in ms). The thread controller calls this when the
+    # tab wakes from a long sleep or its Turbo Stream subscription
+    # reconnects, i.e. whenever broadcasts may have been missed. Mobile
+    # WebViews suspend WebSockets aggressively, so without this a
+    # backgrounded chat silently loses messages until a manual reload.
+    # Pattern from Basecamp's Campfire (Rooms::RefreshesController):
+    # https://github.com/basecamp/once-campfire
+    def refresh
+      head :no_content and return if params[:since].blank?
+
+      since = Time.zone.at(0, params[:since].to_i, :millisecond)
+      scope = @conversation.messages.includes(:sender, :reactions)
+      scope = scope.with_attached_files if scope.respond_to?(:with_attached_files)
+
+      @new_messages = scope.created_since(since).oldest_first.limit(Chats.config.messages_per_page + 1).to_a
+
+      # A backlog deeper than one page would mean splicing an arbitrary
+      # amount of history through surgical appends; a Turbo 8 page refresh
+      # (morph + scroll preservation) re-renders the latest page + frame
+      # chain correctly instead. Raw tag rather than `turbo_stream.refresh`
+      # so we don't depend on turbo-rails ≥ 2.0 helpers.
+      if @new_messages.size > Chats.config.messages_per_page
+        render html: '<turbo-stream action="refresh"></turbo-stream>'.html_safe,
+               content_type: "text/vnd.turbo-stream.html"
+        return
+      end
+
+      @updated_messages = scope.updated_since(since)
+      render "chats/conversations/refresh", formats: :turbo_stream
     end
 
     # Start (or resume) a direct conversation from a host page. The

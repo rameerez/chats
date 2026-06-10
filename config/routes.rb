@@ -11,6 +11,7 @@ Chats::Engine.routes.draw do
       post :leave   # leave a group (direct threads can't be left — block instead)
       post :mute
       post :unmute
+      get :refresh  # stale-thread catch-up after sleep/disconnect (?since=ms)
     end
 
     resources :messages, only: %i[show create edit update destroy] do

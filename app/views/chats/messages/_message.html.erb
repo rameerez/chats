@@ -14,7 +14,13 @@
      class="chats-message<%= " chats-message--system" if message.system? %><%= " chats-message--deleted" if message.deleted? %>"
      data-chats--thread-target="message"
      data-sender-key="<%= message.sender_key %>"
-     data-timestamp="<%= message.created_at.iso8601 %>">
+     data-timestamp="<%= message.created_at.iso8601 %>"
+     <%# updated-at-ms: the thread controller tracks the max across bubbles as
+         its `?since=` cursor for the stale-thread refresh — updated_at (not
+         created_at) so edits/tombstones that happened while asleep are caught
+         too. `.ceil` biases the cursor PAST this row's sub-millisecond tail,
+         so the strictly-greater server query can't re-fetch it. %>
+     data-updated-at-ms="<%= (message.updated_at.to_f * 1000).ceil %>">
 
   <% if message.system? %>
     <div class="chats-message__system"><%= message.body %></div>

@@ -225,6 +225,31 @@
   height: 1px;
   background: var(--chats-border);
 }
+
+/* The «new messages» divider: same shape as the day separator but in the
+   accent color — it marks where the unread catch-up starts on thread open
+   (rendered server-side before the first unread bubble; see show.html.erb). */
+.chats-thread__unread-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  margin: 0.8rem 0;
+  color: var(--chats-accent, #2563eb);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.chats-thread__unread-line::before,
+.chats-thread__unread-line::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.4;
+}
 .chats-loader {
   text-align: center;
   color: var(--chats-text-muted);
