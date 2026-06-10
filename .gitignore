@@ -22,3 +22,4 @@ test/dummy/.bundle/
 .ruby-lsp/
 
 TODO
+.cursor/
