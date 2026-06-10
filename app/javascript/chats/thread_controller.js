@@ -737,8 +737,7 @@ export default class extends Controller {
   }
 
   copyMessage(item) {
-    const bubble = this.popupOpenFor
-    const text = bubble?.querySelector("[data-chats-message-body], .chats-message__text")?.innerText?.trim()
+    const text = this.pressedMessageBody()
     if (!text) return this.closePopup()
 
     this.writeClipboard(text).then((copied) => {
@@ -792,6 +791,21 @@ export default class extends Controller {
     return copied
   }
 
+  // The pressed message's body text, with line breaks intact. innerText
+  // (not textContent) is what preserves the rendered paragraph breaks — but
+  // innerText of a HIDDEN element is "", and the original bubble is exactly
+  // the node the open popup hides (.chats-message--lifted). So read the
+  // popup's visible CLONE first — it carries the same marked body node —
+  // and only fall back to the original (e.g. mid-teardown).
+  // https://developer.mozilla.org/docs/Web/API/HTMLElement/innerText
+  pressedMessageBody() {
+    const selector = "[data-chats-message-body], .chats-message__text"
+    const source =
+      (this.hasPopupBubbleTarget && this.popupBubbleTarget.querySelector(selector)) ||
+      this.popupOpenFor?.querySelector(selector)
+    return source?.innerText?.trim() || ""
+  }
+
   // Edit happens in the COMPOSER (Telegram's flow): close the popup (the
   // bubble morphs back home) and hand the body off via a DOM event the
   // chats--composer controller listens for — it shows the "edit message"
@@ -799,7 +813,7 @@ export default class extends Controller {
   beginEditFromPopup() {
     const bubble = this.popupOpenFor
     if (!bubble) return
-    const body = bubble.querySelector("[data-chats-message-body], .chats-message__text")?.innerText?.trim() || ""
+    const body = this.pressedMessageBody()
     const messageId = bubble.id.split("_").pop()
 
     this.closePopup()
