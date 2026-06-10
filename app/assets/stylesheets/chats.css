@@ -196,7 +196,7 @@
   display: flex;
   flex-direction: column;
 }
-.chats-thread__messages { display: flex; flex-direction: column; gap: 0.15rem; }
+.chats-thread__messages { display: flex; flex-direction: column; gap: 0; }
 .chats-day-separator {
   display: flex;
   align-items: center;
@@ -229,8 +229,9 @@
   gap: 0.5rem;
   align-items: flex-end;
   max-width: 85%;
-  margin: 0.1rem 0;
+  margin: 0.2rem 0 0;
 }
+.chats-message--continuation { margin-top: 0.02rem; }
 .chats-message__avatar { width: 1.9rem; height: 1.9rem; font-size: 0.7rem; }
 .chats-message__content { display: flex; flex-direction: column; min-width: 0; }
 .chats-message__bubble-row { display: flex; align-items: flex-end; gap: 0.5rem; }
@@ -240,14 +241,15 @@
   color: var(--chats-text-muted);
   margin: 0 0 0.1rem 2.4rem;
 }
+.chats-message--continuation .chats-message__sender { display: none; }
+.chats-message--followed .chats-message__avatar { visibility: hidden; }
 
 .chats-message__bubble {
-  position: relative;
   background: var(--chats-bubble-bg);
   color: var(--chats-bubble-text);
   border-radius: var(--chats-radius);
   border-bottom-left-radius: 0.3rem;
-  padding: 0.5rem 0.8rem 1.05rem;
+  padding: 0.5rem 0.8rem;
   overflow-wrap: anywhere;
 }
 .chats-message__text { margin: 0; }
@@ -255,16 +257,17 @@
 .chats-message__text p:last-child { margin-bottom: 0; }
 
 .chats-message__meta {
-  position: absolute;
-  right: 0.65rem;
-  bottom: 0.25rem;
-  display: inline-flex;
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
   gap: 0.3rem;
+  margin-top: 0.2rem;
   font-size: 0.62rem;
   color: var(--chats-text-muted);
   user-select: none;
 }
-.chats-message__receipt { display: none; letter-spacing: -0.18em; padding-right: 0.18em; }
+.chats-message__receipt { white-space: nowrap; }
+.chats-message__receipt[hidden] { display: none; }
 
 /* Own messages: flipped to the right, accent-colored. The chats--thread
    controller adds .chats-message--own client-side (bubbles broadcast
@@ -280,7 +283,10 @@
   border-bottom-right-radius: 0.3rem;
 }
 .chats-message--own .chats-message__meta { color: var(--chats-accent-contrast); opacity: 0.75; }
-.chats-message--own .chats-message__receipt { display: inline; }
+.chats-message--continuation .chats-message__bubble { border-top-left-radius: 0.35rem; }
+.chats-message--followed .chats-message__bubble { border-bottom-left-radius: var(--chats-radius); }
+.chats-message--own.chats-message--continuation .chats-message__bubble { border-top-right-radius: 0.35rem; }
+.chats-message--own.chats-message--followed .chats-message__bubble { border-bottom-right-radius: var(--chats-radius); }
 
 /* System + deleted */
 .chats-message--system { align-self: center; max-width: 100%; }
@@ -310,7 +316,63 @@
   border-radius: 0.75rem;
   display: block;
 }
+.chats-message__image-link { cursor: zoom-in; }
 .chats-message__file { font-size: 0.85rem; }
+
+.chats-attachment-preview {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.chats-attachment-preview::backdrop { background: rgba(0, 0, 0, 0.82); }
+.chats-attachment-preview__surface {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.82);
+}
+.chats-attachment-preview__figure { margin: 0; max-width: 100%; max-height: 100%; }
+.chats-attachment-preview__image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100dvh - 5rem);
+  object-fit: contain;
+  border-radius: 0.5rem;
+}
+.chats-attachment-preview__caption {
+  margin-top: 0.6rem;
+  color: #ffffff;
+  font-size: 0.75rem;
+  text-align: center;
+}
+.chats-attachment-preview__close {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: 0.75rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  font: inherit;
+  font-size: 1.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
 
 /* --- Reactions ----------------------------------------------------------------------- */
 
@@ -342,6 +404,7 @@
 .chats-message:hover .chats-message__actions,
 .chats-message:focus-within .chats-message__actions { opacity: 1; }
 .chats-message--own .chats-message__actions { justify-content: flex-end; margin-right: 0.6rem; }
+.chats-message--followed .chats-message__actions { display: none; }
 
 .chats-message__action {
   font-size: 0.72rem;

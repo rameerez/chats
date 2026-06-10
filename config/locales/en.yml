@@ -27,6 +27,7 @@ en:
       deleted: "Message deleted"
       edited: "edited"
       attachment: "Photo"
+      close_attachment: "Close photo"
       edit: "Edit"
       delete: "Delete"
       delete_confirm: "Delete this message for everyone?"

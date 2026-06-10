@@ -27,6 +27,7 @@ es:
       deleted: "Mensaje eliminado"
       edited: "editado"
       attachment: "Foto"
+      close_attachment: "Cerrar foto"
       edit: "Editar"
       delete: "Eliminar"
       delete_confirm: "¿Eliminar este mensaje para todos?"

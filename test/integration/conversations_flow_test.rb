@@ -127,7 +127,30 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "data-chats--thread-sent-label-value=\"Sent\""
     assert_includes response.body, "data-chats--thread-today-label-value=\"Today\""
     assert_includes response.body, "data-chats--thread-yesterday-label-value=\"Yesterday\""
+    assert_select "[data-controller='chats--thread']" do
+      assert_select "[data-chats--thread-seen-label-value='Seen']"
+      assert_select "[data-chats--thread-typing-suffix-value='is typing…']"
+    end
+    assert_select "dialog[data-chats--thread-target='attachmentDialog']"
+    assert_select "[data-chats--thread-target='attachmentImage'][src]", 0
+    assert_not_includes response.body, "' data-chats--thread-yesterday-label-value"
     assert_equal 0, @conversation.unread_count_for(@alice)
+  end
+
+  test "image attachments open in the thread preview instead of navigating" do
+    message = @bob.message!(@conversation, "photo", files: [png_upload(filename: "pickup.png")])
+    login_as @alice
+
+    get "/messages/#{@conversation.id}"
+
+    assert_response :success
+    attachment_link = "##{dom_id(message)} " \
+      "a[data-action='chats--thread#openAttachment'][data-attachment-name='pickup.png']"
+    assert_select attachment_link do
+      assert_select "img[alt='pickup.png']"
+    end
+    assert_select "##{dom_id(message)} a[target]", 0
+    assert_select "dialog button[data-action='chats--thread#closeAttachment']"
   end
 
   test "outsiders and leavers get 404, not 403 — existence never leaks" do

@@ -6,16 +6,17 @@
     work for every subscriber). %>
 <%= chats_styles %>
 
-<div class="chats chats-thread"
-     data-controller="chats--thread"
-     data-chats--thread-me-value="<%= Chats.messager_key(chats_current_messager) %>"
-     data-chats--thread-read-url-value="<%= read_conversation_path(@conversation) %>"
-     data-chats--thread-sent-label-value="<%= t("chats.thread.sent") %>"
-     data-chats--thread-seen-label-value="<%= Chats.config.read_receipts ? t("chats.thread.seen") : "" %>"
-     data-chats--thread-today-label-value="<%= t("chats.thread.today") %>"
-     data-chats--thread-yesterday-label-value="<%= t("chats.thread.yesterday") %>"
-     data-chats--thread-typing-suffix-value="<%= t("chats.thread.typing_suffix") %>"
-     data-chats--thread-group-value="<%= @conversation.group? %>">
+<%= tag.div class: "chats chats-thread", data: {
+      controller: "chats--thread",
+      "chats--thread-me-value": Chats.messager_key(chats_current_messager),
+      "chats--thread-read-url-value": read_conversation_path(@conversation),
+      "chats--thread-sent-label-value": t("chats.thread.sent"),
+      "chats--thread-seen-label-value": Chats.config.read_receipts ? t("chats.thread.seen") : "",
+      "chats--thread-today-label-value": t("chats.thread.today"),
+      "chats--thread-yesterday-label-value": t("chats.thread.yesterday"),
+      "chats--thread-typing-suffix-value": t("chats.thread.typing_suffix"),
+      "chats--thread-group-value": @conversation.group?
+    } do %>
 
   <%= turbo_stream_from @conversation %>
 
@@ -73,5 +74,24 @@
          hidden></div>
   </div>
 
+  <dialog class="chats-attachment-preview"
+          data-chats--thread-target="attachmentDialog"
+          data-action="close->chats--thread#resetAttachment">
+    <div class="chats-attachment-preview__surface"
+         data-action="click->chats--thread#closeAttachmentFromBackdrop">
+      <button type="button"
+              class="chats-attachment-preview__close"
+              aria-label="<%= t("chats.message.close_attachment") %>"
+              data-action="chats--thread#closeAttachment">×</button>
+      <figure class="chats-attachment-preview__figure">
+        <img class="chats-attachment-preview__image"
+             alt=""
+             data-chats--thread-target="attachmentImage">
+        <figcaption class="chats-attachment-preview__caption"
+                    data-chats--thread-target="attachmentCaption"></figcaption>
+      </figure>
+    </div>
+  </dialog>
+
   <%= render "chats/messages/composer", conversation: @conversation %>
-</div>
+<% end %>

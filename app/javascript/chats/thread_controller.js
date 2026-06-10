@@ -29,7 +29,15 @@ import { Controller } from "@hotwired/stimulus"
 // because the engine pins this file under controllers/chats/ (identifier:
 // "chats--thread"). See Chats::Engine's importmap initializer.
 export default class extends Controller {
-  static targets = ["scroller", "message", "typing", "readState"]
+  static targets = [
+    "scroller",
+    "message",
+    "typing",
+    "readState",
+    "attachmentDialog",
+    "attachmentImage",
+    "attachmentCaption"
+  ]
   static values = {
     me: String,
     readUrl: String,
@@ -54,6 +62,7 @@ export default class extends Controller {
       this.scrollToBottom()
       this.renderReceipts()
       this.renderDaySeparators()
+      this.renderMessageGroups()
     })
 
     if (this.hasTypingTarget) {
@@ -70,6 +79,7 @@ export default class extends Controller {
     clearTimeout(this.readTimer)
     clearTimeout(this.typingTimer)
     cancelAnimationFrame(this.daySeparatorFrame)
+    cancelAnimationFrame(this.messageGroupFrame)
   }
 
   // --- Bubbles ---------------------------------------------------------------
@@ -85,11 +95,19 @@ export default class extends Controller {
     if (!own) this.queueRead()
     this.renderReceipts()
     this.scheduleDaySeparators()
+    this.scheduleMessageGroups()
   }
 
   classify(element) {
-    if (element.dataset.senderKey && element.dataset.senderKey === this.meValue) {
-      element.classList.add("chats-message--own")
+    const own = element.dataset.senderKey && element.dataset.senderKey === this.meValue
+    element.classList.toggle("chats-message--own", own)
+
+    const receipt = element.querySelector("[data-chats-message-receipt]")
+    if (receipt && !own) {
+      receipt.hidden = true
+      receipt.textContent = ""
+      receipt.removeAttribute("aria-label")
+      delete receipt.dataset.state
     }
   }
 
@@ -136,6 +154,7 @@ export default class extends Controller {
     receipt.textContent = seen ? "✓✓" : "✓"
     receipt.setAttribute("aria-label", seen ? this.seenLabelValue : this.sentLabelValue)
     receipt.dataset.state = seen ? "seen" : "sent"
+    receipt.hidden = false
   }
 
   // --- Day separators ---------------------------------------------------------
@@ -182,6 +201,67 @@ export default class extends Controller {
 
   dayKey(date) {
     return [date.getFullYear(), date.getMonth(), date.getDate()].join("-")
+  }
+
+  // --- Consecutive-message grouping ---------------------------------------------
+
+  scheduleMessageGroups() {
+    cancelAnimationFrame(this.messageGroupFrame)
+    this.messageGroupFrame = requestAnimationFrame(() => this.renderMessageGroups())
+  }
+
+  renderMessageGroups() {
+    const messages = this.messageTargets
+
+    messages.forEach((message, index) => {
+      const previous = messages[index - 1]
+      const following = messages[index + 1]
+
+      message.classList.toggle("chats-message--continuation", this.sameMessageGroup(previous, message))
+      message.classList.toggle("chats-message--followed", this.sameMessageGroup(message, following))
+    })
+  }
+
+  sameMessageGroup(first, second) {
+    if (!first || !second || !first.dataset.senderKey || !second.dataset.senderKey) return false
+    if (first.dataset.senderKey !== second.dataset.senderKey) return false
+
+    const firstDate = new Date(first.dataset.timestamp)
+    const secondDate = new Date(second.dataset.timestamp)
+    if (Number.isNaN(firstDate.getTime()) || Number.isNaN(secondDate.getTime())) return false
+
+    return this.dayKey(firstDate) === this.dayKey(secondDate)
+  }
+
+  // --- Attachment preview --------------------------------------------------------
+
+  openAttachment(event) {
+    if (!this.hasAttachmentDialogTarget || !this.hasAttachmentImageTarget) return
+
+    event.preventDefault()
+    const link = event.currentTarget
+    const name = link.dataset.attachmentName || ""
+
+    this.attachmentImageTarget.src = link.href
+    this.attachmentImageTarget.alt = name
+    if (this.hasAttachmentCaptionTarget) this.attachmentCaptionTarget.textContent = name
+    if (!this.attachmentDialogTarget.open) this.attachmentDialogTarget.showModal()
+  }
+
+  closeAttachment() {
+    if (this.hasAttachmentDialogTarget && this.attachmentDialogTarget.open) this.attachmentDialogTarget.close()
+  }
+
+  closeAttachmentFromBackdrop(event) {
+    if (event.target === event.currentTarget) this.closeAttachment()
+  }
+
+  resetAttachment() {
+    if (this.hasAttachmentImageTarget) {
+      this.attachmentImageTarget.removeAttribute("src")
+      this.attachmentImageTarget.alt = ""
+    }
+    if (this.hasAttachmentCaptionTarget) this.attachmentCaptionTarget.textContent = ""
   }
 
   // --- Mark-as-read ------------------------------------------------------------

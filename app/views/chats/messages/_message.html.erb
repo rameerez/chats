@@ -45,7 +45,12 @@
                     attachment_path on the ENGINE's routes and blow up. %>
                 <% message.files.each do |file| %>
                   <% if file.image? %>
-                    <%= link_to main_app.url_for(file), target: "_blank", rel: "noopener", class: "chats-message__image-link" do %>
+                    <%= link_to main_app.url_for(file),
+                          class: "chats-message__image-link",
+                          data: {
+                            action: "chats--thread#openAttachment",
+                            attachment_name: file.filename.to_s
+                          } do %>
                       <%# Thumbnails only when the host can actually transform:
                           `variable?` checks the content type, the ImageProcessing
                           check that the variant-processing gem is installed —
@@ -70,8 +75,7 @@
             <% if Chats.config.read_receipts %>
               <span class="chats-message__receipt"
                     data-chats-message-receipt
-                    data-state="sent"
-                    aria-label="<%= t("chats.thread.sent") %>">✓</span>
+                    hidden></span>
             <% end %>
           </span>
         </div>
