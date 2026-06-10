@@ -93,6 +93,20 @@ export default class extends Controller {
       this.typingTarget.addEventListener("chats:typing", this.showTyping)
     }
     document.addEventListener("visibilitychange", this.visibilityChanged)
+    // Capture phase: the synthetic click that follows a long-press release
+    // must never reach the pressed bubble's links/forms once the popup is
+    // up — one-shot, armed by openPopup().
+    this.suppressClickCapture = (event) => {
+      if (!this.suppressNextClick) return
+      this.suppressNextClick = false
+      // Only the release-click on the PRESSED region is synthetic — taps
+      // inside the popup (a menu item can be the very next click after a
+      // right-click open) are real and must pass.
+      if (this.hasPopupTarget && this.popupTarget.contains(event.target)) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    this.element.addEventListener("click", this.suppressClickCapture, true)
     this.watchStreamSource()
   }
 
@@ -103,6 +117,7 @@ export default class extends Controller {
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
     this.sourceObserver?.disconnect()
+    this.element.removeEventListener("click", this.suppressClickCapture, true)
     clearTimeout(this.pressTimer)
     this.teardownPopup()
     clearTimeout(this.typingTimer)
@@ -529,7 +544,12 @@ export default class extends Controller {
 
     const bubble = event.target.closest(".chats-message")
     if (!bubble || !this.element.contains(bubble)) return
-    if (event.target.closest("a, button, input, textarea, summary")) return
+    // Buttons/fields keep their own press semantics, but LINKS must not
+    // block the gesture — an image-attachment bubble is one big <a>, and
+    // "long-press doesn't work on some messages" was exactly that. The
+    // release-click on a link after the popup opened is swallowed by the
+    // capture-phase suppressor installed in connect().
+    if (event.target.closest("button, input, textarea, summary")) return
 
     this.pressOrigin = { x: event.clientX, y: event.clientY }
     clearTimeout(this.pressTimer)
@@ -596,13 +616,18 @@ export default class extends Controller {
     // keyed on `.chats-message--own …` (gem CSS and host ancestor variants
     // alike) still applies inside the popup.
     clone.style.width = `${originRect.width}px`
+    // Mount INVISIBLE: between insertion and the FLIP transform a frame can
+    // paint, flashing the clone at its slot position before it "jumps" home
+    // — the visible half of the reported jank. The original bubble stays
+    // visible meanwhile, and the two swap in a single frame below.
+    clone.style.visibility = "hidden"
     this.popupBubbleTarget.classList.toggle("chats-message--own", own)
     this.popupBubbleTarget.replaceChildren(clone)
 
     this.popupOpenFor = bubble
     this.popupVisual = visual
     this.popupTarget.hidden = false
-    visual.classList.add("chats-message--lifted")
+    this.suppressNextClick = true
 
     // Anchor the stack to the bubble's OWN side — own messages stay pinned
     // right, others stay pinned left at their exact x. Telegram never drags
@@ -625,10 +650,11 @@ export default class extends Controller {
     clone.style.transform =
       `translate(${originRect.left - targetRect.left}px, ${originRect.top - targetRect.top}px)`
 
-    // Double rAF: the first frame flushes the initial transform into layout,
-    // the second starts the transition — without it, WebKit occasionally
-    // coalesces both styles and the bubble "teleports" instead of morphing.
+    // One frame: clone appears exactly over the original as the original
+    // hides — no gap, no double image. Next frame starts the morph.
     requestAnimationFrame(() => {
+      clone.style.visibility = ""
+      visual.classList.add("chats-message--lifted")
       requestAnimationFrame(() => {
         this.popupTarget.classList.add("chats-popup--open")
         clone.style.transform = ""
@@ -657,6 +683,7 @@ export default class extends Controller {
         `translate(${originRect.left - targetRect.left}px, ${originRect.top - targetRect.top}px)`
     }
     this.popupTarget.classList.remove("chats-popup--open")
+    this.suppressNextClick = false
 
     clearTimeout(this.popupCloseTimer)
     this.popupCloseTimer = setTimeout(() => this.teardownPopup(visual), POPUP_TRANSITION_MS)
