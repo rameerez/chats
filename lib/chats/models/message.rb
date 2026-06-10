@@ -207,7 +207,7 @@ module Chats
     # Moderate::ContentFilterable seam: when the host declares
     # `moderates :files, mode: :flag, with: :some_image_adapter`, the default
     # `public_send(:files)` would hand the adapter an ActiveStorage proxy.
-    # Most image adapters (like CarHey's ImageReviewAdapter, or an AWS
+    # Most image adapters (like a custo ImageReviewAdapter, or an AWS
     # Rekognition adapter fed via ClassifyJob) don't read the value anyway —
     # they re-fetch the blob — but we make the value meaningful and
     # change-detection correct regardless.

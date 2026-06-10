@@ -1,4 +1,4 @@
-# 💬 `chats` - Real-time DMs and group chats for your Rails users
+# 💬 `chats` - Add user-to-user DMs & group chats to your Rails app
 
 [![Gem Version](https://badge.fury.io/rb/chats.svg)](https://badge.fury.io/rb/chats) [![Build Status](https://github.com/rameerez/chats/workflows/Tests/badge.svg)](https://github.com/rameerez/chats/actions)
 
