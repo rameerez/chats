@@ -436,6 +436,13 @@
 }
 .chats-message:hover .chats-message__actions,
 .chats-message:focus-within .chats-message__actions { opacity: 1; }
+/* Touch devices have no hover — reveal-on-hover means react/edit/delete/
+   report simply don't exist there. Keep them always visible on coarse
+   pointers (they're quiet, small-type affordances by design).
+   https://developer.mozilla.org/docs/Web/CSS/@media/pointer */
+@media (pointer: coarse) {
+  .chats-message__actions { opacity: 1; }
+}
 .chats-message--own .chats-message__actions { justify-content: flex-end; margin-right: 0.6rem; }
 .chats-message--followed .chats-message__actions { display: none; }
 
@@ -531,6 +538,55 @@
   color: #dc2626;
   font-size: 0.8rem;
   margin: 0 0 0.4rem;
+}
+
+/* Selected-attachment previews (rendered by the composer controller). */
+.chats-composer__previews {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.25rem 0.25rem 0.6rem;
+}
+.chats-composer__previews[hidden] { display: none; }
+.chats-composer__preview {
+  position: relative;
+  flex-shrink: 0;
+}
+.chats-composer__preview-image {
+  height: 4.5rem;
+  width: 4.5rem;
+  border-radius: 0.75rem;
+  object-fit: cover;
+  border: 1px solid var(--chats-border);
+}
+.chats-composer__preview-name {
+  display: inline-flex;
+  align-items: center;
+  height: 4.5rem;
+  max-width: 10rem;
+  padding: 0 0.75rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--chats-border);
+  background: var(--chats-surface);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chats-composer__preview-remove {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.4rem;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 999px;
+  border: none;
+  background: var(--chats-text);
+  color: var(--chats-bg);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
 
 /* --- Inline edit ----------------------------------------------------------------------------- */

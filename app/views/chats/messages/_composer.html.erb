@@ -13,6 +13,14 @@
 
   <div id="<%= dom_id(conversation, :composer_errors) %>" class="chats-composer__errors"></div>
 
+  <%# Selected-attachment previews: thumbnails with per-file remove, rendered
+      client-side from the picker selection (object URLs — nothing uploads
+      until send). This is THE feedback that files are about to go out; a
+      counter chip alone reads as noise. %>
+  <% if Chats.config.attachments %>
+    <div class="chats-composer__previews" data-chats--composer-target="previews" hidden></div>
+  <% end %>
+
   <div class="chats-composer__bar">
     <% if Chats.config.attachments %>
       <label class="chats-composer__attach" aria-label="<%= t("chats.composer.attach") %>">
