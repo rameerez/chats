@@ -124,6 +124,9 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, "ping"
     assert_includes response.body, dom_id(@conversation, :messages)
+    assert_includes response.body, "data-chats--thread-sent-label-value=\"Sent\""
+    assert_includes response.body, "data-chats--thread-today-label-value=\"Today\""
+    assert_includes response.body, "data-chats--thread-yesterday-label-value=\"Yesterday\""
     assert_equal 0, @conversation.unread_count_for(@alice)
   end
 

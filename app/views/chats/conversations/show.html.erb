@@ -10,7 +10,10 @@
      data-controller="chats--thread"
      data-chats--thread-me-value="<%= Chats.messager_key(chats_current_messager) %>"
      data-chats--thread-read-url-value="<%= read_conversation_path(@conversation) %>"
+     data-chats--thread-sent-label-value="<%= t("chats.thread.sent") %>"
      data-chats--thread-seen-label-value="<%= Chats.config.read_receipts ? t("chats.thread.seen") : "" %>"
+     data-chats--thread-today-label-value="<%= t("chats.thread.today") %>"
+     data-chats--thread-yesterday-label-value="<%= t("chats.thread.yesterday") %>"
      data-chats--thread-typing-suffix-value="<%= t("chats.thread.typing_suffix") %>"
      data-chats--thread-group-value="<%= @conversation.group? %>">
 

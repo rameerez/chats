@@ -1,6 +1,6 @@
 <%# One message bubble. CRITICAL CONSTRAINT: this partial renders ONCE per
     broadcast and is delivered to EVERY subscriber, so nothing here may depend
-    on the viewer. Own-vs-other alignment, "Seen" placement, and showing the
+    on the viewer. Own-vs-other alignment, receipt state, and showing the
     own-message actions menu are all decided CLIENT-SIDE by the chats--thread
     controller comparing data-sender-key against its me-value (and CSS rules
     on .chats-message--own). Server-side authorization still gates every
@@ -19,54 +19,62 @@
   <% if message.system? %>
     <div class="chats-message__system"><%= message.body %></div>
   <% else %>
-    <%= chats_messager_avatar(message.sender, css_class: "chats-avatar chats-message__avatar") %>
-
     <div class="chats-message__content">
       <% if message.conversation.group? && message.sender %>
         <span class="chats-message__sender"><%= Chats.display_name_for(message.sender) %></span>
       <% end %>
 
-      <div class="chats-message__bubble">
-        <% if message.deleted? %>
-          <em class="chats-message__tombstone"><%= t("chats.message.deleted") %></em>
-        <% else %>
-          <% if message.body.present? %>
-            <%# simple_format: newlines → <br>/<p>, with sanitization — body is
-                user content and must never render as raw HTML. %>
-            <%= simple_format(message.body, {}, wrapper_tag: "div", class: "chats-message__text") %>
-          <% end %>
+      <div class="chats-message__bubble-row">
+        <%= chats_messager_avatar(message.sender, css_class: "chats-avatar chats-message__avatar") %>
 
-          <% if message.attachments? %>
-            <div class="chats-message__attachments">
-              <%# main_app.url_for, NOT bare url_for: Active Storage's routes
-                  live in the MAIN app — inside this isolated engine (and in
-                  the broadcast renderer) bare url_for would look for
-                  attachment_path on the ENGINE's routes and blow up. %>
-              <% message.files.each do |file| %>
-                <% if file.image? %>
-                  <%= link_to main_app.url_for(file), target: "_blank", rel: "noopener", class: "chats-message__image-link" do %>
-                    <%# Thumbnails only when the host can actually transform:
-                        `variable?` checks the content type, the ImageProcessing
-                        check that the variant-processing gem is installed —
-                        otherwise serving the variant URL would 500 later. %>
-                    <% representable = file.variable? && defined?(ImageProcessing) %>
-                    <%= image_tag main_app.url_for(representable ? file.variant(resize_to_limit: [480, 480]) : file),
-                          class: "chats-message__image", loading: "lazy", alt: file.filename.to_s %>
+        <div class="chats-message__bubble">
+          <% if message.deleted? %>
+            <em class="chats-message__tombstone"><%= t("chats.message.deleted") %></em>
+          <% else %>
+            <% if message.body.present? %>
+              <%# simple_format: newlines → <br>/<p>, with sanitization — body is
+                  user content and must never render as raw HTML. %>
+              <%= simple_format(message.body, {}, wrapper_tag: "div", class: "chats-message__text") %>
+            <% end %>
+
+            <% if message.attachments? %>
+              <div class="chats-message__attachments">
+                <%# main_app.url_for, NOT bare url_for: Active Storage's routes
+                    live in the MAIN app — inside this isolated engine (and in
+                    the broadcast renderer) bare url_for would look for
+                    attachment_path on the ENGINE's routes and blow up. %>
+                <% message.files.each do |file| %>
+                  <% if file.image? %>
+                    <%= link_to main_app.url_for(file), target: "_blank", rel: "noopener", class: "chats-message__image-link" do %>
+                      <%# Thumbnails only when the host can actually transform:
+                          `variable?` checks the content type, the ImageProcessing
+                          check that the variant-processing gem is installed —
+                          otherwise serving the variant URL would 500 later. %>
+                      <% representable = file.variable? && defined?(ImageProcessing) %>
+                      <%= image_tag main_app.url_for(representable ? file.variant(resize_to_limit: [480, 480]) : file),
+                            class: "chats-message__image", loading: "lazy", alt: file.filename.to_s %>
+                    <% end %>
+                  <% else %>
+                    <%= link_to "📄 #{file.filename}", main_app.url_for(file), target: "_blank", rel: "noopener", class: "chats-message__file" %>
                   <% end %>
-                <% else %>
-                  <%= link_to "📄 #{file.filename}", main_app.url_for(file), target: "_blank", rel: "noopener", class: "chats-message__file" %>
                 <% end %>
-              <% end %>
-            </div>
+              </div>
+            <% end %>
           <% end %>
-        <% end %>
 
-        <span class="chats-message__meta">
-          <% if message.edited? && !message.deleted? %>
-            <span class="chats-message__edited"><%= t("chats.message.edited") %></span>
-          <% end %>
-          <time datetime="<%= message.created_at.iso8601 %>"><%= message.created_at.in_time_zone.strftime("%H:%M") %></time>
-        </span>
+          <span class="chats-message__meta">
+            <% if message.edited? && !message.deleted? %>
+              <span class="chats-message__edited"><%= t("chats.message.edited") %></span>
+            <% end %>
+            <time datetime="<%= message.created_at.iso8601 %>"><%= message.created_at.in_time_zone.strftime("%H:%M") %></time>
+            <% if Chats.config.read_receipts %>
+              <span class="chats-message__receipt"
+                    data-chats-message-receipt
+                    data-state="sent"
+                    aria-label="<%= t("chats.thread.sent") %>">✓</span>
+            <% end %>
+          </span>
+        </div>
       </div>
 
       <% unless message.deleted? %>

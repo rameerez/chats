@@ -27,6 +27,7 @@ class BroadcastsTest < ActiveSupport::TestCase
     assert_equal dom_id(@conversation, :messages), append["target"]
     assert_includes append.to_html, "live!"
     assert_includes append.to_html, %(data-sender-key="#{Chats.messager_key(@alice)}")
+    assert_includes append.to_html, "data-chats-message-receipt"
     # Viewer-agnostic: no own/other class baked in — that's client-side.
     assert_not_includes append.to_html, "chats-message--own"
   end

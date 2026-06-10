@@ -197,6 +197,24 @@
   flex-direction: column;
 }
 .chats-thread__messages { display: flex; flex-direction: column; gap: 0.15rem; }
+.chats-day-separator {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  margin: 0.8rem 0;
+  color: var(--chats-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+}
+.chats-day-separator::before,
+.chats-day-separator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--chats-border);
+}
 .chats-loader {
   text-align: center;
   color: var(--chats-text-muted);
@@ -215,11 +233,12 @@
 }
 .chats-message__avatar { width: 1.9rem; height: 1.9rem; font-size: 0.7rem; }
 .chats-message__content { display: flex; flex-direction: column; min-width: 0; }
+.chats-message__bubble-row { display: flex; align-items: flex-end; gap: 0.5rem; }
 .chats-message__sender {
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--chats-text-muted);
-  margin: 0 0 0.1rem 0.75rem;
+  margin: 0 0 0.1rem 2.4rem;
 }
 
 .chats-message__bubble {
@@ -245,11 +264,13 @@
   color: var(--chats-text-muted);
   user-select: none;
 }
+.chats-message__receipt { display: none; letter-spacing: -0.18em; padding-right: 0.18em; }
 
 /* Own messages: flipped to the right, accent-colored. The chats--thread
    controller adds .chats-message--own client-side (bubbles broadcast
    viewer-agnostic — see _message.html.erb). */
 .chats-message--own { align-self: flex-end; flex-direction: row-reverse; }
+.chats-message--own .chats-message__bubble-row { flex-direction: row-reverse; }
 .chats-message--own .chats-message__avatar { display: none; }
 .chats-message--own .chats-message__sender { display: none; }
 .chats-message--own .chats-message__bubble {
@@ -259,6 +280,7 @@
   border-bottom-right-radius: 0.3rem;
 }
 .chats-message--own .chats-message__meta { color: var(--chats-accent-contrast); opacity: 0.75; }
+.chats-message--own .chats-message__receipt { display: inline; }
 
 /* System + deleted */
 .chats-message--system { align-self: center; max-width: 100%; }

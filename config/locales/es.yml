@@ -16,7 +16,10 @@ es:
       unmute: "Activar notificaciones"
       leave: "Salir del grupo"
       loading: "Cargando…"
+      sent: "Enviado"
       seen: "Visto"
+      today: "Hoy"
+      yesterday: "Ayer"
       typing_suffix: "está escribiendo…"
     conversation:
       empty_title: "Conversación"

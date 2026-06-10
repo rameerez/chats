@@ -16,7 +16,10 @@ en:
       unmute: "Unmute"
       leave: "Leave group"
       loading: "Loading…"
+      sent: "Sent"
       seen: "Seen"
+      today: "Today"
+      yesterday: "Yesterday"
       typing_suffix: "is typing…"
     conversation:
       empty_title: "Conversation"

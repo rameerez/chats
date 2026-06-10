@@ -27,6 +27,9 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, %(action="append")
     assert_includes response.body, dom_id(@conversation, :messages)
     assert_includes response.body, "instant!"
+    assert_includes response.body, "data-chats-message-receipt"
+    assert_includes response.body, "aria-label=\"Sent\""
+    assert_includes response.body, "✓"
   end
 
   test "sending falls back to a redirect without turbo" do
@@ -197,5 +200,17 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
          params: { emoji: "👍" },
          as: :turbo_stream
     assert_response :unprocessable_entity
+  end
+
+  test "read receipt markup is omitted when receipts are disabled" do
+    Chats.config.read_receipts = false
+    login_as @alice
+
+    post "/messages/#{@conversation.id}/messages",
+         params: { message: { body: "private delivery state" } },
+         as: :turbo_stream
+
+    assert_response :success
+    assert_not_includes response.body, "data-chats-message-receipt"
   end
 end

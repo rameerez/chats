@@ -18,10 +18,10 @@ import { Controller } from "@hotwired/stimulus"
 //                               arrive while the tab is visible — that POST
 //                               advances our read horizon and broadcasts fresh
 //                               read-state to everyone
-//   * "Seen" indicator          derive, client-side, the newest OWN message
-//                               every other participant has read (from the
-//                               broadcast read-state payload) and float the
-//                               label under it
+//   * sent / seen receipts      derive per-message ticks client-side from the
+//                               broadcast read-state payload
+//   * day separators            recalculate local-calendar markers after the
+//                               initial render, lazy pagination, and appends
 //   * typing indicator          a Turbo Stream CUSTOM ACTION (no Action Cable
 //                               channel of its own) — see registration below
 //
@@ -33,11 +33,11 @@ export default class extends Controller {
   static values = {
     me: String,
     readUrl: String,
+    sentLabel: String,
     seenLabel: String,
-    // CSS classes for the floating "Seen" element. Hosts that eject the views
-    // and bring their own framework (Tailwind etc.) override this from the
-    // markup; the default matches the gem's bundled chats.css.
-    seenClass: { type: String, default: "chats-seen" },
+    todayLabel: String,
+    yesterdayLabel: String,
+    daySeparatorClass: { type: String, default: "chats-day-separator" },
     typingSuffix: String,
     group: Boolean
   }
@@ -52,7 +52,8 @@ export default class extends Controller {
     requestAnimationFrame(() => {
       this.booting = false
       this.scrollToBottom()
-      this.renderSeen()
+      this.renderReceipts()
+      this.renderDaySeparators()
     })
 
     if (this.hasTypingTarget) {
@@ -68,6 +69,7 @@ export default class extends Controller {
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
     clearTimeout(this.typingTimer)
+    cancelAnimationFrame(this.daySeparatorFrame)
   }
 
   // --- Bubbles ---------------------------------------------------------------
@@ -81,7 +83,8 @@ export default class extends Controller {
     const own = element.dataset.senderKey === this.meValue
     if (own || this.nearBottom()) this.scrollToBottom()
     if (!own) this.queueRead()
-    this.renderSeen()
+    this.renderReceipts()
+    this.scheduleDaySeparators()
   }
 
   classify(element) {
@@ -93,10 +96,16 @@ export default class extends Controller {
   // --- Read state ("Seen") -----------------------------------------------------
 
   readStateTargetConnected() {
-    if (!this.booting) this.renderSeen()
+    if (!this.booting) this.renderReceipts()
   }
 
-  renderSeen() {
+  renderReceipts() {
+    if (!this.sentLabelValue) return
+
+    const ownMessages = this.messageTargets.filter(
+      (element) => element.dataset.senderKey === this.meValue
+    )
+    ownMessages.forEach((message) => this.setReceipt(message, false))
     if (!this.seenLabelValue || !this.hasReadStateTarget) return
 
     let horizons
@@ -112,34 +121,67 @@ export default class extends Controller {
     const others = Object.entries(horizons)
       .filter(([key]) => key !== this.meValue)
       .map(([, readAt]) => readAt)
-    if (others.length === 0 || others.some((readAt) => !readAt)) {
-      this.detachSeen()
-      return
-    }
+    if (others.length === 0 || others.some((readAt) => !readAt)) return
     const horizon = others.reduce((min, readAt) => (readAt < min ? readAt : min))
 
-    const lastSeenOwn = this.messageTargets.findLast(
-      (el) => el.dataset.senderKey === this.meValue && el.dataset.timestamp <= horizon
-    )
-    if (lastSeenOwn) {
-      this.seenElement.remove()
-      lastSeenOwn.insertAdjacentElement("afterend", this.seenElement)
-    } else {
-      this.detachSeen()
-    }
+    ownMessages.forEach((message) => {
+      this.setReceipt(message, message.dataset.timestamp <= horizon)
+    })
   }
 
-  get seenElement() {
-    if (!this._seenElement) {
-      this._seenElement = document.createElement("div")
-      this._seenElement.className = this.seenClassValue
-      this._seenElement.textContent = this.seenLabelValue
-    }
-    return this._seenElement
+  setReceipt(message, seen) {
+    const receipt = message.querySelector("[data-chats-message-receipt]")
+    if (!receipt) return
+
+    receipt.textContent = seen ? "✓✓" : "✓"
+    receipt.setAttribute("aria-label", seen ? this.seenLabelValue : this.sentLabelValue)
+    receipt.dataset.state = seen ? "seen" : "sent"
   }
 
-  detachSeen() {
-    this._seenElement?.remove()
+  // --- Day separators ---------------------------------------------------------
+
+  scheduleDaySeparators() {
+    cancelAnimationFrame(this.daySeparatorFrame)
+    this.daySeparatorFrame = requestAnimationFrame(() => this.renderDaySeparators())
+  }
+
+  renderDaySeparators() {
+    this.element.querySelectorAll("[data-chats-day-separator]").forEach((separator) => separator.remove())
+
+    let previousDay
+    this.messageTargets.forEach((message) => {
+      const date = new Date(message.dataset.timestamp)
+      if (Number.isNaN(date.getTime())) return
+
+      const day = this.dayKey(date)
+      if (day !== previousDay) message.before(this.daySeparator(date))
+      previousDay = day
+    })
+  }
+
+  daySeparator(date) {
+    const separator = document.createElement("div")
+    separator.className = this.daySeparatorClassValue
+    separator.dataset.chatsDaySeparator = ""
+    separator.textContent = this.dayLabel(date)
+    return separator
+  }
+
+  dayLabel(date) {
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(today.getDate() - 1)
+
+    if (this.dayKey(date) === this.dayKey(today) && this.todayLabelValue) return this.todayLabelValue
+    if (this.dayKey(date) === this.dayKey(yesterday) && this.yesterdayLabelValue) return this.yesterdayLabelValue
+
+    const options = { day: "numeric", month: "long" }
+    if (date.getFullYear() !== today.getFullYear()) options.year = "numeric"
+    return new Intl.DateTimeFormat(document.documentElement.lang || undefined, options).format(date)
+  }
+
+  dayKey(date) {
+    return [date.getFullYear(), date.getMonth(), date.getDate()].join("-")
   }
 
   // --- Mark-as-read ------------------------------------------------------------
