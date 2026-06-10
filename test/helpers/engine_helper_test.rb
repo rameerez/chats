@@ -60,6 +60,28 @@ class EngineHelperTest < ActionView::TestCase
     assert_includes html, "AW"
   end
 
+  test "chats_messager_avatar renders Active Storage variants from engine views" do
+    @alice.avatar.attach(io: StringIO.new(PNG_BYTES), filename: "avatar.png", content_type: "image/png")
+    Chats.config.messager_avatar = ->(messager) { messager.avatar.variant(resize_to_limit: [32, 32]) }
+
+    html = chats_messager_avatar(@alice)
+
+    assert_includes html, "/rails/active_storage/representations/"
+    assert_includes html, "avatar.png"
+    assert_includes html, "loading=\"lazy\""
+  end
+
+  test "chats_messager_avatar renders Active Storage attachments from engine views" do
+    @alice.avatar.attach(io: StringIO.new(PNG_BYTES), filename: "avatar.png", content_type: "image/png")
+    Chats.config.messager_avatar = :avatar.to_proc
+
+    html = chats_messager_avatar(@alice)
+
+    assert_includes html, "/rails/active_storage/blobs/"
+    assert_includes html, "avatar.png"
+    assert_includes html, "loading=\"lazy\""
+  end
+
   test "chats_preview_for prefixes group messages with the sender's first name" do
     carol = create_user(name: "Carol Chofer")
     group = Chats::Conversation.group!(@alice, [@bob, carol], title: "Trip")

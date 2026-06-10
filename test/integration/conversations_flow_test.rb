@@ -39,6 +39,22 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "/messages/#{@conversation.id}" # row link
   end
 
+  test "the inbox renders Active Storage variant avatars inside the mounted engine" do
+    @bob.avatar.attach(io: StringIO.new(PNG_BYTES), filename: "avatar.png", content_type: "image/png")
+    Chats.config.messager_avatar = lambda do |messager|
+      messager.avatar.variant(resize_to_limit: [32, 32]) if messager.avatar.attached?
+    end
+
+    @bob.message!(@conversation, "are you coming?")
+    login_as @alice
+
+    get "/messages"
+
+    assert_response :success
+    assert_includes response.body, "/rails/active_storage/representations/"
+    assert_includes response.body, "avatar.png"
+  end
+
   test "the inbox shows the subject context line" do
     listing = create_listing(title: "Madrid → Barcelona")
     @alice.chat_with(@bob, about: listing)

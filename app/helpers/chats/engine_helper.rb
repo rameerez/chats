@@ -59,7 +59,7 @@ module Chats
       end
 
       if source
-        image_tag source, alt: name, class: css_class, loading: "lazy"
+        image_tag chats_avatar_image_source(source), alt: name, class: css_class, loading: "lazy"
       else
         initials = name.split.first(2).map { |word| word[0] }.join.upcase
         tag.span(initials, class: "#{css_class} chats-avatar--initials", "aria-hidden": true)
@@ -161,6 +161,36 @@ module Chats
     def chats_viewer
       method_name = Chats.config.current_messager_method
       respond_to?(method_name) ? send(method_name) : nil
+    end
+
+    # Active Storage routes are drawn on the host app, not on this isolated
+    # engine. A bare `image_tag variant` is fine in normal host views, but
+    # inside engine views it asks the engine route set to polymorphically
+    # resolve ActiveStorage::VariantWithRecord and can fall through to
+    # `to_model`. Build the same proxy/redirect routes Rails would build,
+    # explicitly against the host route set, before `image_tag` sees it.
+    def chats_avatar_image_source(source)
+      return source unless chats_active_storage_source?(source)
+
+      routes = chats_main_routes
+
+      if source.respond_to?(:variation) && source.respond_to?(:blob)
+        routes.rails_representation_url(source, only_path: true)
+      elsif source.respond_to?(:blob)
+        routes.rails_blob_url(source.blob, only_path: true)
+      elsif source.respond_to?(:signed_id) && source.respond_to?(:filename)
+        routes.rails_blob_url(source, only_path: true)
+      else
+        source
+      end
+    end
+
+    def chats_active_storage_source?(source)
+      defined?(ActiveStorage) && source.class.name.start_with?("ActiveStorage::")
+    end
+
+    def chats_main_routes
+      respond_to?(:main_app) ? main_app : Rails.application.routes.url_helpers
     end
   end
 end
