@@ -14,7 +14,10 @@ const REFRESH_AFTER_HIDDEN_MS = 60_000
 // gesture from ever reading as a press.
 const LONG_PRESS_MS = 450
 const PRESS_MOVE_TOLERANCE_PX = 12
-const POPUP_TRANSITION_MS = 240
+// Teardown must outlive the close morph (260ms in chats.css and in hosts'
+// ejected styles) or the clone is yanked mid-flight and the bubble snaps the
+// last few pixels home. Keep this a hair ABOVE the CSS transform duration.
+const POPUP_TRANSITION_MS = 280
 const MAX_RENDERED_MESSAGES = 300
 const TRIM_LEEWAY = 20
 
@@ -308,8 +311,13 @@ export default class extends Controller {
 
     const link = event.currentTarget
 
+    // Media takes the whole screen: drop composer focus first so the
+    // on-screen keyboard slides away instead of overlapping the preview
+    // (matches every messaging app's behavior).
+    document.activeElement?.blur?.()
+
     this.attachmentImageTarget.src = link.href
-    this.attachmentImageTarget.alt = name
+    this.attachmentImageTarget.alt = link.querySelector("img")?.alt || ""
     this.attachmentDialogTarget.hidden = false
     document.documentElement.classList.add("chats-attachment-preview-open")
     this.attachmentDialogTarget.focus({ preventScroll: true })
