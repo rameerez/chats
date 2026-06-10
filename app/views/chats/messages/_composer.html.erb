@@ -57,7 +57,10 @@
             action: "input->chats--composer#typed keydown.enter->chats--composer#enterSend"
           } %>
 
-    <%= form.button type: :submit, class: "chats-composer__send", "aria-label": t("chats.composer.send") do %>
+    <%# pointerdown/mousedown keepFocus: keeps the textarea focused (and the
+        mobile keyboard up) through the send tap — see composer controller. %>
+    <%= form.button type: :submit, class: "chats-composer__send", "aria-label": t("chats.composer.send"),
+          data: { action: "pointerdown->chats--composer#keepFocus mousedown->chats--composer#keepFocus" } do %>
       <span aria-hidden="true">➤</span>
     <% end %>
   </div>

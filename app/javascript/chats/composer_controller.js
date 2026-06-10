@@ -36,6 +36,17 @@ export default class extends Controller {
     this.pingTyping()
   }
 
+  // Wired to the send button's pointerdown/mousedown: preventing the default
+  // there stops the tap from moving focus OFF the textarea — without it, iOS
+  // blurs the input (keyboard slides away), the submit completes, and the
+  // reset-on-success refocus brings the keyboard right back: a full
+  // hide/show bounce on every send. Click is NOT cancelled by a prevented
+  // pointerdown, so the form still submits normally.
+  // https://developer.mozilla.org/en-US/docs/Web/API/Element/pointerdown_event
+  keepFocus(event) {
+    event.preventDefault()
+  }
+
   enterSend(event) {
     if (event.shiftKey || event.isComposing) return
     if (!window.matchMedia("(pointer: fine)").matches) return
