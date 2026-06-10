@@ -86,6 +86,8 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     login_as @alice
 
     get "/messages", params: { q: "maletero" }
+    assert_select "form[data-controller='chats--debounced-submit'][data-turbo-frame='chats_inbox_results']"
+    assert_select "turbo-frame#chats_inbox_results[target='_top']"
     assert_includes response.body, "maletero"
     assert_not_includes response.body, "gasolinera"
 
