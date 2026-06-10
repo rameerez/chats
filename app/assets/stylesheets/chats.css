@@ -471,10 +471,6 @@
   position: fixed;
   inset: 0;
   z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1.25rem;
 }
 .chats-popup[hidden] { display: none; }
 .chats-popup__backdrop {
@@ -490,15 +486,26 @@
 .chats-popup--open .chats-popup__backdrop { opacity: 1; }
 
 .chats-popup__stack {
-  position: relative;
+  /* Anchored to the pressed bubble's SIDE by the controller (inline
+     left/right) — never dragged to the horizontal center. Vertically
+     centered; the FLIP morph on the clone covers the y-travel. */
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.6rem;
-  max-width: min(85vw, 30rem);
-  max-height: 90dvh;
+  max-height: 92dvh;
 }
+.chats-popup__stack--own { align-items: flex-end; }
 .chats-popup__slot--bubble { max-width: 100%; }
+.chats-popup__bubble {
+  /* Long messages scroll inside the lifted clone instead of pushing the
+     pill/menu off-screen (Telegram does the same). */
+  max-height: 45dvh;
+  overflow-y: auto;
+}
 .chats-popup__bubble {
   /* No background/radius/overflow of its own: the clone IS the bubble, at
      its original width — wrapping it in a styled box reads as a different

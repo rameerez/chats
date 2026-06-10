@@ -604,6 +604,23 @@ export default class extends Controller {
     this.popupTarget.hidden = false
     visual.classList.add("chats-message--lifted")
 
+    // Anchor the stack to the bubble's OWN side — own messages stay pinned
+    // right, others stay pinned left at their exact x. Telegram never drags
+    // a message to the horizontal center; only the vertical position changes
+    // (to make room for the pill above and the menu below).
+    const stack = this.popupBubbleTarget.parentElement
+    const viewportWidth = document.documentElement.clientWidth
+    const gutter = 12
+    stack.classList.toggle("chats-popup__stack--own", own)
+    if (own) {
+      stack.style.left = "auto"
+      stack.style.right = `${Math.max(viewportWidth - originRect.right, gutter)}px`
+    } else {
+      stack.style.right = "auto"
+      stack.style.left = `${Math.max(originRect.left, gutter)}px`
+    }
+    stack.style.maxWidth = `${viewportWidth - gutter * 2}px`
+
     const targetRect = clone.getBoundingClientRect()
     clone.style.transform =
       `translate(${originRect.left - targetRect.left}px, ${originRect.top - targetRect.top}px)`
@@ -654,6 +671,13 @@ export default class extends Controller {
     this.popupBubbleTarget.replaceChildren()
     this.popupBubbleTarget.classList.remove("chats-message--own")
     this.popupMenuTarget.replaceChildren()
+    const stack = this.popupBubbleTarget.parentElement
+    if (stack) {
+      stack.classList.remove("chats-popup__stack--own")
+      stack.style.left = ""
+      stack.style.right = ""
+      stack.style.maxWidth = ""
+    }
     visual?.classList?.remove("chats-message--lifted")
     this.popupVisual = null
   }
@@ -679,7 +703,7 @@ export default class extends Controller {
 
   copyMessage(item) {
     const bubble = this.popupOpenFor
-    const text = bubble?.querySelector(".chats-message__text")?.innerText?.trim()
+    const text = bubble?.querySelector("[data-chats-message-body], .chats-message__text")?.innerText?.trim()
     if (!text) return this.closePopup()
 
     this.writeClipboard(text).then((copied) => {
@@ -731,7 +755,7 @@ export default class extends Controller {
   beginEditFromPopup() {
     const bubble = this.popupOpenFor
     if (!bubble) return
-    const body = bubble.querySelector(".chats-message__text")?.innerText?.trim() || ""
+    const body = bubble.querySelector("[data-chats-message-body], .chats-message__text")?.innerText?.trim() || ""
     const messageId = bubble.id.split("_").pop()
 
     this.closePopup()

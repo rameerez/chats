@@ -39,8 +39,13 @@
           <% else %>
             <% if message.body.present? %>
               <%# simple_format: newlines → <br>/<p>, with sanitization — body is
-                  user content and must never render as raw HTML. %>
-              <%= simple_format(message.body, {}, wrapper_tag: "div", class: "chats-message__text") %>
+                  user content and must never render as raw HTML. The explicit
+                  wrapper (not simple_format's class option) matters: with
+                  multi-paragraph bodies simple_format emits one tag PER
+                  paragraph, and copy/edit read THIS single marked node. %>
+              <div class="chats-message__text" data-chats-message-body>
+                <%= simple_format(message.body, {}, wrapper_tag: "div") %>
+              </div>
             <% end %>
 
             <% if message.attachments? %>
