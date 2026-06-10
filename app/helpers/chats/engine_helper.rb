@@ -49,7 +49,7 @@ module Chats
 
     # An avatar for any messager: whatever `config.messager_avatar` returns
     # (URL / ActiveStorage attachment / variant) or an initials placeholder.
-    def chats_messager_avatar(messager, css_class: "chats-avatar")
+    def chats_messager_avatar(messager, css_class: "chats-avatar", loading: "eager")
       name = Chats.display_name_for(messager).presence || "?"
       source = begin
         avatar = Chats.avatar_for(messager)
@@ -59,7 +59,7 @@ module Chats
       end
 
       if source
-        image_tag chats_avatar_image_source(source), alt: name, class: css_class, loading: "lazy"
+        image_tag chats_avatar_image_source(source), alt: name, class: css_class, loading: loading
       else
         initials = name.split.first(2).map { |word| word[0] }.join.upcase
         tag.span(initials, class: "#{css_class} chats-avatar--initials", "aria-hidden": true)

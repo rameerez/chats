@@ -68,7 +68,7 @@ class EngineHelperTest < ActionView::TestCase
 
     assert_includes html, "/rails/active_storage/representations/"
     assert_includes html, "avatar.png"
-    assert_includes html, "loading=\"lazy\""
+    assert_includes html, "loading=\"eager\""
   end
 
   test "chats_messager_avatar renders Active Storage attachments from engine views" do
@@ -79,6 +79,15 @@ class EngineHelperTest < ActionView::TestCase
 
     assert_includes html, "/rails/active_storage/blobs/"
     assert_includes html, "avatar.png"
+    assert_includes html, "loading=\"eager\""
+  end
+
+  test "chats_messager_avatar allows lazy loading when a host opts in" do
+    @alice.avatar.attach(io: StringIO.new(PNG_BYTES), filename: "avatar.png", content_type: "image/png")
+    Chats.config.messager_avatar = :avatar.to_proc
+
+    html = chats_messager_avatar(@alice, loading: "lazy")
+
     assert_includes html, "loading=\"lazy\""
   end
 
