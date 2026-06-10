@@ -144,8 +144,7 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     get "/messages/#{@conversation.id}"
 
     assert_response :success
-    attachment_link = "##{dom_id(message)} " \
-      "a[data-action='chats--thread#openAttachment'][data-attachment-name='pickup.png']"
+    attachment_link = "##{dom_id(message)} a[data-action='chats--thread#openAttachment']"
     assert_select attachment_link do
       assert_select "img[alt='pickup.png']"
     end

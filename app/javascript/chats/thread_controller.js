@@ -57,8 +57,7 @@ export default class extends Controller {
     "popupBubble",
     "popupMenu",
     "attachmentDialog",
-    "attachmentImage",
-    "attachmentCaption"
+    "attachmentImage"
   ]
   static values = {
     me: String,
@@ -293,11 +292,9 @@ export default class extends Controller {
     if (!this.hasAttachmentDialogTarget || !this.hasAttachmentImageTarget) return
 
     const link = event.currentTarget
-    const name = link.dataset.attachmentName || ""
 
     this.attachmentImageTarget.src = link.href
     this.attachmentImageTarget.alt = name
-    if (this.hasAttachmentCaptionTarget) this.attachmentCaptionTarget.textContent = name
     this.attachmentDialogTarget.hidden = false
     document.documentElement.classList.add("chats-attachment-preview-open")
     this.attachmentDialogTarget.focus({ preventScroll: true })
@@ -320,7 +317,6 @@ export default class extends Controller {
       this.attachmentImageTarget.removeAttribute("src")
       this.attachmentImageTarget.alt = ""
     }
-    if (this.hasAttachmentCaptionTarget) this.attachmentCaptionTarget.textContent = ""
   }
 
   // --- Mark-as-read ------------------------------------------------------------
@@ -594,6 +590,13 @@ export default class extends Controller {
     const clone = visual.cloneNode(true)
     clone.querySelectorAll("template").forEach((node) => node.remove())
     clone.classList.add("chats-popup__bubble")
+    // The clone must LOOK like the original: same width (bubbles size to
+    // content — letting the slot re-wrap them reads as a different element),
+    // and the own-context class goes on the SLOT so every descendant rule
+    // keyed on `.chats-message--own …` (gem CSS and host ancestor variants
+    // alike) still applies inside the popup.
+    clone.style.width = `${originRect.width}px`
+    this.popupBubbleTarget.classList.toggle("chats-message--own", own)
     this.popupBubbleTarget.replaceChildren(clone)
 
     this.popupOpenFor = bubble
@@ -605,9 +608,14 @@ export default class extends Controller {
     clone.style.transform =
       `translate(${originRect.left - targetRect.left}px, ${originRect.top - targetRect.top}px)`
 
+    // Double rAF: the first frame flushes the initial transform into layout,
+    // the second starts the transition — without it, WebKit occasionally
+    // coalesces both styles and the bubble "teleports" instead of morphing.
     requestAnimationFrame(() => {
-      this.popupTarget.classList.add("chats-popup--open")
-      clone.style.transform = ""
+      requestAnimationFrame(() => {
+        this.popupTarget.classList.add("chats-popup--open")
+        clone.style.transform = ""
+      })
     })
 
     this.popupKeydown = (event) => {
@@ -644,6 +652,7 @@ export default class extends Controller {
     this.popupTarget.classList.remove("chats-popup--open")
     this.popupReactionsTarget.replaceChildren()
     this.popupBubbleTarget.replaceChildren()
+    this.popupBubbleTarget.classList.remove("chats-message--own")
     this.popupMenuTarget.replaceChildren()
     visual?.classList?.remove("chats-message--lifted")
     this.popupVisual = null
@@ -673,19 +682,46 @@ export default class extends Controller {
     const text = bubble?.querySelector(".chats-message__text")?.innerText?.trim()
     if (!text) return this.closePopup()
 
-    const done = () => {
-      if (this.copiedLabelValue) {
+    this.writeClipboard(text).then((copied) => {
+      if (copied && this.copiedLabelValue) {
         item.textContent = this.copiedLabelValue
         setTimeout(() => this.closePopup(), 450)
       } else {
         this.closePopup()
       }
-    }
+    })
+  }
+
+  // navigator.clipboard needs a SECURE context — absent in WKWebView/Android
+  // WebView shells pointed at a dev host over http, and revocable elsewhere.
+  // The execCommand path still works everywhere ON A USER GESTURE (we're
+  // inside the menu tap), so layer it as the fallback rather than silently
+  // claiming "Copied!" without copying.
+  // https://developer.mozilla.org/docs/Web/API/Clipboard/writeText#security_considerations
+  writeClipboard(text) {
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(done, done)
-    } else {
-      done()
+      return navigator.clipboard.writeText(text).then(() => true, () => this.legacyClipboard(text))
     }
+    return Promise.resolve(this.legacyClipboard(text))
+  }
+
+  legacyClipboard(text) {
+    const area = document.createElement("textarea")
+    area.value = text
+    area.setAttribute("readonly", "")
+    area.style.position = "fixed"
+    area.style.opacity = "0"
+    document.body.appendChild(area)
+    area.focus()
+    area.select()
+    let copied = false
+    try {
+      copied = document.execCommand("copy")
+    } catch {
+      copied = false
+    }
+    area.remove()
+    return copied
   }
 
   // Edit happens in the COMPOSER (Telegram's flow): close the popup (the

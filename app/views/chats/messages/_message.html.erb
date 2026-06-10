@@ -54,8 +54,7 @@
                     <%= link_to main_app.url_for(file),
                           class: "chats-message__image-link",
                           data: {
-                            action: "chats--thread#openAttachment",
-                            attachment_name: file.filename.to_s
+                            action: "chats--thread#openAttachment"
                           } do %>
                       <%# Thumbnails only when the host can actually transform:
                           `variable?` checks the content type, the ImageProcessing

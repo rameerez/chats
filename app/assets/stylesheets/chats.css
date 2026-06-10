@@ -235,7 +235,7 @@
   gap: 0.75rem;
   width: 100%;
   margin: 0.8rem 0;
-  color: var(--chats-accent, #2563eb);
+  color: var(--chats-text-muted);
   font-size: 0.7rem;
   font-weight: 700;
   text-align: center;
@@ -307,8 +307,8 @@
   white-space: nowrap;
 }
 .chats-message__receipt[data-state="seen"] {
-  letter-spacing: -0.18em;
-  padding-right: 0.18em;
+  letter-spacing: -0.3em;
+  padding-right: 0.3em;
 }
 .chats-message__receipt[hidden] { display: none; }
 .chats-visually-hidden {
@@ -405,12 +405,6 @@
   object-fit: contain;
   border-radius: 0.5rem;
 }
-.chats-attachment-preview__caption {
-  margin-top: 0.6rem;
-  color: #ffffff;
-  font-size: 0.75rem;
-  text-align: center;
-}
 .chats-attachment-preview__close {
   position: absolute;
   top: max(0.75rem, env(safe-area-inset-top));
@@ -490,7 +484,8 @@
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   opacity: 0;
-  transition: opacity 200ms ease;
+  transition: opacity 180ms ease;
+  will-change: opacity;
 }
 .chats-popup--open .chats-popup__backdrop { opacity: 1; }
 
@@ -505,11 +500,12 @@
 }
 .chats-popup__slot--bubble { max-width: 100%; }
 .chats-popup__bubble {
-  transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  max-height: 50dvh;
-  overflow: hidden;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
-  border-radius: var(--chats-radius);
+  /* No background/radius/overflow of its own: the clone IS the bubble, at
+     its original width — wrapping it in a styled box reads as a different
+     element. drop-shadow (not box-shadow) hugs the bubble's real shape. */
+  transition: transform 260ms cubic-bezier(0.32, 0.72, 0.18, 1);
+  will-change: transform;
+  filter: drop-shadow(0 18px 40px rgba(0, 0, 0, 0.28));
 }
 
 .chats-popup__slot--reactions,
@@ -530,6 +526,14 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
 }
 .chats-popup__reactions form { display: inline; }
+.chats-popup__reaction,
+.chats-reaction {
+  /* Emoji-FIRST family: iOS WKWebView per-glyph fallback through webfont
+     stacks can dead-end at LastResort (the boxed "?") for VS16/ZWJ emoji;
+     leading with the emoji fonts sidesteps it. Digits (reaction counts)
+     fall through to sans-serif — Apple Color Emoji maps none. */
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol", sans-serif;
+}
 .chats-popup__reaction {
   font-size: 1.35rem;
   line-height: 1;
