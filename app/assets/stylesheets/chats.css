@@ -260,11 +260,15 @@
 /* Paginated history loads inside (nested) turbo-frames, and a custom
    element's default display:block strands those bubbles in a block context —
    .chats-message--own aligns with align-self, which only works when the
-   bubble is a direct flex item of the scroller column. `contents` flattens
-   every page frame out of layout so old messages align exactly like live
-   ones. https://developer.mozilla.org/en-US/docs/Web/CSS/display#contents */
+   bubble is a direct flex item of a column. Make each page frame its own
+   flex column mirroring the scroller. NOT display:contents: that removes
+   the frame's box, and Turbo's lazy loading watches the frame with an
+   IntersectionObserver — no box, no intersection, no fetch ("loading…"
+   forever). https://developer.mozilla.org/en-US/docs/Web/CSS/display#contents */
 turbo-frame[id^="chats_page_"] {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
 }
 
 /* --- Bubbles --------------------------------------------------------------------- */
@@ -297,9 +301,14 @@ turbo-frame[id^="chats_page_"] {
   padding: 0.5rem 0.8rem;
   overflow-wrap: anywhere;
 }
-.chats-message__text { margin: 0; }
-.chats-message__text p { margin: 0 0 0.25rem; }
-.chats-message__text p:last-child { margin-bottom: 0; }
+/* pre-wrap: the body renders as plain escaped text, so every newline the
+   sender typed shows literally (chat semantics — simple_format used to
+   collapse consecutive blank lines into one paragraph break). */
+.chats-message__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 .chats-message__meta {
   display: flex;

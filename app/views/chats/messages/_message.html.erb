@@ -38,14 +38,13 @@
             <em class="chats-message__tombstone"><%= t("chats.message.deleted") %></em>
           <% else %>
             <% if message.body.present? %>
-              <%# simple_format: newlines → <br>/<p>, with sanitization — body is
-                  user content and must never render as raw HTML. The explicit
-                  wrapper (not simple_format's class option) matters: with
-                  multi-paragraph bodies simple_format emits one tag PER
-                  paragraph, and copy/edit read THIS single marked node. %>
-              <div class="chats-message__text" data-chats-message-body>
-                <%= simple_format(message.body, {}, wrapper_tag: "div") %>
-              </div>
+              <%# Plain escaped text + white-space: pre-wrap (chats.css), NOT
+                  simple_format: chat semantics are literal — every newline the
+                  sender typed renders, including consecutive blank lines, which
+                  simple_format collapses into a single paragraph break. ERB
+                  escaping keeps user content from ever rendering as HTML. The
+                  single marked node is the copy/edit contract. %>
+              <div class="chats-message__text" data-chats-message-body><%= message.body %></div>
             <% end %>
 
             <% if message.attachments? %>
