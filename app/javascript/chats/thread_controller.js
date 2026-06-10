@@ -751,17 +751,26 @@ export default class extends Controller {
     })
   }
 
-  // navigator.clipboard needs a SECURE context — absent in WKWebView/Android
-  // WebView shells pointed at a dev host over http, and revocable elsewhere.
-  // The execCommand path still works everywhere ON A USER GESTURE (we're
-  // inside the menu tap), so layer it as the fallback rather than silently
-  // claiming "Copied!" without copying.
+  // Clipboard order matters, and it's the reverse of what you'd expect:
+  // execCommand("copy") FIRST, synchronously, while we are still inside the
+  // user-gesture call stack — then navigator.clipboard as the fallback.
+  // Two WebKit realities force this (measured on iOS 26 WKWebView, 2026-06):
+  //   * navigator.clipboard.writeText can reject in embedded WebViews (and
+  //     doesn't exist at all on insecure dev origins), and
+  //   * by the time its rejection handler runs (a microtask), WebKit has
+  //     dropped the transient user-activation token — so a fallback
+  //     execCommand inside .then()/.catch() silently copies NOTHING.
+  // Running the legacy path inside the original tap frame works on iOS
+  // WKWebView, Android WebView, and every desktop browser today; the async
+  // API only needs to carry contexts that have removed execCommand.
   // https://developer.mozilla.org/docs/Web/API/Clipboard/writeText#security_considerations
+  // https://webkit.org/blog/10855/async-clipboard-api/ (gesture requirements)
   writeClipboard(text) {
+    if (this.legacyClipboard(text)) return Promise.resolve(true)
     if (navigator.clipboard?.writeText) {
-      return navigator.clipboard.writeText(text).then(() => true, () => this.legacyClipboard(text))
+      return navigator.clipboard.writeText(text).then(() => true, () => false)
     }
-    return Promise.resolve(this.legacyClipboard(text))
+    return Promise.resolve(false)
   }
 
   legacyClipboard(text) {
