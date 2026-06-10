@@ -93,7 +93,15 @@ export default class extends Controller {
     // bottom for own messages and for foreign ones when already down there.
     const own = element.dataset.senderKey === this.meValue
     if (own || this.nearBottom()) this.scrollToBottom()
-    if (!own) this.queueRead()
+    if (!own) {
+      // Typing pings are ephemeral and intentionally not coupled to message
+      // persistence. Once a real message from that sender arrives, the old
+      // "Alice is typing…" signal is stale and should disappear immediately
+      // instead of waiting for the timeout. Turbo custom actions are the
+      // transport here: https://turbo.hotwired.dev/reference/streams#custom-actions
+      this.hideTypingFor(element.dataset.senderKey)
+      this.queueRead()
+    }
     this.renderReceipts()
     this.scheduleDaySeparators()
     this.scheduleMessageGroups()
@@ -334,6 +342,7 @@ export default class extends Controller {
     if (key === this.meValue) return // our own echo
 
     const wasHidden = this.typingTarget.hidden
+    this.typingKey = key
     this.typingTarget.textContent = `${name} ${this.typingSuffixValue}`
     this.typingTarget.hidden = false
     if (wasHidden && this.nearBottom()) this.scrollToBottom()
@@ -341,7 +350,18 @@ export default class extends Controller {
     clearTimeout(this.typingTimer)
     this.typingTimer = setTimeout(() => {
       this.typingTarget.hidden = true
+      this.typingKey = null
     }, 4000)
+  }
+
+  hideTypingFor(key) {
+    if (!this.hasTypingTarget) return
+    if (key && this.typingKey && this.typingKey !== key) return
+
+    clearTimeout(this.typingTimer)
+    this.typingTarget.hidden = true
+    this.typingTarget.textContent = ""
+    this.typingKey = null
   }
 
   // --- Scrolling ----------------------------------------------------------------

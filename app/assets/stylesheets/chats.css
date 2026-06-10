@@ -149,7 +149,10 @@
 
 /* --- Thread -------------------------------------------------------------------- */
 
-.chats-thread { height: 100dvh; }
+.chats-thread {
+  height: 100dvh;
+  overflow: hidden;
+}
 
 .chats-thread__header {
   display: flex;
@@ -161,6 +164,7 @@
   position: sticky;
   top: 0;
   z-index: 10;
+  flex: 0 0 auto;
 }
 .chats-thread__header .chats-avatar { width: 2.4rem; height: 2.4rem; }
 .chats-thread__back {
@@ -190,8 +194,14 @@
 
 .chats-thread__scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  /* Keep the composer dock out of the scroll chain: the message pane is the
+     only scroll container, and boundary drags should not bubble into browser /
+     WebView pull-to-refresh. Sources:
+     https://developer.mozilla.org/docs/Web/CSS/min-height#values
+     https://developer.mozilla.org/docs/Web/CSS/overscroll-behavior */
+  overscroll-behavior-y: contain;
   padding: 1rem 1rem 0.5rem;
   display: flex;
   flex-direction: column;
@@ -231,7 +241,7 @@
   max-width: 85%;
   margin: 0.2rem 0 0;
 }
-.chats-message--continuation { margin-top: 0.02rem; }
+.chats-message--continuation { margin-top: 0.15rem; }
 .chats-message__avatar { width: 1.9rem; height: 1.9rem; font-size: 0.7rem; }
 .chats-message__content { display: flex; flex-direction: column; min-width: 0; }
 .chats-message__bubble-row { display: flex; align-items: flex-end; gap: 0.5rem; }
@@ -266,7 +276,15 @@
   color: var(--chats-text-muted);
   user-select: none;
 }
-.chats-message__receipt { white-space: nowrap; }
+.chats-message__receipt {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.chats-message__receipt[data-state="seen"] {
+  letter-spacing: -0.18em;
+  padding-right: 0.18em;
+}
 .chats-message__receipt[hidden] { display: none; }
 .chats-visually-hidden {
   position: absolute;
@@ -454,8 +472,7 @@
 /* --- Composer ----------------------------------------------------------------------------- */
 
 .chats-composer {
-  position: sticky;
-  bottom: 0;
+  flex: 0 0 auto;
   background: var(--chats-bg);
   border-top: 1px solid var(--chats-border);
   padding: 0.6rem 0.9rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
@@ -471,8 +488,9 @@
   font: inherit;
   line-height: 1.35;
   max-height: 10rem;
-  outline-offset: 2px;
+  outline: none;
 }
+.chats-composer__input:focus { outline: none; }
 .chats-composer__send {
   width: 2.6rem;
   height: 2.6rem;
