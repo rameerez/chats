@@ -140,10 +140,15 @@ export default class extends Controller {
     // move re-fires this callback, which then proceeds in order.
     if (this.ensureChronological(element)) return
 
-    // A new bubble after initial render: keep the viewport glued to the
-    // bottom for own messages and for foreign ones when already down there.
+    // Bubbles (re)connect for three reasons: a new message arriving at the
+    // tail, an existing bubble REPLACED in place (edit and tombstone
+    // broadcasts re-render the same dom_id), and older history paginating
+    // in above. Only a TAIL arrival may move the viewport — autoscrolling
+    // on a replace yanked editors to the bottom as if they'd sent a new
+    // message, away from the bubble they just edited mid-history.
+    const latest = this.messageTargets[this.messageTargets.length - 1] === element
     const own = element.dataset.senderKey === this.meValue
-    if (own || this.nearBottom()) this.scrollToBottom()
+    if (latest && (own || this.nearBottom())) this.scrollToBottom()
     if (!own) {
       // Typing pings are ephemeral and intentionally not coupled to message
       // persistence. Once a real message from that sender arrives, the old
