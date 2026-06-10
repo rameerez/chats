@@ -113,26 +113,43 @@ module Chats
       GlobalID::Locator.locate_signed(sgid, for: purpose) || raise(ActiveRecord::RecordNotFound)
     end
 
-    # Plain SQL LIKE over message bodies and group titles — fast enough for
-    # an inbox, zero dependencies, portable across sqlite/postgres/mysql
-    # (LOWER + LIKE instead of ILIKE). Bodies encrypted at rest
-    # (config.encrypt_messages) won't match, by design. Outgrow it by
-    # overriding the inbox view + this scope with pg_search & friends.
+    # Partial, case-insensitive matching across the inbox metadata users can
+    # actually see: participant names, conversation titles, subject labels,
+    # and message bodies. The inbox is capped at 200 rows, so metadata is
+    # filtered portably in Ruby from the already-preloaded objects while the
+    # potentially larger message-body set stays in SQL. No PostgreSQL-only
+    # full-text dependency is needed for this scale.
     def apply_search(conversations)
       return conversations unless Chats.config.search
 
       query = params[:q].to_s.strip
       return conversations if query.empty?
 
-      # EXISTS instead of a JOIN + DISTINCT: DISTINCT would fight the inbox's
-      # COALESCE(...) ORDER BY on PostgreSQL ("ORDER BY expressions must
-      # appear in select list"), and EXISTS doesn't multiply rows to begin with.
+      loaded = conversations.to_a
+      normalized_query = query.downcase
       pattern = "%#{Chats::Conversation.sanitize_sql_like(query.downcase)}%"
-      conversations.where(
-        "EXISTS (SELECT 1 FROM chats_messages cm WHERE cm.conversation_id = chats_conversations.id " \
-        "AND cm.deleted_at IS NULL AND LOWER(cm.body) LIKE :q) OR LOWER(chats_conversations.title) LIKE :q",
-        q: pattern
-      )
+      message_match_ids =
+        if Chats.config.encrypt_messages
+          []
+        else
+          Chats::Message.where(conversation_id: loaded.map(&:id), deleted_at: nil)
+                        .where("LOWER(chats_messages.body) LIKE ?", pattern)
+                        .distinct
+                        .pluck(:conversation_id)
+        end
+
+      loaded.select do |conversation|
+        message_match_ids.include?(conversation.id) ||
+          searchable_metadata(conversation).downcase.include?(normalized_query)
+      end
+    end
+
+    def searchable_metadata(conversation)
+      participant_names = conversation.participants.filter_map do |participant|
+        Chats.display_name_for(participant.messager) if participant.active?
+      end
+
+      [conversation.title, conversation.subject_label, *participant_names].compact.join(" ")
     end
   end
 end

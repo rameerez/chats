@@ -76,9 +76,9 @@ module Chats
     # enable this.
     attr_reader :attachments
 
-    # Inbox search box (filters conversations by participant name and message
-    # body with a plain SQL LIKE — no extra dependencies; swap in pg_search &
-    # friends by overriding the inbox view if you outgrow it).
+    # Inbox search box (partial matching across participant names, conversation
+    # titles, subject labels, and message bodies — no extra dependencies; swap
+    # in pg_search & friends by overriding the controller if you outgrow it).
     attr_accessor :search
 
     # --- Limits ---------------------------------------------------------------

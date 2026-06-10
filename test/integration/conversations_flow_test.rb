@@ -95,6 +95,23 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "zzz-nothing" # the empty state echoes the query
   end
 
+  test "search matches partial participant names conversation titles and subject labels" do
+    listing = create_listing(title: "Madrid → Barcelona")
+    subject_conversation = conversation_between(@alice, @bob, about: listing)
+    group = Chats::Conversation.group!(@alice, [@bob, @carol], title: "Aeropuerto temprano")
+    login_as @alice
+
+    get "/messages", params: { q: "bo" }
+    assert_includes response.body, "/messages/#{@conversation.id}"
+
+    get "/messages", params: { q: "barce" }
+    assert_includes response.body, "/messages/#{subject_conversation.id}"
+    assert_not_includes response.body, "/messages/#{@conversation.id}"
+
+    get "/messages", params: { q: "aerop" }
+    assert_includes response.body, "/messages/#{group.id}"
+  end
+
   # --- thread ---------------------------------------------------------------------
 
   test "the thread renders messages and marks them read" do
