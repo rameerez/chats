@@ -28,6 +28,7 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, dom_id(@conversation, :messages)
     assert_includes response.body, "instant!"
     assert_includes response.body, "data-chats-message-receipt"
+    assert_includes response.body, "data-chats-message-receipt-label"
     assert_includes response.body, "hidden"
     assert_not_includes response.body, "aria-label=\"Sent\""
     assert_not_includes response.body, "✓"

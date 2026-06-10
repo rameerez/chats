@@ -75,6 +75,10 @@
             <% if Chats.config.read_receipts %>
               <span class="chats-message__receipt"
                     data-chats-message-receipt
+                    aria-hidden="true"
+                    hidden></span>
+              <span class="chats-visually-hidden"
+                    data-chats-message-receipt-label
                     hidden></span>
             <% end %>
           </span>

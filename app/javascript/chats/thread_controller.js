@@ -103,11 +103,15 @@ export default class extends Controller {
     element.classList.toggle("chats-message--own", own)
 
     const receipt = element.querySelector("[data-chats-message-receipt]")
+    const label = element.querySelector("[data-chats-message-receipt-label]")
     if (receipt && !own) {
       receipt.hidden = true
       receipt.textContent = ""
-      receipt.removeAttribute("aria-label")
       delete receipt.dataset.state
+    }
+    if (label && !own) {
+      label.hidden = true
+      label.textContent = ""
     }
   }
 
@@ -152,9 +156,14 @@ export default class extends Controller {
     if (!receipt) return
 
     receipt.textContent = seen ? "✓✓" : "✓"
-    receipt.setAttribute("aria-label", seen ? this.seenLabelValue : this.sentLabelValue)
     receipt.dataset.state = seen ? "seen" : "sent"
     receipt.hidden = false
+
+    const label = message.querySelector("[data-chats-message-receipt-label]")
+    if (label) {
+      label.textContent = seen ? this.seenLabelValue : this.sentLabelValue
+      label.hidden = false
+    }
   }
 
   // --- Day separators ---------------------------------------------------------
