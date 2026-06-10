@@ -74,9 +74,13 @@
          hidden></div>
   </div>
 
-  <dialog class="chats-attachment-preview"
-          data-chats--thread-target="attachmentDialog"
-          data-action="close->chats--thread#resetAttachment">
+  <div class="chats-attachment-preview"
+       role="dialog"
+       aria-modal="true"
+       tabindex="-1"
+       data-chats--thread-target="attachmentDialog"
+       data-action="keydown.esc->chats--thread#closeAttachment"
+       hidden>
     <div class="chats-attachment-preview__surface"
          data-action="click->chats--thread#closeAttachmentFromBackdrop">
       <button type="button"
@@ -91,7 +95,7 @@
                     data-chats--thread-target="attachmentCaption"></figcaption>
       </figure>
     </div>
-  </dialog>
+  </div>
 
   <%= render "chats/messages/composer", conversation: @conversation %>
 <% end %>

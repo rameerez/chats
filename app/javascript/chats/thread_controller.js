@@ -80,6 +80,7 @@ export default class extends Controller {
     clearTimeout(this.typingTimer)
     cancelAnimationFrame(this.daySeparatorFrame)
     cancelAnimationFrame(this.messageGroupFrame)
+    document.documentElement.classList.remove("chats-attachment-preview-open")
   }
 
   // --- Bubbles ---------------------------------------------------------------
@@ -245,20 +246,26 @@ export default class extends Controller {
   // --- Attachment preview --------------------------------------------------------
 
   openAttachment(event) {
+    event.preventDefault()
     if (!this.hasAttachmentDialogTarget || !this.hasAttachmentImageTarget) return
 
-    event.preventDefault()
     const link = event.currentTarget
     const name = link.dataset.attachmentName || ""
 
     this.attachmentImageTarget.src = link.href
     this.attachmentImageTarget.alt = name
     if (this.hasAttachmentCaptionTarget) this.attachmentCaptionTarget.textContent = name
-    if (!this.attachmentDialogTarget.open) this.attachmentDialogTarget.showModal()
+    this.attachmentDialogTarget.hidden = false
+    document.documentElement.classList.add("chats-attachment-preview-open")
+    this.attachmentDialogTarget.focus({ preventScroll: true })
   }
 
   closeAttachment() {
-    if (this.hasAttachmentDialogTarget && this.attachmentDialogTarget.open) this.attachmentDialogTarget.close()
+    if (!this.hasAttachmentDialogTarget) return
+
+    this.attachmentDialogTarget.hidden = true
+    document.documentElement.classList.remove("chats-attachment-preview-open")
+    this.resetAttachment()
   }
 
   closeAttachmentFromBackdrop(event) {

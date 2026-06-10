@@ -331,6 +331,9 @@
 .chats-message__file { font-size: 0.85rem; }
 
 .chats-attachment-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
   width: 100%;
   height: 100%;
   max-width: none;
@@ -338,9 +341,10 @@
   margin: 0;
   padding: 0;
   border: 0;
-  background: transparent;
+  background: rgba(0, 0, 0, 0.82);
 }
-.chats-attachment-preview::backdrop { background: rgba(0, 0, 0, 0.82); }
+.chats-attachment-preview[hidden] { display: none; }
+.chats-attachment-preview-open { overflow: hidden; }
 .chats-attachment-preview__surface {
   position: relative;
   display: grid;
