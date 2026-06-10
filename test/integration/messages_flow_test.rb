@@ -97,18 +97,17 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
 
   # --- editing ----------------------------------------------------------------------
 
-  test "the author can edit in place" do
+  test "the author edits through the composer (PATCH from the long-press flow)" do
     message = @alice.message!(@conversation, "typoo")
     login_as @alice
 
-    get "/messages/#{@conversation.id}/messages/#{message.id}/edit", as: :turbo_stream
-    assert_response :success
-    assert_includes response.body, "chats-edit"
-
+    # The composer form, re-targeted by the long-press Edit action, PATCHes
+    # the same message[body] param it POSTs — no separate edit form exists.
     patch "/messages/#{@conversation.id}/messages/#{message.id}",
           params: { message: { body: "fixed" } },
           as: :turbo_stream
     assert_response :success
+    assert_includes response.body, %(action="replace")
     assert_equal "fixed", message.reload.body
     assert message.edited?
   end
@@ -116,9 +115,6 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
   test "only the author can edit or delete" do
     message = @alice.message!(@conversation, "mine")
     login_as @bob
-
-    get "/messages/#{@conversation.id}/messages/#{message.id}/edit"
-    assert_response :not_found
 
     patch "/messages/#{@conversation.id}/messages/#{message.id}", params: { message: { body: "hijack" } }
     assert_response :not_found
@@ -128,7 +124,7 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
     assert_equal "mine", message.reload.body
   end
 
-  test "invalid edits re-render the form with errors" do
+  test "invalid edits land in the composer's error slot" do
     message = @alice.message!(@conversation, "valid")
     login_as @alice
 
@@ -137,7 +133,29 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
           as: :turbo_stream
 
     assert_response :unprocessable_entity
+    assert_includes response.body, "composer_errors"
     assert_equal "valid", message.reload.body
+  end
+
+  test "bubbles carry the long-press menu template instead of inline actions" do
+    message = @alice.message!(@conversation, "press me")
+    login_as @alice
+
+    get "/messages/#{@conversation.id}"
+    assert_response :success
+
+    # Everything actionable is inert template content for the popup…
+    assert_select "##{ActionView::RecordIdentifier.dom_id(message)} template[data-chats-message-menu]" do
+      assert_select ".chats-popup__reactions form", 6
+      assert_select "[data-chats-action='copy']"
+      assert_select "[data-chats-action='edit'][data-chats-own-only]"
+      assert_select "form[data-chats-own-only] .chats-popup__item--danger"
+    end
+    # …and the popup overlay + composer edit cue are mounted once per thread.
+    assert_select "[data-chats--thread-target='popup'] .chats-popup__backdrop"
+    assert_select "[data-chats--composer-target='editBar'][hidden]"
+    # The old always-visible affordances are gone.
+    assert_select ".chats-message__actions", 0
   end
 
   test "show returns the bubble (the cancel-edit path)" do

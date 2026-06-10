@@ -10,6 +10,11 @@ import { Controller } from "@hotwired/stimulus"
 //     grow the DOM unboundedly (trimmed history stays reachable — the
 //     pagination anchor is rebuilt to re-fetch it on scroll-up).
 const REFRESH_AFTER_HIDDEN_MS = 60_000
+// Long-press tuning: Telegram-ish. The move tolerance keeps a scroll
+// gesture from ever reading as a press.
+const LONG_PRESS_MS = 450
+const PRESS_MOVE_TOLERANCE_PX = 12
+const POPUP_TRANSITION_MS = 240
 const MAX_RENDERED_MESSAGES = 300
 const TRIM_LEEWAY = 20
 
@@ -47,6 +52,10 @@ export default class extends Controller {
     "message",
     "typing",
     "readState",
+    "popup",
+    "popupReactions",
+    "popupBubble",
+    "popupMenu",
     "attachmentDialog",
     "attachmentImage",
     "attachmentCaption"
@@ -62,6 +71,7 @@ export default class extends Controller {
     yesterdayLabel: String,
     daySeparatorClass: { type: String, default: "chats-day-separator" },
     typingSuffix: String,
+    copiedLabel: String,
     group: Boolean
   }
 
@@ -94,6 +104,8 @@ export default class extends Controller {
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
     this.sourceObserver?.disconnect()
+    clearTimeout(this.pressTimer)
+    this.teardownPopup()
     clearTimeout(this.typingTimer)
     cancelAnimationFrame(this.daySeparatorFrame)
     cancelAnimationFrame(this.messageGroupFrame)
@@ -502,6 +514,190 @@ export default class extends Controller {
     frame.src = `${this.threadUrlValue}${separator}before=${messageId}`
     frame.innerHTML = '<div class="chats-loader"></div>'
     this.scrollerTarget.prepend(frame)
+  }
+
+  // --- Long-press message popup (Telegram-style) ----------------------------------
+  //
+  // Long-press (or right-click) a bubble: a clone of it morphs to the center
+  // of the screen over a blurred glass backdrop, the reactions pill appears
+  // above it and the contextual menu (copy / edit / delete / host-injected
+  // items) below. NOTHING actionable renders inline on bubbles — the menu
+  // content lives in each bubble's inert <template data-chats-message-menu>
+  // and is cloned in here on open. The FLIP morph measures the bubble's
+  // on-screen rect, mounts the clone at its centered slot, then transitions
+  // the delta transform back to zero (and the reverse on close).
+
+  pressStart(event) {
+    if (this.popupOpenFor) return
+    if (event.button !== undefined && event.button !== 0) return
+
+    const bubble = event.target.closest(".chats-message")
+    if (!bubble || !this.element.contains(bubble)) return
+    if (event.target.closest("a, button, input, textarea, summary")) return
+
+    this.pressOrigin = { x: event.clientX, y: event.clientY }
+    clearTimeout(this.pressTimer)
+    this.pressTimer = setTimeout(() => this.openPopup(bubble), LONG_PRESS_MS)
+  }
+
+  pressMove(event) {
+    if (!this.pressTimer || !this.pressOrigin) return
+    const dx = event.clientX - this.pressOrigin.x
+    const dy = event.clientY - this.pressOrigin.y
+    if (Math.hypot(dx, dy) > PRESS_MOVE_TOLERANCE_PX) this.cancelPress()
+  }
+
+  pressEnd() { this.cancelPress() }
+  pressCancel() { this.cancelPress() }
+
+  cancelPress() {
+    clearTimeout(this.pressTimer)
+    this.pressTimer = null
+  }
+
+  // Desktop parity + the Android long-press double-fire fix in one place:
+  // right-click on a bubble IS the popup (no 450ms hold), and the native
+  // context menu never appears over messages.
+  contextMenu(event) {
+    const bubble = event.target.closest(".chats-message")
+    if (!bubble) return
+
+    event.preventDefault()
+    this.cancelPress()
+    if (!this.popupOpenFor) this.openPopup(bubble)
+  }
+
+  openPopup(bubble) {
+    this.cancelPress()
+    if (!this.hasPopupTarget) return
+
+    const template = bubble.querySelector("template[data-chats-message-menu]")
+    const visual = bubble.querySelector(".chats-message__bubble") || bubble
+    if (!template) return
+
+    const own = bubble.dataset.senderKey === this.meValue
+    const content = template.content.cloneNode(true)
+    if (!own) content.querySelectorAll("[data-chats-own-only]").forEach((node) => node.remove())
+
+    const reactions = content.querySelector(".chats-popup__reactions")
+    const menu = content.querySelector(".chats-popup__menu")
+    this.popupReactionsTarget.replaceChildren(...(reactions ? [reactions] : []))
+    this.popupMenuTarget.replaceChildren(...(menu ? [menu] : []))
+
+    // The lifted bubble: a visual clone (templates stripped) that morphs
+    // from the original's rect into the centered stack slot.
+    const originRect = visual.getBoundingClientRect()
+    const clone = visual.cloneNode(true)
+    clone.querySelectorAll("template").forEach((node) => node.remove())
+    clone.classList.add("chats-popup__bubble")
+    this.popupBubbleTarget.replaceChildren(clone)
+
+    this.popupOpenFor = bubble
+    this.popupVisual = visual
+    this.popupTarget.hidden = false
+    visual.classList.add("chats-message--lifted")
+
+    const targetRect = clone.getBoundingClientRect()
+    clone.style.transform =
+      `translate(${originRect.left - targetRect.left}px, ${originRect.top - targetRect.top}px)`
+
+    requestAnimationFrame(() => {
+      this.popupTarget.classList.add("chats-popup--open")
+      clone.style.transform = ""
+    })
+
+    this.popupKeydown = (event) => {
+      if (event.key === "Escape") this.closePopup()
+    }
+    document.addEventListener("keydown", this.popupKeydown)
+  }
+
+  closePopup() {
+    const bubble = this.popupOpenFor
+    if (!bubble) return
+    this.popupOpenFor = null
+
+    const clone = this.popupBubbleTarget.firstElementChild
+    const visual = this.popupVisual
+    // Reverse FLIP against the bubble's CURRENT rect — the thread may have
+    // appended/scrolled underneath while the popup was open.
+    if (clone && visual) {
+      const originRect = visual.getBoundingClientRect()
+      const targetRect = clone.getBoundingClientRect()
+      clone.style.transform =
+        `translate(${originRect.left - targetRect.left}px, ${originRect.top - targetRect.top}px)`
+    }
+    this.popupTarget.classList.remove("chats-popup--open")
+
+    clearTimeout(this.popupCloseTimer)
+    this.popupCloseTimer = setTimeout(() => this.teardownPopup(visual), POPUP_TRANSITION_MS)
+    document.removeEventListener("keydown", this.popupKeydown)
+  }
+
+  teardownPopup(visual = this.popupVisual) {
+    if (!this.hasPopupTarget) return
+    this.popupTarget.hidden = true
+    this.popupTarget.classList.remove("chats-popup--open")
+    this.popupReactionsTarget.replaceChildren()
+    this.popupBubbleTarget.replaceChildren()
+    this.popupMenuTarget.replaceChildren()
+    visual?.classList?.remove("chats-message--lifted")
+    this.popupVisual = null
+  }
+
+  popupMenuClicked(event) {
+    const item = event.target.closest("[data-chats-action], form button, form input[type=submit]")
+    if (!item) return
+
+    const action = item.dataset.chatsAction
+    if (action === "copy") {
+      event.preventDefault()
+      this.copyMessage(item)
+    } else if (action === "edit") {
+      event.preventDefault()
+      this.beginEditFromPopup()
+    } else {
+      // A real form submission (reaction toggle, delete): let it fire, then
+      // get out of the way — Telegram closes on selection too. The cloned
+      // form's request has already started by the time we tear down.
+      setTimeout(() => this.closePopup(), 60)
+    }
+  }
+
+  copyMessage(item) {
+    const bubble = this.popupOpenFor
+    const text = bubble?.querySelector(".chats-message__text")?.innerText?.trim()
+    if (!text) return this.closePopup()
+
+    const done = () => {
+      if (this.copiedLabelValue) {
+        item.textContent = this.copiedLabelValue
+        setTimeout(() => this.closePopup(), 450)
+      } else {
+        this.closePopup()
+      }
+    }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done, done)
+    } else {
+      done()
+    }
+  }
+
+  // Edit happens in the COMPOSER (Telegram's flow): close the popup (the
+  // bubble morphs back home) and hand the body off via a DOM event the
+  // chats--composer controller listens for — it shows the "edit message"
+  // quote cue and re-targets its form at the message's update URL.
+  beginEditFromPopup() {
+    const bubble = this.popupOpenFor
+    if (!bubble) return
+    const body = bubble.querySelector(".chats-message__text")?.innerText?.trim() || ""
+    const messageId = bubble.id.split("_").pop()
+
+    this.closePopup()
+    window.dispatchEvent(new CustomEvent("chats:edit-message", {
+      detail: { id: messageId, body: body }
+    }))
   }
 
   // --- Chronology guard -------------------------------------------------------------

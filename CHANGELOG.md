@@ -11,6 +11,22 @@ open-source Campfire (https://github.com/basecamp/once-campfire) — see
 `docs/campfire_review.md` for the full adopt/skip ledger:
 
 ### Added
+- **Telegram-style long-press message actions**: nothing actionable
+  renders inline on bubbles anymore. Long-press (or right-click) lifts a
+  clone of the bubble to the center over a blurred glass backdrop, with
+  the reactions pill above and the contextual menu below (Copy · Edit ·
+  Delete in red — plus whatever the host's ejected views inject, e.g. a
+  report link). Menu content ships per-bubble as an inert
+  `<template data-chats-message-menu>`; `data-chats-own-only` items are
+  stripped for foreign messages (cosmetic — the server still authorizes).
+- **Composer edit mode**: the long-press Edit closes the popup (the bubble
+  morphs back home) and loads the body into the composer under a
+  quote-style "Edit message" cue (left accent border, one-line trimmed
+  original, ✕ to cancel); the SAME form re-targets to the message's
+  update URL with `_method=patch`. The old in-bubble edit form (GET
+  `/messages/:id/edit`, `_edit_form`) is REMOVED — update failures now
+  render into the composer's error slot. New locale keys:
+  `chats.message.copy/.copied`, `chats.composer.editing/.cancel_edit`.
 - **Stale-thread catch-up**: `GET /:id/refresh?since=ms` appends messages
   created — and replaces ones edited/tombstoned — while the client was
   asleep; answers deep backlogs with a Turbo 8 page refresh instead of

@@ -17,7 +17,11 @@
       "chats--thread-typing-suffix-value": t("chats.thread.typing_suffix"),
       "chats--thread-group-value": @conversation.group?,
       "chats--thread-refresh-url-value": refresh_conversation_path(@conversation),
-      "chats--thread-thread-url-value": conversation_path(@conversation)
+      "chats--thread-thread-url-value": conversation_path(@conversation),
+      "chats--thread-copied-label-value": t("chats.message.copied"),
+      action: "pointerdown->chats--thread#pressStart pointermove->chats--thread#pressMove " \
+              "pointerup->chats--thread#pressEnd pointercancel->chats--thread#pressCancel " \
+              "contextmenu->chats--thread#contextMenu"
     } do %>
 
   <%= turbo_stream_from @conversation %>
@@ -85,6 +89,27 @@
          class="chats-typing"
          data-chats--thread-target="typing"
          hidden></div>
+  </div>
+
+  <%# Long-press popup (Telegram-style): the backdrop blurs the thread, the
+      pressed bubble's clone morphs to the center, the reactions pill sits
+      above it and the contextual menu below. Slots are filled by cloning
+      the bubble's <template data-chats-message-menu>. %>
+  <div class="chats-popup"
+       role="dialog"
+       aria-modal="true"
+       data-chats--thread-target="popup"
+       hidden>
+    <div class="chats-popup__backdrop" data-action="click->chats--thread#closePopup"></div>
+    <div class="chats-popup__stack">
+      <div class="chats-popup__slot chats-popup__slot--reactions"
+           data-chats--thread-target="popupReactions"
+           data-action="click->chats--thread#popupMenuClicked"></div>
+      <div class="chats-popup__slot chats-popup__slot--bubble" data-chats--thread-target="popupBubble"></div>
+      <div class="chats-popup__slot chats-popup__slot--menu"
+           data-chats--thread-target="popupMenu"
+           data-action="click->chats--thread#popupMenuClicked"></div>
+    </div>
   </div>
 
   <div class="chats-attachment-preview"

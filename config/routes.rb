@@ -14,7 +14,7 @@ Chats::Engine.routes.draw do
       get :refresh  # stale-thread catch-up after sleep/disconnect (?since=ms)
     end
 
-    resources :messages, only: %i[show create edit update destroy] do
+    resources :messages, only: %i[show create update destroy] do
       # Tap-to-toggle, so `create` both adds and removes (see Reaction.toggle!).
       resources :reactions, only: :create
     end

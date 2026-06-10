@@ -109,35 +109,46 @@
           </div>
         <% end %>
 
-        <div class="chats-message__actions">
+        <%# The long-press menu (Telegram-style). NOTHING actionable renders
+            inline anymore — everything lives in this inert <template>, which
+            the thread controller clones into the popup overlay on
+            long-press/right-click: the reactions pill lands above the
+            lifted bubble, this contextual menu below it. Items marked
+            data-chats-own-only are stripped from the clone for foreign
+            messages (cosmetic — the server still authorizes for real).
+            button_to forms keep working when cloned: the CSRF token is
+            baked in at render time. %>
+        <template data-chats-message-menu>
           <% if Chats.config.reactions %>
-            <details class="chats-menu chats-menu--reactions">
-              <summary class="chats-message__action" aria-label="<%= t("chats.message.react") %>">🙂</summary>
-              <div class="chats-menu__panel chats-menu__panel--emoji">
-                <% %w[👍 ❤️ 😂 😮 😢 🙏].each do |emoji| %>
-                  <%= button_to emoji, chats_routes.conversation_message_reactions_path(message.conversation, message),
-                        method: :post, params: { emoji: emoji }, class: "chats-emoji" %>
-                <% end %>
-              </div>
-            </details>
+            <div class="chats-popup__reactions" role="group" aria-label="<%= t("chats.message.react") %>">
+              <% %w[👍 ❤️ 😂 😮 😢 🙏].each do |emoji| %>
+                <%= button_to emoji, chats_routes.conversation_message_reactions_path(message.conversation, message),
+                      method: :post, params: { emoji: emoji }, class: "chats-popup__reaction" %>
+              <% end %>
+            </div>
           <% end %>
 
-          <%# Author-only affordances: revealed by CSS only on own bubbles
-              (.chats-message--own), enforced for real by require_ownership!. %>
-          <% if Chats.config.editing %>
-            <%= link_to t("chats.message.edit"),
-                  chats_routes.edit_conversation_message_path(message.conversation, message),
-                  class: "chats-message__action chats-message__action--own",
-                  data: { turbo_stream: true } %>
-          <% end %>
-          <% if Chats.config.deletion %>
-            <%= button_to t("chats.message.delete"),
-                  chats_routes.conversation_message_path(message.conversation, message),
-                  method: :delete,
-                  class: "chats-message__action chats-message__action--own chats-message__action--danger",
-                  form: { data: { turbo_confirm: t("chats.message.delete_confirm") } } %>
-          <% end %>
-        </div>
+          <div class="chats-popup__menu" role="menu">
+            <% if message.body.present? %>
+              <button type="button" class="chats-popup__item" role="menuitem" data-chats-action="copy">
+                <%= t("chats.message.copy") %>
+              </button>
+            <% end %>
+            <% if Chats.config.editing && message.body.present? %>
+              <button type="button" class="chats-popup__item" role="menuitem" data-chats-action="edit" data-chats-own-only>
+                <%= t("chats.message.edit") %>
+              </button>
+            <% end %>
+            <% if Chats.config.deletion %>
+              <%= button_to t("chats.message.delete"),
+                    chats_routes.conversation_message_path(message.conversation, message),
+                    method: :delete,
+                    class: "chats-popup__item chats-popup__item--danger",
+                    role: "menuitem",
+                    form: { data: { turbo_confirm: t("chats.message.delete_confirm"), chats_own_only: true } } %>
+            <% end %>
+          </div>
+        </template>
       <% end %>
     </div>
   <% end %>

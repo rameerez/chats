@@ -8,10 +8,25 @@
       data: {
         controller: "chats--composer",
         "chats--composer-typing-url-value": (typing_conversation_path(conversation) if Chats.config.typing_indicators),
-        action: "turbo:submit-end->chats--composer#submitted"
+        action: "turbo:submit-end->chats--composer#submitted chats:edit-message@window->chats--composer#beginEdit"
       } do |form| %>
 
-  <div id="<%= dom_id(conversation, :composer_errors) %>" class="chats-composer__errors"></div>
+<div id="<%= dom_id(conversation, :composer_errors) %>" class="chats-composer__errors"></div>
+
+<%# The edit cue (Telegram's flow): long-press → Editar loads the message
+    into this same form; this quote-style bar (left border, bold label,
+    the original trimmed to one line) is the signal that send = save.
+    The ✕ cancels back to compose mode. %>
+<div class="chats-composer__edit" data-chats--composer-target="editBar" hidden>
+  <div class="chats-composer__edit-quote">
+    <span class="chats-composer__edit-label"><%= t("chats.composer.editing") %></span>
+    <span class="chats-composer__edit-preview" data-chats--composer-target="editPreview"></span>
+  </div>
+  <button type="button"
+          class="chats-composer__edit-cancel"
+          aria-label="<%= t("chats.composer.cancel_edit") %>"
+          data-action="chats--composer#cancelEdit">×</button>
+</div>
 
   <%# Selected-attachment previews: thumbnails with per-file remove, rendered
       client-side from the picker selection (object URLs — nothing uploads

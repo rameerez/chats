@@ -4,8 +4,8 @@ module Chats
   # Sending, editing, soft-deleting, and re-rendering message bubbles.
   class MessagesController < ApplicationController
     before_action :set_conversation
-    before_action :set_message, only: %i[show edit update destroy]
-    before_action :require_ownership!, only: %i[edit update destroy]
+    before_action :set_message, only: %i[show update destroy]
+    before_action :require_ownership!, only: %i[update destroy]
 
     # Per-sender send throttle via Rails 8's built-in controller rate
     # limiting (https://api.rubyonrails.org/classes/ActionController/RateLimiting.html).
@@ -53,18 +53,14 @@ module Chats
 
     # Swap the bubble for an inline edit form (turbo_stream), with a plain
     # page as the no-JS fallback.
-    def edit
-      respond_to do |format|
-        format.turbo_stream
-        format.html
-      end
-    end
-
+    # Edits arrive from the COMPOSER (the long-press → Editar flow re-targets
+    # the composer form at this URL with _method=patch), so failures render
+    # into the composer's error slot — same surface as failed sends.
     def update
       @message.edit!(message_params[:body])
       render_bubble_replacement
     rescue ActiveRecord::RecordInvalid, Chats::NotAllowedError
-      render :edit_errors, status: :unprocessable_entity
+      render :errors, status: :unprocessable_entity
     end
 
     # Soft delete by default: tombstone the bubble (see Message#soft_delete!).

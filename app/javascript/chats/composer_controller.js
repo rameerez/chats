@@ -18,7 +18,7 @@ import { Controller } from "@hotwired/stimulus"
 //                         on the form) and clears/refocuses only on success —
 //                         a 422 keeps the draft intact
 export default class extends Controller {
-  static targets = ["input", "files", "fileCount", "previews"]
+  static targets = ["input", "files", "fileCount", "previews", "editBar", "editPreview"]
   static values = { typingUrl: String }
 
   connect() {
@@ -48,10 +48,79 @@ export default class extends Controller {
   submitted(event) {
     if (!event.detail.success) return
 
+    if (this.editing) this.exitEdit()
     this.element.reset()
     this.clearPreviews()
     this.autosize()
     if (this.hasInputTarget) this.inputTarget.focus()
+  }
+
+  // --- Edit mode (Telegram's flow) ---------------------------------------------
+  //
+  // The thread controller's long-press menu dispatches chats:edit-message
+  // (wired via data-action on the form): load the body into the input,
+  // show the "edit message" quote cue above it, and re-target this SAME
+  // form at the message's update URL (create URL + /:id) with a hidden
+  // _method=patch — Rails method override, zero extra forms. Attachments
+  // are disabled while editing (edits are body-only by design).
+
+  beginEdit(event) {
+    const { id, body } = event.detail || {}
+    if (!id || !this.hasInputTarget) return
+
+    this.createAction ||= this.element.action
+    this.element.action = `${this.createAction}/${id}`
+    this.editing = true
+
+    if (!this.methodInput) {
+      this.methodInput = document.createElement("input")
+      this.methodInput.type = "hidden"
+      this.methodInput.name = "_method"
+      this.methodInput.value = "patch"
+    }
+    this.element.appendChild(this.methodInput)
+
+    this.element.classList.add("chats-composer--editing")
+    if (this.hasEditBarTarget) {
+      this.editBarTarget.hidden = false
+      // One trimmed line of the original, quote-style, so the user sees
+      // WHAT they're editing even after they've mangled the input text.
+      if (this.hasEditPreviewTarget) {
+        this.editPreviewTarget.textContent = body.replace(/\s+/g, " ").trim()
+      }
+    }
+    if (this.hasFilesTarget) {
+      this.filesTarget.value = ""
+      this.filesTarget.disabled = true
+      this.clearPreviews()
+    }
+
+    this.inputTarget.value = body
+    this.autosize()
+    this.inputTarget.focus()
+    this.inputTarget.setSelectionRange(this.inputTarget.value.length, this.inputTarget.value.length)
+  }
+
+  cancelEdit(event) {
+    event?.preventDefault()
+    this.exitEdit()
+    if (this.hasInputTarget) {
+      this.inputTarget.value = ""
+      this.autosize()
+      this.inputTarget.focus()
+    }
+  }
+
+  exitEdit() {
+    this.editing = false
+    if (this.createAction) this.element.action = this.createAction
+    // Remove (not just blank) the override input: form.reset() restores
+    // DEFAULT values, and a hidden input's default is its value attribute
+    // — a leftover _method=patch would turn the next send into a PATCH.
+    this.methodInput?.remove()
+    this.element.classList.remove("chats-composer--editing")
+    if (this.hasEditBarTarget) this.editBarTarget.hidden = true
+    if (this.hasFilesTarget) this.filesTarget.disabled = false
   }
 
   filesChanged() {

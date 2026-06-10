@@ -449,42 +449,113 @@
 }
 .chats-reaction__count { font-size: 0.7rem; font-weight: 700; color: var(--chats-text-muted); }
 
-/* --- Hover actions (react / edit / delete) ------------------------------------------- */
+/* --- Long-press popup (Telegram-style) ------------------------------------------------ */
+/*
+   Long-press / right-click a bubble: its clone morphs to the center over a
+   blurred glass backdrop, the reactions pill above, the contextual menu
+   below. Markup lives in conversations/show (the slots) + each bubble's
+   <template data-chats-message-menu> (the content); the chats--thread
+   controller does the FLIP transform dance.
+*/
 
-.chats-message__actions {
+.chats-message--lifted { visibility: hidden; }
+
+.chats-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
   display: flex;
-  gap: 0.4rem;
   align-items: center;
-  margin: 0.15rem 0 0 0.6rem;
+  justify-content: center;
+  padding: 1.25rem;
+}
+.chats-popup[hidden] { display: none; }
+.chats-popup__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.3);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity 200ms ease;
 }
-.chats-message:hover .chats-message__actions,
-.chats-message:focus-within .chats-message__actions { opacity: 1; }
-/* Touch devices have no hover — reveal-on-hover means react/edit/delete/
-   report simply don't exist there. Keep them always visible on coarse
-   pointers (they're quiet, small-type affordances by design).
-   https://developer.mozilla.org/docs/Web/CSS/@media/pointer */
-@media (pointer: coarse) {
-  .chats-message__actions { opacity: 1; }
-}
-.chats-message--own .chats-message__actions { justify-content: flex-end; margin-right: 0.6rem; }
-.chats-message--followed .chats-message__actions { display: none; }
+.chats-popup--open .chats-popup__backdrop { opacity: 1; }
 
-.chats-message__action {
-  font-size: 0.72rem;
-  color: var(--chats-text-muted);
+.chats-popup__stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+  max-width: min(85vw, 30rem);
+  max-height: 90dvh;
+}
+.chats-popup__slot--bubble { max-width: 100%; }
+.chats-popup__bubble {
+  transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  max-height: 50dvh;
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
+  border-radius: var(--chats-radius);
+}
+
+.chats-popup__slot--reactions,
+.chats-popup__slot--menu {
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 180ms ease 60ms, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1) 60ms;
+}
+.chats-popup--open .chats-popup__slot--reactions,
+.chats-popup--open .chats-popup__slot--menu { opacity: 1; transform: scale(1); }
+
+.chats-popup__reactions {
+  display: flex;
+  gap: 0.15rem;
+  background: var(--chats-bg);
+  border-radius: 999px;
+  padding: 0.3rem 0.45rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+.chats-popup__reactions form { display: inline; }
+.chats-popup__reaction {
+  font-size: 1.35rem;
+  line-height: 1;
   background: none;
   border: none;
-  padding: 0;
+  padding: 0.25rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.chats-popup__reaction:hover { transform: scale(1.25); }
+
+.chats-popup__menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 13rem;
+  background: var(--chats-bg);
+  border-radius: 1rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  padding: 0.25rem;
+}
+.chats-popup__menu form { display: contents; }
+.chats-popup__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--chats-text);
+  background: none;
+  border: none;
+  border-radius: 0.6rem;
+  padding: 0.55rem 0.8rem;
   cursor: pointer;
   text-decoration: none;
 }
-.chats-message__action:hover { color: var(--chats-text); text-decoration: underline; }
-.chats-message__action--danger:hover { color: #dc2626; }
-/* Author-only affordances: cosmetic gate (the server enforces ownership). */
-.chats-message__action--own { display: none; }
-.chats-message--own .chats-message__action--own { display: inline; }
+.chats-popup__item:hover { background: var(--chats-surface); }
+.chats-popup__item--danger { color: #dc2626; }
 
 /* --- Seen + typing --------------------------------------------------------------------- */
 
@@ -572,6 +643,38 @@
   overflow-x: auto;
   padding: 0.25rem 0.25rem 0.6rem;
 }
+
+/* The edit cue (Telegram's flow): a quote-style bar over the input — left
+   accent border, bold label, the original message trimmed to one line. */
+.chats-composer__edit {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0.25rem 0.45rem;
+  padding: 0.3rem 0.6rem;
+  border-left: 3px solid var(--chats-accent);
+  background: var(--chats-surface);
+  border-radius: 0.45rem;
+}
+.chats-composer__edit-quote { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.chats-composer__edit-label { font-size: 0.72rem; font-weight: 700; color: var(--chats-accent); }
+.chats-composer__edit-preview {
+  font-size: 0.8rem;
+  color: var(--chats-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chats-composer__edit-cancel {
+  border: none;
+  background: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--chats-text-muted);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+}
+
 .chats-composer__previews[hidden] { display: none; }
 .chats-composer__preview {
   position: relative;
@@ -614,41 +717,16 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
 
-/* --- Inline edit ----------------------------------------------------------------------------- */
-
-.chats-edit { width: 100%; }
-.chats-edit__input {
-  width: 100%;
-  border: 1px solid var(--chats-border);
-  border-radius: 0.75rem;
-  padding: 0.5rem 0.7rem;
-  font: inherit;
-}
-.chats-edit__actions { display: flex; gap: 0.6rem; justify-content: flex-end; margin-top: 0.3rem; }
-.chats-edit__cancel { font-size: 0.8rem; color: var(--chats-text-muted); }
-.chats-edit__save {
-  font-size: 0.8rem;
-  font-weight: 700;
-  border: none;
-  background: var(--chats-accent);
-  color: var(--chats-accent-contrast);
-  border-radius: 999px;
-  padding: 0.3rem 0.9rem;
-  cursor: pointer;
-}
-.chats-edit__errors { color: #dc2626; font-size: 0.8rem; margin: 0 0 0.3rem; }
-
 /* --- Menus (⋯ and emoji picker) ----------------------------------------------------------------- */
 
 .chats-menu { position: relative; }
-.chats-menu__trigger, .chats-menu--reactions summary {
+.chats-menu__trigger {
   cursor: pointer;
   list-style: none;
   padding: 0.2rem 0.5rem;
   border-radius: 0.5rem;
 }
 .chats-menu__trigger::-webkit-details-marker,
-.chats-menu--reactions summary::-webkit-details-marker { display: none; }
 .chats-menu__trigger:hover { background: var(--chats-surface); }
 .chats-menu__panel {
   position: absolute;

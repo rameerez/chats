@@ -27,6 +27,8 @@ es:
     message:
       deleted: "Mensaje eliminado"
       edited: "editado"
+      copy: "Copiar"
+      copied: "¡Copiado!"
       attachment: "Foto"
       close_attachment: "Cerrar foto"
       edit: "Editar"
@@ -37,6 +39,8 @@ es:
       react: "Reaccionar"
       toggle_reaction: "Reaccionar con %{emoji}"
     composer:
+      editing: "Editar mensaje"
+      cancel_edit: "Cancelar edición"
       placeholder: "Escribe un mensaje…"
       send: "Enviar"
       attach: "Adjuntar imágenes"
