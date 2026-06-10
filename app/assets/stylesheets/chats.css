@@ -460,6 +460,19 @@
 
 .chats-message--lifted { visibility: hidden; }
 
+/* Long-press must read as a GESTURE on touch: without this, iOS Safari
+   starts the selection loupe / callout mid-press and the popup never
+   opens cleanly. Desktop keeps normal selection; on coarse pointers the
+   popup menu’  Copy replaces it. (The native shells already suppress
+   callouts globally; this covers the mobile WEB thread.) */
+@media (pointer: coarse) {
+  .chats-message {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
+
 .chats-popup {
   position: fixed;
   inset: 0;

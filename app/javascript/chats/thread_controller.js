@@ -577,7 +577,11 @@ export default class extends Controller {
 
     const own = bubble.dataset.senderKey === this.meValue
     const content = template.content.cloneNode(true)
+    // Cosmetic visibility gates (the server still authorizes for real):
+    // own-only items (edit/delete) vanish on foreign bubbles; other-only
+    // items (e.g. a host report link — you don't report yourself) on own.
     if (!own) content.querySelectorAll("[data-chats-own-only]").forEach((node) => node.remove())
+    if (own) content.querySelectorAll("[data-chats-other-only]").forEach((node) => node.remove())
 
     const reactions = content.querySelector(".chats-popup__reactions")
     const menu = content.querySelector(".chats-popup__menu")
