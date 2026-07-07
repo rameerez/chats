@@ -10,11 +10,14 @@ class EngineTest < ActiveSupport::TestCase
 
     thread_pin = packages["controllers/chats/thread_controller"]
     composer_pin = packages["controllers/chats/composer_controller"]
+    refresh_inbox_pin = packages["controllers/chats/refresh_inbox_controller"]
 
     assert thread_pin, "expected the thread controller pin (stimulus-loading auto-registration depends on it)"
     assert composer_pin
+    assert refresh_inbox_pin, "expected the refresh-inbox controller pin (inbox missed-broadcast recovery)"
     assert_equal "chats/thread_controller.js", thread_pin.path
     assert_equal "chats/composer_controller.js", composer_pin.path
+    assert_equal "chats/refresh_inbox_controller.js", refresh_inbox_pin.path
   end
 
   test "serves engine javascript and stylesheets through the host asset pipeline" do

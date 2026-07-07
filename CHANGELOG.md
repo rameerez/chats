@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Inbox missed-broadcast recovery** (`chats--refresh-inbox` controller): the
+  inbox already receives Turbo 8 page *refreshes*, but Action Cable has no
+  replay — a refresh broadcast sent while the client's socket was down
+  (backgrounded tab/app, network blip) was lost and the inbox sat stale until
+  the user navigated. The new controller re-runs the same page refresh on
+  cable reconnect and on return-to-visible, extending the thread's
+  stale-catch-up doctrine (`docs/campfire_review.md`) to the inbox. It reuses
+  the thread's channel-free reconnect detection (observing the
+  `<turbo-cable-stream-source>` `connected` attribute), so no new Action Cable
+  channel is introduced. Auto-registered via the engine importmap pin; hosts
+  need zero changes.
+
 ## [0.1.1] - 2026-06-10
 
 Reliability + UX patterns adopted after a deep review of Basecamp's

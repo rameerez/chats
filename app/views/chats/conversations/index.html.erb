@@ -1,9 +1,19 @@
 <%# The inbox. Subscribed to the viewer's inbox stream: new activity anywhere
     triggers a Turbo 8 page refresh (morphing, scroll-preserving), which
     re-renders this page per-viewer — see Chats::Broadcasts for why refreshes
-    beat surgical row patches here. %>
+    beat surgical row patches here.
+
+    The chats--refresh-inbox wrapper heals a MISSED refresh broadcast: Action
+    Cable has no replay, so a broadcast sent while the socket was down (tab
+    backgrounded, network blip) would leave the inbox stale until the user
+    navigated. The controller re-runs the same page refresh on cable reconnect
+    and on return-to-visible. It needs to wrap the <turbo-cable-stream-source>
+    that `turbo_stream_from` renders so it can observe its `connected`
+    attribute as the heartbeat. %>
 <%= chats_styles %>
-<%= turbo_stream_from chats_current_messager, :chats_inbox %>
+<div data-controller="chats--refresh-inbox">
+  <%= turbo_stream_from chats_current_messager, :chats_inbox %>
+</div>
 
 <div class="chats chats-inbox">
   <header class="chats-inbox__header">

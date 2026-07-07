@@ -14,3 +14,4 @@
 pin "controllers/chats/thread_controller", to: "chats/thread_controller.js"
 pin "controllers/chats/composer_controller", to: "chats/composer_controller.js"
 pin "controllers/chats/debounced_submit_controller", to: "chats/debounced_submit_controller.js"
+pin "controllers/chats/refresh_inbox_controller", to: "chats/refresh_inbox_controller.js"
