@@ -8,13 +8,17 @@ class EngineTest < ActiveSupport::TestCase
   test "pins its Stimulus controllers under controllers/chats for auto-registration" do
     packages = Rails.application.importmap.packages
 
-    thread_pin = packages["controllers/chats/thread_controller"]
-    composer_pin = packages["controllers/chats/composer_controller"]
+    {
+      "controllers/chats/thread_controller" => "chats/thread_controller.js",
+      "controllers/chats/composer_controller" => "chats/composer_controller.js",
+      "controllers/chats/debounced_submit_controller" => "chats/debounced_submit_controller.js",
+      "controllers/chats/refresh_inbox_controller" => "chats/refresh_inbox_controller.js"
+    }.each do |name, path|
+      pin = packages[name]
 
-    assert thread_pin, "expected the thread controller pin (stimulus-loading auto-registration depends on it)"
-    assert composer_pin
-    assert_equal "chats/thread_controller.js", thread_pin.path
-    assert_equal "chats/composer_controller.js", composer_pin.path
+      assert pin, "expected #{name} to be pinned (stimulus-loading auto-registration depends on it)"
+      assert_equal path, pin.path
+    end
   end
 
   test "serves engine javascript and stylesheets through the host asset pipeline" do

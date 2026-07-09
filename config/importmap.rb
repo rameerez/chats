@@ -8,9 +8,10 @@
 # "chats--composer", etc. with ZERO host JavaScript changes. (stimulus-rails,
 # app/assets/javascripts/stimulus-loading.js, registerControllerFromPath.)
 #
-# Hosts can override either controller by pinning the same key themselves —
+# Hosts can override any controller by pinning the same key themselves —
 # the engine's importmap is drawn FIRST (unshifted in Chats::Engine), and
 # importmap-rails resolves duplicate pins last-wins.
 pin "controllers/chats/thread_controller", to: "chats/thread_controller.js"
 pin "controllers/chats/composer_controller", to: "chats/composer_controller.js"
 pin "controllers/chats/debounced_submit_controller", to: "chats/debounced_submit_controller.js"
+pin "controllers/chats/refresh_inbox_controller", to: "chats/refresh_inbox_controller.js"

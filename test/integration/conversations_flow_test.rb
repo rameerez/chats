@@ -71,6 +71,17 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "turbo-cable-stream-source"
   end
 
+  test "the inbox stream subscription is wrapped in the missed-broadcast reconciler" do
+    login_as @alice
+    get "/messages"
+
+    # Action Cable has no replay: a refresh broadcast missed while the socket
+    # was down would leave the inbox stale with no recovery. chats--refresh-inbox
+    # must WRAP the stream source so it can observe the `connected` heartbeat
+    # and re-run the page refresh on reconnect / return-to-visible.
+    assert_select "[data-controller='chats--refresh-inbox'] turbo-cable-stream-source"
+  end
+
   test "the inbox hides blocked direct threads" do
     block_pair!(@alice, @bob)
     login_as @alice
