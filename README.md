@@ -66,7 +66,7 @@ end
 mount Chats::Engine => "/messages"
 ```
 
-That's it. `/messages` is now a working, real-time inbox: threads, bubbles, reactions, read receipts, typing indicators. The engine inherits your `ApplicationController` (so your auth, layout, and locale apply automatically — Devise works out of the box), and its two Stimulus controllers register themselves through your existing importmap setup. Zero JavaScript changes.
+That's it. `/messages` is now a working, real-time inbox: threads, bubbles, reactions, read receipts, typing indicators. The engine inherits your `ApplicationController` (so your auth, layout, and locale apply automatically — Devise works out of the box), and its bundled Stimulus controllers register themselves through your existing importmap setup. Zero JavaScript changes.
 
 Drop a "Message" button anywhere — it renders only when the viewer is allowed to message that person:
 
@@ -269,7 +269,7 @@ Want full control? Eject the views Devise-style and restyle with your own stack 
 rails generate chats:views
 ```
 
-Override the two Stimulus controllers by pinning the same importmap keys (`controllers/chats/thread_controller`, `controllers/chats/composer_controller`) — host pins win.
+Override any bundled Stimulus controller by pinning the same importmap key — host pins win. The current keys are `controllers/chats/thread_controller`, `controllers/chats/composer_controller`, `controllers/chats/debounced_submit_controller`, and `controllers/chats/refresh_inbox_controller`.
 
 ## Configuration reference
 

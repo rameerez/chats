@@ -90,7 +90,8 @@ module Chats
 
     # -------------------------------------------------------------------------
     # JavaScript: the engine ships tiny Stimulus controllers (thread, composer,
-    # debounced-submit) with NO build step, pinned for importmap-rails hosts.
+    # debounced-submit, refresh-inbox) with NO build step, pinned for
+    # importmap-rails hosts.
     #
     # The pin keys live under "controllers/chats/..." ON PURPOSE: the stock
     # Rails `app/javascript/controllers/index.js` calls
