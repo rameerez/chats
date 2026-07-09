@@ -82,6 +82,18 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_select "[data-controller='chats--refresh-inbox'] turbo-cable-stream-source"
   end
 
+  test "the inbox opts out of Turbo caching so back-navigation re-fetches it fresh" do
+    login_as @alice
+    get "/messages"
+
+    # The reconciler heals a MISSED live broadcast on an open page; it does NOT
+    # heal a STALE RESTORED snapshot. A Turbo restoration visit (browser back /
+    # Hotwire Native stack pop) serves the inbox snapshot cached before the
+    # latest activity, with no GET. no-cache makes the inbox uncacheable, so a
+    # restore visit re-fetches from the network and is always fresh.
+    assert_select "head meta[name='turbo-cache-control'][content='no-cache']", count: 1
+  end
+
   test "the inbox hides blocked direct threads" do
     block_pair!(@alice, @bob)
     login_as @alice
