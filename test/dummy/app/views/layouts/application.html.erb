@@ -6,6 +6,7 @@
     <%# No javascript_importmap_tags: the suite asserts engine pins via
         Rails.application.importmap directly; rendering the tags would need
         propshaft digests for every pinned file in the dummy. %>
+    <%= yield :head %>
   </head>
   <body>
     <%= yield %>
