@@ -139,7 +139,35 @@ class InboxGroupsTest < ActionDispatch::IntegrationTest
     assert_equal [conversation], @controller.view_assigns["conversations"]
   end
 
+  test "the counterpart is resolved once per thread, and not at all for a group" do
+    direct = @alice.chat_with(@bob)
+    group = @alice.chat_with(@bob, @desk, title: "Trip")
+    login_as @alice
+
+    # The header names the counterpart, links to their profile, draws their
+    # avatar and decides on the "see all" link — one lookup serves all four.
+    lookups = count_counterpart_lookups { get "/messages/#{direct.id}" }
+    assert_response :success
+    assert_equal 1, lookups
+
+    assert_equal 0, count_counterpart_lookups { get "/messages/#{group.id}" },
+                 "a group thread has no counterpart and must not go looking for one"
+    assert_response :success
+  end
+
   private
+
+  # Count the "everyone in this conversation except me" query behind
+  # ConversationsController#chats_counterpart.
+  def count_counterpart_lookups(&block)
+    found = 0
+    counter = lambda do |*, payload|
+      found += 1 if payload[:sql].to_s.match?(/FROM\s+.?chats_participants.?.*\bNOT\b/im)
+    end
+
+    ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
+    found
+  end
 
   # Declare a `group_path:` on the headless messager for one test. Assigning
   # the real class_attribute (rather than stubbing a reader) exercises the

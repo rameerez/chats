@@ -22,7 +22,7 @@
       # A plain data attribute (not a Stimulus value): host CSS/JS keys its
       # own block/report affordances off it. False for a messager declared
       # `acts_as_messager blockable: false`.
-      "chats-blockable": chats_blockable?(@counterpart),
+      "chats-blockable": chats_blockable?(chats_counterpart),
       action: "pointerdown->chats--thread#pressStart pointermove->chats--thread#pressMove " \
               "pointerup->chats--thread#pressEnd pointercancel->chats--thread#pressCancel " \
               "contextmenu->chats--thread#contextMenu"
@@ -35,12 +35,18 @@
       <span aria-hidden="true">‹</span>
     <% end %>
 
-    <%= chats_conversation_avatar(@conversation, chats_current_messager) %>
+    <%# The counterpart is already resolved for the title, the profile link
+        and the stack link — reuse it here instead of asking again. %>
+    <% if chats_counterpart %>
+      <%= chats_messager_avatar(chats_counterpart) %>
+    <% else %>
+      <%= chats_conversation_avatar(@conversation, chats_current_messager) %>
+    <% end %>
 
     <div class="chats-thread__identity">
       <h1 class="chats-thread__title">
-        <% if @counterpart %>
-          <%= chats_messager_name(@counterpart) %>
+        <% if chats_counterpart %>
+          <%= chats_messager_name(chats_counterpart) %>
         <% else %>
           <%= @conversation.title_for(chats_current_messager) %>
         <% end %>
@@ -51,9 +57,9 @@
       <%# A stacked counterpart's thread is one of many: offer the way back
           to the whole stack (chats' filtered inbox, or the host's own
           screen via `group_path:`). %>
-      <% if Chats.grouped_inbox?(@counterpart) %>
+      <% if Chats.grouped_inbox?(chats_counterpart) %>
         <p class="chats-thread__see-all">
-          <%= link_to t("chats.thread.see_all"), chats_group_path_for(@counterpart), class: "chats-thread__see-all-link" %>
+          <%= link_to t("chats.thread.see_all"), chats_group_path_for(chats_counterpart), class: "chats-thread__see-all-link" %>
         </p>
       <% end %>
     </div>
@@ -76,8 +82,8 @@
         <%= chats_slot :conversation_header_actions,
               conversation: @conversation,
               viewer: chats_current_messager,
-              counterpart: @counterpart,
-              blockable: chats_blockable?(@counterpart) %>
+              counterpart: chats_counterpart,
+              blockable: chats_blockable?(chats_counterpart) %>
       </div>
     </details>
   </header>

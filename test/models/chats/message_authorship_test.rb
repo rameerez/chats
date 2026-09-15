@@ -77,6 +77,21 @@ module Chats
       assert_nil Chats.config.message_signature
     end
 
+    test "an author must be a messager — a subject would render as its label" do
+      listing = create_listing(title: "Madrid → Barcelona")
+
+      error = assert_raises(Chats::NotAllowedError) { @desk.message!(@conversation, "On it!", author: listing) }
+      assert_match(/author must be a messager/, error.message)
+
+      # And the model refuses it too, so create! is covered, not just the verb.
+      message = @conversation.messages.new(sender: @desk, body: "On it!", author: listing)
+      assert_not message.valid?
+      assert message.errors.of_kind?(:author, :not_a_messager)
+      assert_raises(ActiveRecord::RecordInvalid) do
+        @conversation.messages.create!(sender: @desk, body: "On it!", author: listing)
+      end
+    end
+
     test "an author who is not the sender does not have to be a participant" do
       # Lucía never joined the conversation — the DESK did. That's the whole
       # point of authorship: the seat is the member, the human is the writer.

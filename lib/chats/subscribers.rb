@@ -86,8 +86,20 @@ module Chats
 
       # Run every subscriber of +event+, each isolated from the others.
       # Returns the number of subscribers invoked.
+      #
+      # Emitting is never allowed to raise: it runs inside `after_commit`
+      # hooks, where an exception would punish a write that already
+      # succeeded. An unknown event here is a bug in the CALLER, so it is
+      # logged and skipped; `Chats.on` is where a bad event name fails loudly,
+      # at boot, where someone can fix it.
       def emit(event, **payload)
-        subscribers = registry[validate_event!(event)]
+        event = event.to_sym
+        unless EVENTS.key?(event)
+          Chats.logger&.error("[chats] ignoring unknown event #{event.inspect}")
+          return 0
+        end
+
+        subscribers = registry[event]
 
         subscribers.each do |subscriber|
           subscriber.call(event, payload)

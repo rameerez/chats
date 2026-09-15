@@ -77,6 +77,8 @@ en:
             base:
               locked: "This conversation is closed."
               blocked: "You can't message this person."
+            author:
+              not_a_messager: "must be a messager (acts_as_messager)"
             sender:
               blank: "is required"
               not_a_participant: "is not a participant of this conversation"

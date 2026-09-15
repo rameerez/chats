@@ -65,6 +65,8 @@ module Chats
         chat_options[:inbox]
       end
 
+      # Whether every direct conversation with this messager folds into ONE
+      # inbox row (see Chats::InboxGroup).
       def chat_grouped_inbox?
         chat_inbox_mode == :grouped
       end
@@ -136,6 +138,11 @@ module Chats
     #
     #   desk.message!(alice, "On it!", author: lucia)
     def message!(target, body = nil, about: nil, files: [], reply_to: nil, author: nil)
+      if author && !Chats.messager_class?(author.class)
+        raise Chats::NotAllowedError,
+              "author must be a messager (acts_as_messager), got #{author.class.name}"
+      end
+
       conversation =
         case target
         when Chats::Conversation then target

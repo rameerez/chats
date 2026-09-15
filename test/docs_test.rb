@@ -40,6 +40,22 @@ class DocsTest < ActiveSupport::TestCase
     assert_nil Chats.messager_url_for(desk), "a headless messager has no profile"
   end
 
+  test "the CHANGELOG recipe for silencing the deprecation actually works" do
+    events = []
+
+    # Exactly what the CHANGELOG tells a host with deprecation = :raise to do.
+    Chats.deprecator.behavior = :raise
+    Chats.deprecator.silence do
+      Chats.config.notifier = ->(event, **) { events << event }
+    end
+
+    alice = create_user(name: "Alice")
+    alice.message!(create_user(name: "Bob"), "hola!")
+
+    assert_equal [:message_created], events
+    assert_includes File.read(File.expand_path("../CHANGELOG.md", __dir__)), "Chats.deprecator.silence do"
+  end
+
   test "the docs name exactly the events config.notifier still receives" do
     legacy = Chats::Subscribers::LEGACY_NOTIFIER_EVENTS
 

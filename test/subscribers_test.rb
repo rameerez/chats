@@ -27,6 +27,17 @@ class SubscribersTest < ActiveSupport::TestCase
     assert_raises(Chats::ConfigurationError) { Chats.on(:message_created) }
   end
 
+  test "notify never raises on an unknown event — it runs inside after_commit" do
+    logged = []
+    Rails.logger.stub(:error, ->(line) { logged << line }) do
+      assert_equal 0, Chats.notify(:something_we_renamed, message: nil)
+    end
+
+    assert_match(/unknown event :something_we_renamed/, logged.last.to_s)
+    # Registering for it still fails loudly, at boot, where it can be fixed.
+    assert_raises(Chats::ConfigurationError) { Chats.on(:something_we_renamed) { nil } }
+  end
+
   test "two subscribers both run, in registration order" do
     order = []
     Chats.on(:message_created) { |message| order << [:first, message.body] }

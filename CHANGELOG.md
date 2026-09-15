@@ -109,6 +109,18 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
   so re-assigning it replaces rather than stacks, and warns through
   `Chats.deprecator`, which the engine registers with
   `Rails.application.deprecators`.
+  **If your test environment sets `config.active_support.deprecation =
+  :raise`** (a common default) and you still assign `config.notifier`, that
+  warning now raises at boot, because the engine registers the gem's
+  deprecator with the app. Either move the hook to `Chats.on` — the migration
+  is one line — or silence just this one:
+
+  ```ruby
+  # config/initializers/chats.rb
+  Chats.deprecator.silence do
+    Chats.configure { |config| config.notifier = ->(event, **payload) { … } }
+  end
+  ```
 - The install migration now creates the `author` columns, so a fresh install
   needs no upgrade step.
 - **If you ejected the inbox or the composer under 0.1.x**, nothing breaks:

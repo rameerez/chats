@@ -145,6 +145,18 @@ class EngineHelperTest < ActionView::TestCase
     assert_nil chats_slot(:inbox_empty)
   end
 
+  test "only the documented slots exist — anything else renders nothing" do
+    assert_equal %w[inbox_top inbox_empty conversation_header_actions locked_composer message_meta],
+                 Chats::EngineHelper::SLOTS
+
+    assert_not chats_slot?(:inbox_bottom)
+    assert_nil chats_slot(:inbox_bottom)
+    # A name outside the contract is never even looked up.
+    lookup_context.stub(:exists?, ->(*) { raise "looked up an undocumented slot" }) do
+      assert_not chats_slot?("../../secrets")
+    end
+  end
+
   test "chats_slot? memoizes its lookup per view" do
     assert chats_slot?(:inbox_top)
     assert_not chats_slot?(:inbox_empty)

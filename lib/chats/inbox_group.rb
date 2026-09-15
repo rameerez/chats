@@ -9,6 +9,10 @@ module Chats
   # It quacks like the parts of Chats::Conversation the inbox row needs
   # (+last_message+, +last_message_at+, +unread_count+) so the two row
   # partials stay symmetrical.
+  #
+  # +unread_count+ and +open_count+ are GLOBAL: they describe the whole
+  # stack, however deep it runs, not the bounded window in +conversations+.
+  # Chats::Inbox reads them with two indexed aggregates per stack.
   class InboxGroup
     # +conversations+ is the loaded WINDOW of the stack (freshest first,
     # bounded by config.inbox_limit); +open_count+ and +unread_count+ describe
@@ -28,10 +32,13 @@ module Chats
       open_count == 1
     end
 
+    # The freshest conversation in the stack — what the row previews, and
+    # what it links to when the stack holds exactly one.
     def conversation
       conversations.first
     end
 
+    # The stack's most recent message (the row's preview line).
     def last_message
       conversation&.last_message
     end
@@ -42,10 +49,14 @@ module Chats
       conversations.filter_map { |c| c.last_message_at || c.created_at }.max
     end
 
+    # Whether the stack has anything unread in it, anywhere.
     def unread?
       unread_count.positive?
     end
 
+    # What the row is called. A stack is named after its counterpart from
+    # every seat, so the viewer is accepted and ignored — the signature
+    # matches Chats::Conversation#title_for so both row partials can call it.
     def title_for(_viewer)
       Chats.display_name_for(messager)
     end

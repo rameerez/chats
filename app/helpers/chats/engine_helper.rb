@@ -5,6 +5,17 @@ module Chats
   # HOST app's views (mixed into ActionView via the engine's on_load hook,
   # the same pattern the moderate gem uses for `report_link`).
   module EngineHelper
+    # Every slot the bundled views render, and the whole list of them. A
+    # host drops `app/views/chats/slots/_<name>.html.erb` in and it appears;
+    # a name that isn't here renders nothing.
+    SLOTS = %w[
+      inbox_top
+      inbox_empty
+      conversation_header_actions
+      locked_composer
+      message_meta
+    ].freeze
+
     # The "message this person" affordance for host pages — a listing, a
     # profile, an order. Renders nothing when there's no viewer, the viewer
     # IS the target, or policy/blocks forbid the pair, so it's always safe
@@ -146,10 +157,14 @@ module Chats
 
     # Whether a slot partial exists. Memoized per view instance, so a slot
     # rendered inside a collection costs ONE lookup per request, not one per
-    # row.
+    # row. Anything outside SLOTS is ignored rather than looked up: the slot
+    # names are a contract, and a typo should render nothing instead of
+    # quietly becoming a new extension point nobody documented.
     def chats_slot?(name)
-      @chats_slots ||= {}
       key = name.to_s
+      return false unless Chats::EngineHelper::SLOTS.include?(key)
+
+      @chats_slots ||= {}
       return @chats_slots[key] if @chats_slots.key?(key)
 
       @chats_slots[key] = lookup_context.exists?("chats/slots/#{key}", [], true)

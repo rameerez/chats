@@ -96,6 +96,7 @@ module Chats
     validate :sender_must_be_active_participant, on: :create
     validate :sender_must_not_be_blocked, on: :create
     validate :conversation_must_not_be_locked, on: :create
+    validate :author_must_be_a_messager
     validate :files_must_be_allowed
 
     after_create :register_on_conversation
@@ -125,6 +126,8 @@ module Chats
       author.present? && author != sender
     end
 
+    # Whether +messager+ is the one who WROTE this (not necessarily the seat
+    # it was sent from).
     def authored_by?(messager)
       author.present? && author == messager
     end
@@ -156,6 +159,7 @@ module Chats
 
     # Delete according to `config.deletion` (see class comment). Returns
     # false when deletion is disabled.
+    #
     # `enforce_lock: false` is for MODERATION only (see
     # #remove_reported_field!): a product lock must never shield reported
     # content from removal.
@@ -300,6 +304,15 @@ module Chats
 
       other = conversation.other_participants(sender).first&.messager
       errors.add(:base, :blocked) if other && Chats.blocked_between?(sender, other)
+    end
+
+    # An author signs the bubble with `Chats.display_name_for`, so it has to
+    # be something that HAS a name in this system — a messager, not a ride or
+    # a listing that would render as "Listing 1".
+    def author_must_be_a_messager
+      return if author.nil? || Chats.messager_class?(author.class)
+
+      errors.add(:author, :not_a_messager)
     end
 
     # The subject owns the conversation's openness (Chats::ChatSubject#

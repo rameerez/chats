@@ -184,6 +184,41 @@ module Chats
       assert_equal [hit], rows.first.conversations
     end
 
+    test "conversations stays a relation in the simple case, for ejected inboxes" do
+      @alice.chat_with(@bob)
+
+      conversations = Chats::Inbox.for(@alice).conversations
+
+      assert_kind_of ActiveRecord::Relation, conversations, "an ejected 0.1.x inbox may still chain onto it"
+      assert conversations.loaded?, "and it must already be loaded — no second query to render"
+      assert_equal 0, conversations.where(kind: "group").count
+    end
+
+    test "conversations becomes an Array once rows are assembled in Ruby" do
+      @alice.chat_with(@desk)
+      @alice.chat_with(@bob)
+
+      assert_kind_of Array, Chats::Inbox.for(@alice).conversations
+      assert_kind_of Array, Chats::Inbox.for(@alice, query: "bob").conversations
+    end
+
+    test "rows are ordered at full precision and tie-break on id" do
+      at = Time.current.change(usec: 500_000) # a clean microsecond, so the bump below survives the DB
+      first = @alice.chat_with(@bob)
+      second = @alice.chat_with(@carol)
+      # Identical timestamps: the order must still be total and repeatable.
+      [first, second].each { |c| c.update_columns(last_message_at: at, updated_at: at) }
+
+      rows = Chats::Inbox.for(@alice).rows
+      assert_equal rows, Chats::Inbox.for(@alice).rows, "the same inbox must not shuffle between renders"
+      assert_equal [second, first], rows, "newest id first when the timestamps tie"
+
+      # A microsecond apart must NOT collapse into a tie (Rational, so the
+      # bump is exact rather than a float that rounds away).
+      first.update_columns(last_message_at: at + Rational(1, 1_000_000))
+      assert_equal [first, second], Chats::Inbox.for(@alice).rows
+    end
+
     # --- inbox_limit bounds ROWS ----------------------------------------------
 
     test "a deep stack never evicts ordinary conversations from the inbox" do

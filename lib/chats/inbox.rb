@@ -48,33 +48,39 @@ module Chats
       @rows ||= build_rows
     end
 
+    # Yield each row (Enumerable gives `map`, `select`, `find`, … from here).
     def each(&)
       rows.each(&)
     end
 
-    # Array-ish so views and hosts can treat the inbox as the list it is.
+    # The rows as a plain Array.
     def to_a
       rows
     end
-    alias to_ary to_a
 
+    # How many rows the inbox has.
     def size
       rows.size
     end
 
+    # Whether the inbox has any rows at all.
     def any?
       rows.any?
     end
 
+    # Whether the inbox has no rows.
     def empty?
       rows.empty?
     end
 
-    # Every conversation loaded behind the rows — the flat list, stacked
-    # threads included.
+    # The conversations behind the rows, stacked threads included. Stays an
+    # ActiveRecord::Relation (already loaded) in the simple case — no search,
+    # nothing stacked — so an inbox ejected under 0.1.x can still chain
+    # `.where` or hand it to a paginator. Becomes an Array once rows had to
+    # be assembled in Ruby.
     def conversations
       rows
-      @conversations
+      @flat
     end
 
     # { conversation_id => unread message count } — one grouped query for
@@ -83,6 +89,7 @@ module Chats
       @unread_counts ||= Chats::Conversation.unread_counts_for(viewer, conversations)
     end
 
+    # Unread messages in one conversation, from the grouped query above.
     def unread_count_for(conversation)
       unread_counts.fetch(conversation.id, 0)
     end
@@ -136,21 +143,24 @@ module Chats
 
     def load_conversations
       if filtered?
-        @ungrouped = apply_search(filter_to_counterpart(base_relation).limit(limit))
+        @ungrouped_relation = filter_to_counterpart(base_relation).limit(limit)
         @stacked = []
       elsif grouped_types.empty?
-        @ungrouped = apply_search(base_relation.limit(limit))
+        @ungrouped_relation = base_relation.limit(limit)
         @stacked = []
       else
         stacked = Chats::Conversation.direct.where(id: stacked_seats)
-        @ungrouped = apply_search(base_relation.where.not(id: stacked).limit(limit))
+        @ungrouped_relation = base_relation.where.not(id: stacked).limit(limit)
         # Ordered by recency and limited like the other leg, which also makes
         # the FIRST conversation of each counterpart that counterpart's
         # freshest — that's the one the stacked row previews.
         @stacked = apply_search(base_relation.direct.where(id: stacked_seats).limit(limit))
       end
 
-      @conversations = @ungrouped + @stacked
+      @ungrouped = apply_search(@ungrouped_relation)
+      # The relation itself when nothing had to be assembled in Ruby (it is
+      # loaded, so iterating it costs nothing extra); the flat Array otherwise.
+      @flat = @stacked.empty? && query.nil? ? @ungrouped_relation : @ungrouped + @stacked
     end
 
     # Only the direct threads shared with one counterpart. Direct only, by
@@ -178,7 +188,19 @@ module Chats
       end
 
       rows.concat(stacks.each_value.map { |messager, members| build_group(messager, members) })
-      rows.sort_by { |row| -sort_key(row).to_f }.first(limit)
+      sort_rows(rows).first(limit)
+    end
+
+    # Newest activity first, exactly like the SQL the relation would have
+    # used (COALESCE(last_message_at, created_at) DESC), at full timestamp
+    # precision — `to_r`, not `to_f`, because two messages a microsecond
+    # apart must not collapse into a tie. Ties break on id, so the order is
+    # total and a row never shuffles between renders.
+    def sort_rows(rows)
+      rows.sort do |a, b|
+        by_activity = sort_key(b).to_r <=> sort_key(a).to_r
+        by_activity.zero? ? compare_ids(b, a) : by_activity
+      end
     end
 
     def build_group(messager, members)
@@ -186,7 +208,7 @@ module Chats
 
       Chats::InboxGroup.new(
         messager: messager,
-        conversations: members.sort_by { |conversation| -sort_key(conversation).to_f },
+        conversations: sort_rows(members),
         unread_count: totals[:unread],
         open_count: totals[:open]
       )
@@ -223,7 +245,22 @@ module Chats
     end
 
     def sort_key(row)
-      row.last_message_at || (row.respond_to?(:created_at) ? row.created_at : nil)
+      row.last_message_at || (row.respond_to?(:created_at) ? row.created_at : nil) || Chats::Conversation::EPOCH
+    end
+
+    # The total-order tiebreak: a conversation's own id, a stack's freshest
+    # conversation's id. Works for bigint and uuid keys alike, and never
+    # raises on a pair it can't compare — it just calls them equal.
+    def compare_ids(a, b)
+      left = tiebreak(a)
+      right = tiebreak(b)
+      return 0 if left.nil? || right.nil? || left.class != right.class
+
+      left <=> right
+    end
+
+    def tiebreak(row)
+      row.is_a?(Chats::InboxGroup) ? row.conversation&.id : row.id
     end
 
     # Partial, case-insensitive matching across the inbox metadata users can

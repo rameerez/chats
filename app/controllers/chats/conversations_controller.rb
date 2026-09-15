@@ -5,6 +5,7 @@ module Chats
   # pages (create), and the per-member actions (read/typing/leave/mute).
   class ConversationsController < ApplicationController
     before_action :set_conversation, only: %i[show read typing leave mute unmute refresh]
+    helper_method :chats_counterpart
 
     # The inbox. Everything is preloaded/batched so rendering N rows costs a
     # constant number of queries (conversations + last messages + participants
@@ -27,7 +28,6 @@ module Chats
     # Message.before_message and _messages_page.html.erb).
     def show
       @participant = @conversation.participant_for(chats_current_messager)
-      @counterpart = counterpart_of(@conversation)
 
       anchor = params[:before].present? ? @conversation.messages.find_by(id: params[:before]) : nil
       scope = @conversation.messages.includes(:sender, :reactions)
@@ -176,11 +176,16 @@ module Chats
 
     # The other party of a direct thread (nil for groups) — the thread header
     # names them, links to their profile, and decides whether to offer the
-    # "see all" link back to their stack.
-    def counterpart_of(conversation)
-      return nil unless conversation.direct?
+    # "see all" link back to their stack. LAZY and memoized: a group thread
+    # never pays for it, and a direct one pays once no matter how many of
+    # those three things the rendered view asks for.
+    def chats_counterpart
+      return @chats_counterpart if defined?(@chats_counterpart)
 
-      conversation.other_participants(chats_current_messager).includes(:messager).first&.messager
+      @chats_counterpart =
+        if @conversation&.direct?
+          @conversation.other_participants(chats_current_messager).includes(:messager).first&.messager
+        end
     end
   end
 end
