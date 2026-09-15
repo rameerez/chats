@@ -32,6 +32,11 @@ module Chats
     # toggled off. Race-safe: a concurrent double-tap resolves through the
     # unique index instead of raising.
     def self.toggle!(message:, reactor:, emoji:)
+      # Reacting is a write to the conversation, so a locked one refuses it —
+      # in BOTH directions: you can't add a reaction to a closed thread, and
+      # you can't take one back either. Same rule as editing and deleting.
+      message&.conversation&.refuse_writes_when_locked!
+
       existing = find_by(message: message, reactor: reactor, emoji: emoji)
       if existing
         existing.destroy!

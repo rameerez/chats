@@ -25,7 +25,15 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
   `#chat_locked_notice` (both inert by default) decide whether a conversation
   still accepts messages; `Conversation#locked?` / `#locked_notice` read
   them, and `Chats::Message` refuses non-system writes with an `:locked`
-  error. The thread stays readable: the composer is replaced by the notice
+  error, and every OTHER write refuses too — `Message#edit!`,
+  `#soft_delete!` and `Reaction.toggle!` raise `Chats::LockedError` (a
+  `NotAllowedError` subclass), and the edit/delete/react endpoints answer 422
+  with the notice. The bundled bubble stops offering what would only fail:
+  no Edit, no Delete, no reaction toggles, while existing reactions still
+  render as plain counts and Copy still works. Moderation is the one
+  exception — `remove_reported_field!` removes reported content from a locked
+  conversation, because a product lock must never shield it. The thread stays
+  readable: the composer is replaced by the notice
   (`chats/conversations/_locked_composer`, overridable through the
   `locked_composer` slot), and a send that lands on a freshly locked
   conversation gets a **422 that swaps the composer** instead of an
@@ -46,9 +54,12 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
   thread, which gains a "see all" link back; a deeper stack opens
   `GET /conversations?with=<signed gid>` (purpose `:chats_inbox_with`, minted
   by `Chats.inbox_with_sgid`) or wherever `group_path:` points. Grouping
-  happens in ONE place, folded out of the already-limited relation plus the
-  existing grouped unread-count query — no N+1, no "load everything to
-  group it". `Chats::Inbox#unread_count` is the stack-aware badge number;
+  happens in ONE place. `config.inbox_limit` bounds ROWS, not
+  conversations: stacked threads are queried separately from ordinary ones,
+  so a desk with hundreds of open threads can never evict the rest of the
+  inbox, and a stack's `open_count`/`unread_count` are GLOBAL — two indexed
+  aggregates per stack, never per conversation and never by loading the
+  stack to count it. `Chats::Inbox#unread_count` is the stack-aware badge number;
   `unread_chats_count` is unchanged.
 - **`config.inbox_limit`** (200, replacing a literal in the controller) and
   **`config.inbox_scope`** `->(relation, viewer) { relation }`, composed into
@@ -73,7 +84,10 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
 - **`Participant#reseat!(new_messager)`** — hand a seat to another messager
   inside a transaction, keeping the read horizon, the role and the history,
   and re-indexing a direct thread's `direct_key` so `chat_with` keeps
-  resolving to it instead of stranding a duplicate.
+  resolving to it instead of stranding a duplicate. Refuses with
+  `Chats::NotAllowedError` when the resulting pair already has a direct
+  conversation, checked BEFORE the write so a unique-index violation can
+  never poison a host's transaction.
 - **Inbox missed-broadcast recovery** (`chats--refresh-inbox` controller): the
   inbox already receives Turbo 8 page *refreshes*, but Action Cable has no
   replay — a refresh broadcast sent while the client's socket was down
@@ -88,9 +102,12 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
 
 ### Changed
 - `config.notifier` is **deprecated** (removed in 1.0). It still works and
-  still receives every event — it now registers as a subscriber under a
-  reserved key, so re-assigning it replaces rather than stacks — and warns
-  through `Chats.deprecator`, which the engine registers with
+  receives `:message_created` and `:conversation_read` — the two events 0.1.1
+  had — and ONLY those: the events added in 0.2.0 are `Chats.on`-only, so a
+  0.1.x hook written `->(event, message:, **)` can never be handed an event
+  it has no keyword for. It registers as a subscriber under a reserved key,
+  so re-assigning it replaces rather than stacks, and warns through
+  `Chats.deprecator`, which the engine registers with
   `Rails.application.deprecators`.
 - The install migration now creates the `author` columns, so a fresh install
   needs no upgrade step.

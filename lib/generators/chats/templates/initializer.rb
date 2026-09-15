@@ -167,7 +167,8 @@ Chats.configure do |config|
   #   end
   #
   # DEPRECATED (removed in 1.0): `config.notifier = ->(event, **payload) {}`
-  # still works and receives every event.
+  # still works, but receives :message_created and :conversation_read only —
+  # the events 0.1.1 had. The ones added in 0.2.0 are Chats.on-only.
 
   # ==========================================================================
   # DISPLAY — how messagers appear in the bundled views
@@ -186,7 +187,13 @@ Chats.configure do |config|
   # views render names as plain text — chats never assumes you have a
   # `user_path`, and never renders a dead anchor:
   #
-  # config.messager_url = ->(messager) { Rails.application.routes.url_helpers.user_path(messager) }
+  # config.messager_url = lambda do |messager|
+  #   routes = Rails.application.routes.url_helpers
+  #
+  #   case messager
+  #   when User then routes.user_path(messager)   # a desk or a bot has no profile: nil
+  #   end
+  # end
   #
   # The signature under a message written by an AUTHOR on a sender's behalf
   # (`desk.message!(user, "On it!", author: agent)`). Defaults to the

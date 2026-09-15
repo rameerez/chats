@@ -226,7 +226,7 @@ Four properties, all of which matter the first time something goes wrong at 3am:
   ```
 - **Unknown events fail loudly**, at boot, naming the ones that exist.
 
-> **Deprecated:** `config.notifier = ->(event, **payload) {}` still works (it subscribes one proc to every event) and will be removed in 1.0. Move it to `Chats.on` — that's the whole migration.
+> **Deprecated:** `config.notifier = ->(event, **payload) {}` still works and will be removed in 1.0. It receives `:message_created` and `:conversation_read` — the two events that existed in 0.1.1 — and *only* those, so an old `->(event, message:, **)` hook can never start raising on an event it was never written for. The events added in 0.2.0 are `Chats.on`-only. Move it to `Chats.on` — that's the whole migration.
 
 The etiquette helpers every messaging product needs ship on the participant, so a debounced "email me only once until I come back" digest is a tiny host job:
 
@@ -281,7 +281,7 @@ group.unread_count   # aggregated across the stack
 group.open_count     # how many are in it
 ```
 
-- Grouping happens in **one place** (`Chats::Inbox`), folded out of the already-limited relation plus one grouped unread-count query — so stacking never turns the inbox into an N+1 and pagination stays honest.
+- `config.inbox_limit` bounds **rows**, not conversations: stacked threads are queried separately from ordinary ones, so a desk with 500 open tickets can never evict your friends from the inbox. A stack's `open_count` and `unread_count` are **global** — two indexed aggregates per stack, however deep it runs — so stacking neither goes N+1 nor loads a stack to count it.
 - A stack of one links **straight to the thread**, which then carries a small "see all" link back to the stack.
 - The stack list is chats' own filtered inbox — `GET /conversations?with=<signed gid>` — unless you point it somewhere else with `group_path: ->(viewer) { support_path }`.
 - Two knobs shape the whole query: `config.inbox_limit` (200) and `config.inbox_scope = ->(relation, viewer) { relation }`.
@@ -348,7 +348,13 @@ An engine mounted on top of chats ships its own `app/views/chats/slots/…`; the
 `chats` never assumes your app has a `user_path`. Tell it where a messager lives and names become links; leave it alone and they render as plain text:
 
 ```ruby
-config.messager_url = ->(messager) { messager.is_a?(User) ? user_path(messager) : nil }
+config.messager_url = lambda do |messager|
+  routes = Rails.application.routes.url_helpers
+
+  case messager
+  when User then routes.user_path(messager)   # a desk or a bot has no profile: nil
+  end
+end
 ```
 
 ## 🎨 Make it yours

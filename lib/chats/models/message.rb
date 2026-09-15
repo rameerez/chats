@@ -150,12 +150,18 @@ module Chats
       raise Chats::NotAllowedError, "editing is disabled" unless Chats.config.editing
       raise Chats::NotAllowedError, "can't edit a deleted message" if deleted?
 
+      refuse_when_locked!
       update!(body: new_body, edited_at: Time.current)
     end
 
     # Delete according to `config.deletion` (see class comment). Returns
     # false when deletion is disabled.
-    def soft_delete!
+    # `enforce_lock: false` is for MODERATION only (see
+    # #remove_reported_field!): a product lock must never shield reported
+    # content from removal.
+    def soft_delete!(enforce_lock: true)
+      refuse_when_locked! if enforce_lock
+
       case Chats.config.deletion
       when :soft
         transaction do
@@ -173,6 +179,16 @@ module Chats
 
     def attachments?
       respond_to?(:files) && files.attached?
+    end
+
+    # Every WRITE to an existing message goes through here, for the same
+    # reason `create` validates the lock: a closed conversation is closed for
+    # editing and deleting too, not just for new messages. System messages
+    # stay exempt — the app owns them.
+    def refuse_when_locked! # :nodoc:
+      return if system? || conversation.nil? || !conversation.locked?
+
+      raise Chats::LockedError.new(conversation: conversation)
     end
 
     # --- Moderation contract (duck-typed, zero coupling) ------------------------
@@ -206,7 +222,9 @@ module Chats
     def remove_reported_field!(field)
       return false unless field.to_s == "body"
 
-      soft_delete!
+      # Trust & Safety outranks a product lock: a closed conversation must
+      # never be a place reported content can hide.
+      soft_delete!(enforce_lock: false)
     end
 
     # Only people *in* the conversation may report a message (a message

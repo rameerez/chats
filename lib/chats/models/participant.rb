@@ -123,18 +123,19 @@ module Chats
         raise Chats::NotAllowedError, "#{new_messager.class.name} is not a messager (acts_as_messager)"
       end
 
-      transaction do
-        if conversation.participants.where.not(id: id).exists?(
-          messager_type: new_messager.class.polymorphic_name, messager_id: new_messager.id
-        )
-          raise Chats::NotAllowedError, "that messager already has a seat in this conversation"
-        end
+      refuse_reseat_conflicts!(new_messager)
 
+      transaction do
         update!(messager: new_messager)
         conversation.reindex_direct_key!
       end
 
       self
+    rescue ActiveRecord::RecordNotUnique
+      # The race backstop for the checks above (two reseats, or a DM opened,
+      # between the check and the write). Translated so a host never has a
+      # driver-level exception poison its transaction.
+      raise Chats::NotAllowedError, "that conversation already exists for the new pair"
     end
 
     # --- Notification etiquette (for host notifier hooks) ----------------------
@@ -168,6 +169,30 @@ module Chats
     end
 
     private
+
+    # Everything that would make the reseat collide, checked BEFORE the
+    # write. A unique-index violation inside the transaction would abort the
+    # host's transaction too on PostgreSQL, so the pre-check is the real
+    # guard and the RecordNotUnique rescue is only the race backstop.
+    def refuse_reseat_conflicts!(new_messager)
+      if conversation.participants.where.not(id: id).exists?(
+        messager_type: new_messager.class.polymorphic_name, messager_id: new_messager.id
+      )
+        raise Chats::NotAllowedError, "that messager already has a seat in this conversation"
+      end
+
+      return unless conversation.direct?
+
+      other = conversation.other_participants(messager).includes(:messager).first&.messager
+      return if other.nil?
+
+      existing = Chats::Conversation.direct_between(new_messager, other, about: conversation.subject)
+      return if existing.nil? || existing == conversation
+
+      raise Chats::NotAllowedError,
+            "#{Chats.display_name_for(new_messager)} already has a direct conversation with " \
+            "#{Chats.display_name_for(other)}"
+    end
 
     def group_must_have_room
       return if conversation.nil? || conversation.direct?

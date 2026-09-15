@@ -260,17 +260,22 @@ module Chats
     end
 
     # DEPRECATED (removed in 1.0): sugar that subscribes one `(event,
-    # **payload)` proc to EVERY event. `Chats.on` supersedes it — many
-    # subscribers, per-event payloads, and reload-safe keys.
+    # **payload)` proc to the two events that existed in 0.1.1
+    # (:message_created, :conversation_read) — and ONLY those, so an old
+    # keyword-specific hook can't start raising on events it was never
+    # written for. `Chats.on` supersedes it: many subscribers, per-event
+    # payloads, reload-safe keys, and every event.
     def notifier=(value)
       hook = ensure_callable(value, "notifier")
       Chats.deprecator.warn(
         "config.notifier is deprecated and will be removed in chats 1.0. " \
+        "It receives #{Chats::Subscribers::LEGACY_NOTIFIER_EVENTS.map(&:inspect).join(" and ")} only; " \
+        "the events added in 0.2.0 are Chats.on-only. " \
         "Subscribe with Chats.on(:message_created) { |message| … } instead " \
         "(see the README's \"Events\" section)."
       )
 
-      Chats::Subscribers::EVENTS.each_key do |event|
+      Chats::Subscribers::LEGACY_NOTIFIER_EVENTS.each do |event|
         Chats::Subscribers.on(event, key: Chats::Subscribers::NOTIFIER_KEY, style: :event) do |fired, **payload|
           hook.call(fired, **payload)
         end

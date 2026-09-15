@@ -219,6 +219,21 @@ module Chats
       messager_option(messager, :chat_grouped_inbox?, default: false)
     end
 
+    # The polymorphic type names of every registered messager class that
+    # stacks (`inbox: :grouped`). Empty in an ordinary app — which is what
+    # keeps the inbox query there byte-identical to 0.1.x. Used as a SQL
+    # PREFILTER only; whether a given counterpart actually stacks is still
+    # decided per-record by `grouped_inbox?` (STI subclasses share a
+    # polymorphic_name with siblings that may not be grouped).
+    def grouped_messager_types
+      messager_class_names.filter_map do |name|
+        klass = name.safe_constantize
+        next unless klass.respond_to?(:chat_grouped_inbox?) && klass.chat_grouped_inbox?
+
+        klass.polymorphic_name
+      end.uniq
+    end
+
     # The signed GlobalID that scopes the inbox to conversations with
     # +messager+ (`GET /conversations?with=…`). Purpose-scoped and
     # non-expiring: inbox rows live on long-lived pages.

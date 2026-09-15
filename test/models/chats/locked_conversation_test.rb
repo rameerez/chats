@@ -75,8 +75,61 @@ module Chats
       assert_equal [said], @conversation.reload.messages.to_a
       assert_equal said, @conversation.last_message
       assert_includes @bob.chats, @conversation
-      # And editing an existing message still works: the lock gates NEW writes.
-      assert said.edit!("before the lock (fixed)")
+    end
+
+    # --- the lock gates EVERY write, not just creation ------------------------
+
+    test "editing a message in a locked conversation raises LockedError" do
+      said = @alice.message!(@conversation, "before the lock")
+      @listing.update!(locked: true)
+
+      error = assert_raises(Chats::LockedError) { said.edit!("sneaking an edit in") }
+      assert_equal "This listing is closed.", error.message
+      assert_equal @conversation, error.conversation
+      assert_equal "before the lock", said.reload.body
+    end
+
+    test "deleting a message in a locked conversation raises LockedError" do
+      said = @alice.message!(@conversation, "before the lock")
+      @listing.update!(locked: true)
+
+      assert_raises(Chats::LockedError) { said.soft_delete! }
+      assert_not said.reload.deleted?
+    end
+
+    test "reacting in a locked conversation raises LockedError, both ways" do
+      said = @alice.message!(@conversation, "before the lock")
+      Chats::Reaction.toggle!(message: said, reactor: @bob, emoji: "👍")
+      @listing.update!(locked: true)
+
+      assert_raises(Chats::LockedError) { Chats::Reaction.toggle!(message: said, reactor: @alice, emoji: "🙏") }
+      # And taking an existing one back is a write too.
+      assert_raises(Chats::LockedError) { Chats::Reaction.toggle!(message: said, reactor: @bob, emoji: "👍") }
+      assert_equal [["👍", 1]], Chats::Reaction.summary_for(said)
+    end
+
+    test "LockedError is a NotAllowedError, so hosts rescuing the old class still catch it" do
+      assert_operator Chats::LockedError, :<, Chats::NotAllowedError
+    end
+
+    test "moderation outranks the lock — reported content is always removable" do
+      said = @alice.message!(@conversation, "reported content")
+      @listing.update!(locked: true)
+
+      assert said.remove_reported_field!("body")
+      assert said.reload.deleted?
+      assert_nil said.body
+    end
+
+    test "system messages stay writable on every path" do
+      @listing.update!(locked: true)
+
+      system_message = @conversation.post_system_message!("This listing was closed")
+      assert_nothing_raised { system_message.edit!("This listing was closed (edited by the app)") }
+      # A system message can't be soft-deleted at all (it would fail its own
+      # body-presence rule) — but the LOCK must not be what stops it.
+      error = assert_raises(ActiveRecord::RecordInvalid) { system_message.soft_delete! }
+      assert_not_kind_of Chats::LockedError, error
     end
 
     test "unlocking restores sending" do

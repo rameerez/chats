@@ -104,6 +104,12 @@
       </div>
 
       <% unless message.deleted? %>
+        <%# A locked conversation (its SUBJECT says so) refuses every write —
+            new messages, edits, deletes and reactions alike. The server
+            enforces it; here we stop OFFERING what would only 422: existing
+            reactions still render, as plain counts instead of toggles, and
+            the long-press menu keeps only Copy. %>
+        <% locked = message.conversation.locked? %>
         <% reactions = Chats.config.reactions ? Chats::Reaction.summary_for(message) : [] %>
         <% if reactions.any? %>
           <div class="chats-message__reactions">
@@ -112,10 +118,16 @@
                 through the HOST's renderer where engine helpers don't exist
                 unqualified. See EngineHelper#chats_routes. %>
             <% reactions.each do |emoji, count| %>
-              <%= button_to chats_routes.conversation_message_reactions_path(message.conversation, message),
-                    method: :post, params: { emoji: emoji },
-                    class: "chats-reaction", "aria-label": t("chats.message.toggle_reaction", emoji: emoji) do %>
-                <%= emoji %><% if count > 1 %><span class="chats-reaction__count"><%= count %></span><% end %>
+              <% if locked %>
+                <span class="chats-reaction chats-reaction--locked">
+                  <%= emoji %><% if count > 1 %><span class="chats-reaction__count"><%= count %></span><% end %>
+                </span>
+              <% else %>
+                <%= button_to chats_routes.conversation_message_reactions_path(message.conversation, message),
+                      method: :post, params: { emoji: emoji },
+                      class: "chats-reaction", "aria-label": t("chats.message.toggle_reaction", emoji: emoji) do %>
+                  <%= emoji %><% if count > 1 %><span class="chats-reaction__count"><%= count %></span><% end %>
+                <% end %>
               <% end %>
             <% end %>
           </div>
@@ -131,7 +143,7 @@
             button_to forms keep working when cloned: the CSRF token is
             baked in at render time. %>
         <template data-chats-message-menu>
-          <% if Chats.config.reactions %>
+          <% if Chats.config.reactions && !locked %>
             <div class="chats-popup__reactions" role="group" aria-label="<%= t("chats.message.react") %>">
               <% %w[👍 ❤️ 😂 😮 😢 🙏].each do |emoji| %>
                 <%= button_to emoji, chats_routes.conversation_message_reactions_path(message.conversation, message),
@@ -146,12 +158,12 @@
                 <%= t("chats.message.copy") %>
               </button>
             <% end %>
-            <% if Chats.config.editing && message.body.present? %>
+            <% if Chats.config.editing && message.body.present? && !locked %>
               <button type="button" class="chats-popup__item" role="menuitem" data-chats-action="edit" data-chats-own-only>
                 <%= t("chats.message.edit") %>
               </button>
             <% end %>
-            <% if Chats.config.deletion %>
+            <% if Chats.config.deletion && !locked %>
               <%= button_to t("chats.message.delete"),
                     chats_routes.conversation_message_path(message.conversation, message),
                     method: :delete,

@@ -135,17 +135,33 @@ class SubscribersTest < ActiveSupport::TestCase
 
   # --- the deprecated single hook -------------------------------------------
 
-  test "config.notifier still receives every event, and says it is deprecated" do
+  test "config.notifier receives the 0.1.1 events only, and says it is deprecated" do
     events = []
 
     assert_deprecated(/config\.notifier is deprecated/, Chats.deprecator) do
       Chats.config.notifier = ->(event, **payload) { events << [event, payload.keys] }
     end
 
-    @alice.message!(@bob, "hola!")
+    conversation = @alice.message!(@bob, "hola!").conversation
+    conversation.mark_read_by!(@bob)
+    conversation.participant_for(@bob).leave!
 
-    assert_equal %i[conversation_created message_created], events.map(&:first)
-    assert_equal [%i[conversation], %i[message]], events.map(&:last)
+    assert_equal %i[message_created conversation_read], events.map(&:first)
+    assert_equal [%i[message], %i[conversation participant]], events.map(&:last)
+  end
+
+  test "a 0.1.1-shaped notifier never sees an event it has no keyword for" do
+    # The shape the 0.1.1 README taught. On an event carrying no `message:`
+    # it would raise ArgumentError — so it must never be handed one.
+    reported = []
+    Chats.config.notifier = ->(_event, message:, **) { reported << message.body }
+
+    Rails.error.stub(:report, ->(error, **) { reported << error }) do
+      @alice.chat_with(@bob, @carol, title: "Trip")  # :conversation_created
+      @alice.message!(@bob, "hola!")                 # :message_created
+    end
+
+    assert_equal ["hola!"], reported, "no ArgumentError, no report — the old hook just works"
   end
 
   test "re-assigning config.notifier replaces the old hook instead of stacking" do
@@ -155,7 +171,7 @@ class SubscribersTest < ActiveSupport::TestCase
 
     @alice.message!(@bob, "hola!")
 
-    assert_equal %i[new new], calls # conversation_created + message_created
+    assert_equal [:new], calls
   end
 
   test "config.notifier and Chats.on coexist" do

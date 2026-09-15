@@ -159,6 +159,36 @@ module Chats
       assert_equal carol, seat.messager
     end
 
+    test "reseat! refuses when the new pair already has a direct thread" do
+      carol = create_user(name: "Carol")
+      existing = carol.chat_with(@bob)
+
+      error = assert_raises(Chats::NotAllowedError) { @participant.reseat!(carol) }
+
+      assert_match(/already has a direct conversation/, error.message)
+      assert_equal @alice, @participant.reload.messager, "the seat is untouched"
+      assert_equal @conversation, Chats::Conversation.direct_between(@alice, @bob)
+      assert_equal existing, Chats::Conversation.direct_between(carol, @bob)
+    end
+
+    test "reseat! never leaks RecordNotUnique to the caller" do
+      carol = create_user(name: "Carol")
+      carol.chat_with(@bob)
+
+      # A driver-level unique violation would poison a host's transaction on
+      # PostgreSQL; hosts must only ever see a chats error here.
+      assert_raises(Chats::NotAllowedError) { @participant.reseat!(carol) }
+      assert_nothing_raised { Chats::Conversation.count }
+    end
+
+    test "reseat! still allows the same pair on a DIFFERENT subject" do
+      carol = create_user(name: "Carol")
+      carol.chat_with(@bob, about: create_listing(title: "Another listing"))
+
+      assert_nothing_raised { @participant.reseat!(carol) }
+      assert_equal carol, @participant.reload.messager
+    end
+
     test "reseat! refuses a non-messager and a messager who already has a seat" do
       assert_raises(ArgumentError) { @participant.reseat!(nil) }
 

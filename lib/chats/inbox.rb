@@ -10,10 +10,19 @@ module Chats
   #   Chats::Inbox.for(alice, with: support_desk)   # one stack's contents
   #
   # Rows are `Chats::Conversation | Chats::InboxGroup`, sorted by last
-  # activity descending. Grouping happens HERE and nowhere else, so
-  # pagination stays honest: stacks are folded out of the already-limited
-  # relation (`config.inbox_limit`) plus ONE grouped unread-count query — we
-  # never load a messager's whole history to count it.
+  # activity descending. Grouping happens HERE and nowhere else.
+  #
+  # == Why `inbox_limit` bounds ROWS, not conversations
+  #
+  # A stacked counterpart can hold hundreds of threads. Limiting the raw
+  # conversation query first would let a busy support desk EVICT everything
+  # else from the inbox — 200 desk threads and not one message from a friend.
+  # So the two populations are queried separately: ordinary conversations get
+  # the limit, stacked ones get their own bounded window, and the limit is
+  # applied again to the ROWS that come out. A stack's numbers
+  # (`open_count`, `unread_count`) are then GLOBAL, read with two indexed
+  # aggregates per stack — never per conversation, and never by loading the
+  # stack to count it.
   class Inbox
     include Enumerable
 
@@ -33,7 +42,8 @@ module Chats
       @with = with
     end
 
-    # Conversation | InboxGroup rows, newest activity first.
+    # Conversation | InboxGroup rows, newest activity first, at most
+    # `config.inbox_limit` of them.
     def rows
       @rows ||= build_rows
     end
@@ -60,13 +70,15 @@ module Chats
       rows.empty?
     end
 
-    # The conversations behind the rows (already limited, filtered, loaded).
+    # Every conversation loaded behind the rows — the flat list, stacked
+    # threads included.
     def conversations
-      @conversations ||= load_conversations
+      rows
+      @conversations
     end
 
-    # { conversation_id => unread message count } — the ONE grouped
-    # follow-up query the row badges (and the stack aggregates) read.
+    # { conversation_id => unread message count } — one grouped query for
+    # every loaded conversation, which is what the row badges read.
     def unread_counts
       @unread_counts ||= Chats::Conversation.unread_counts_for(viewer, conversations)
     end
@@ -92,13 +104,53 @@ module Chats
 
     private
 
-    def load_conversations
-      relation = Chats::Conversation.inbox_for(viewer)
-                                    .includes(:last_message, :subject, participants: :messager)
-      relation = Chats.config.inbox_scope.call(relation, viewer) || relation
-      relation = filter_to_counterpart(relation) if filtered?
+    def limit
+      Chats.config.inbox_limit
+    end
 
-      apply_search(relation.limit(Chats.config.inbox_limit))
+    # Memoized so `config.inbox_scope` is consulted ONCE per inbox for the
+    # row query, however many legs it is split into (the stack aggregates
+    # apply it separately, to their own relation).
+    def base_relation
+      @base_relation ||= begin
+        relation = Chats::Conversation.inbox_for(viewer)
+                                      .includes(:last_message, :subject, participants: :messager)
+        Chats.config.inbox_scope.call(relation, viewer) || relation
+      end
+    end
+
+    # The polymorphic types worth splitting out. Empty when nothing stacks
+    # (an ordinary app pays nothing) and when the inbox is already filtered
+    # to one counterpart.
+    def grouped_types
+      @grouped_types ||= filtered? ? [] : Chats.grouped_messager_types
+    end
+
+    # Seats held by a stacked messager — never the viewer's own seat, so a
+    # stacked messager's OWN inbox stays flat.
+    def stacked_seats
+      Chats::Participant.select(:conversation_id)
+                        .where(messager_type: grouped_types)
+                        .where.not(messager_type: viewer.class.polymorphic_name, messager_id: viewer.id)
+    end
+
+    def load_conversations
+      if filtered?
+        @ungrouped = apply_search(filter_to_counterpart(base_relation).limit(limit))
+        @stacked = []
+      elsif grouped_types.empty?
+        @ungrouped = apply_search(base_relation.limit(limit))
+        @stacked = []
+      else
+        stacked = Chats::Conversation.direct.where(id: stacked_seats)
+        @ungrouped = apply_search(base_relation.where.not(id: stacked).limit(limit))
+        # Ordered by recency and limited like the other leg, which also makes
+        # the FIRST conversation of each counterpart that counterpart's
+        # freshest — that's the one the stacked row previews.
+        @stacked = apply_search(base_relation.direct.where(id: stacked_seats).limit(limit))
+      end
+
+      @conversations = @ungrouped + @stacked
     end
 
     # Only the direct threads shared with one counterpart. Direct only, by
@@ -112,31 +164,49 @@ module Chats
     end
 
     def build_rows
-      grouped = Hash.new { |hash, key| hash[key] = [] }
-      rows = []
+      load_conversations
+      rows = @ungrouped.dup
+      stacks = {}
 
-      conversations.each do |conversation|
-        counterpart = filtered? ? nil : stacked_counterpart(conversation)
+      @stacked.each do |conversation|
+        counterpart = stacked_counterpart(conversation)
+        # The SQL prefilter matches by polymorphic type; an STI sibling that
+        # isn't actually grouped lands here and goes back to being a row.
+        next rows << conversation if counterpart.nil?
 
-        if counterpart
-          grouped[Chats.messager_key(counterpart)] << [counterpart, conversation]
-        else
-          rows << conversation
-        end
+        (stacks[Chats.messager_key(counterpart)] ||= [counterpart, []]).last << conversation
       end
 
-      rows.concat(grouped.each_value.map { |pairs| build_group(pairs) })
-      rows.sort_by { |row| -sort_key(row).to_f }
+      rows.concat(stacks.each_value.map { |messager, members| build_group(messager, members) })
+      rows.sort_by { |row| -sort_key(row).to_f }.first(limit)
     end
 
-    def build_group(pairs)
-      members = pairs.map(&:last)
+    def build_group(messager, members)
+      totals = stack_totals(messager)
 
       Chats::InboxGroup.new(
-        messager: pairs.first.first,
-        conversations: members.sort_by { |c| -sort_key(c).to_f },
-        unread_count: members.sum { |c| unread_count_for(c) }
+        messager: messager,
+        conversations: members.sort_by { |conversation| -sort_key(conversation).to_f },
+        unread_count: totals[:unread],
+        open_count: totals[:open]
       )
+    end
+
+    # What a stacked row says about the WHOLE stack, in two indexed
+    # aggregates — independent of how deep the stack is, and of how much of
+    # it we loaded.
+    def stack_totals(messager)
+      scope = Chats::Conversation.inbox_for(viewer).reorder(nil).direct.where(
+        id: Chats::Participant.select(:conversation_id).where(
+          messager_type: messager.class.polymorphic_name, messager_id: messager.id
+        )
+      )
+      scope = Chats.config.inbox_scope.call(scope, viewer) || scope
+
+      {
+        open: scope.distinct.count,
+        unread: scope.unread_by(viewer).reorder(nil).count("chats_messages.id")
+      }
     end
 
     # The other party of a DIRECT conversation, when their class asked to be
@@ -158,7 +228,7 @@ module Chats
 
     # Partial, case-insensitive matching across the inbox metadata users can
     # actually see: participant names, conversation titles, subject labels,
-    # and message bodies. The inbox is capped (config.inbox_limit), so
+    # and message bodies. Each leg is capped (config.inbox_limit), so
     # metadata is filtered portably in Ruby from the already-preloaded
     # objects while the potentially larger message-body set stays in SQL. No
     # PostgreSQL-only full-text dependency is needed at this scale.
@@ -176,7 +246,7 @@ module Chats
     end
 
     def conversations_matching_body(conversations)
-      return [] if Chats.config.encrypt_messages
+      return [] if Chats.config.encrypt_messages || conversations.empty?
 
       pattern = "%#{Chats::Conversation.sanitize_sql_like(query.downcase)}%"
       Chats::Message.where(conversation_id: conversations.map(&:id), deleted_at: nil)

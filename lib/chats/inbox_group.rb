@@ -10,18 +10,16 @@ module Chats
   # (+last_message+, +last_message_at+, +unread_count+) so the two row
   # partials stay symmetrical.
   class InboxGroup
-    attr_reader :messager, :conversations, :unread_count
+    # +conversations+ is the loaded WINDOW of the stack (freshest first,
+    # bounded by config.inbox_limit); +open_count+ and +unread_count+ describe
+    # the whole stack, however deep it runs.
+    attr_reader :messager, :conversations, :unread_count, :open_count
 
-    def initialize(messager:, conversations:, unread_count: 0)
+    def initialize(messager:, conversations:, unread_count: 0, open_count: nil)
       @messager = messager
       @conversations = conversations
       @unread_count = unread_count
-    end
-
-    # How many conversations are stacked here (within the inbox window —
-    # see Chats.config.inbox_limit).
-    def open_count
-      conversations.size
+      @open_count = open_count || conversations.size
     end
 
     # A stack of one is really just a conversation: the row links straight to

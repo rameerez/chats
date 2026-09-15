@@ -184,10 +184,63 @@ module Chats
       assert_equal [hit], rows.first.conversations
     end
 
-    test "the inbox runs a constant number of queries regardless of row count" do
-      5.times { |index| @alice.chat_with(create_user(name: "P#{index}")) }
-      3.times { |index| @alice.chat_with(@desk, about: create_listing(title: "L#{index}")) }
+    # --- inbox_limit bounds ROWS ----------------------------------------------
 
+    test "a deep stack never evicts ordinary conversations from the inbox" do
+      personal = @alice.chat_with(@bob)
+      @bob.message!(personal, "hello!")
+      5.times do |index|
+        conversation = @alice.chat_with(@desk, about: create_listing(title: "L#{index}"))
+        @desk.message!(conversation, "ticket #{index}")
+      end
+      Chats.config.inbox_limit = 3
+
+      rows = Chats::Inbox.for(@alice).rows
+
+      assert_includes rows, personal, "a busy desk must never push a friend out of the inbox"
+      assert_equal 2, rows.size, "one stack + one conversation"
+    end
+
+    test "a stack's counts are GLOBAL, not the loaded window" do
+      5.times do |index|
+        conversation = @alice.chat_with(@desk, about: create_listing(title: "L#{index}"))
+        @desk.message!(conversation, "ticket #{index}")
+      end
+      Chats.config.inbox_limit = 2
+
+      group = Chats::Inbox.for(@alice).rows.grep(Chats::InboxGroup).first
+
+      assert_equal 5, group.open_count, "the row speaks for the whole stack"
+      assert_equal 5, group.unread_count
+      assert_operator group.conversations.size, :<=, 2, "but only a bounded window is loaded"
+      assert_not group.single?
+    end
+
+    test "inbox_limit still bounds the rows themselves" do
+      4.times { |index| @alice.chat_with(create_user(name: "P#{index}")) }
+      Chats.config.inbox_limit = 2
+
+      assert_equal 2, Chats::Inbox.for(@alice).rows.size
+    end
+
+    test "the inbox query count does not grow with the inbox, or with stack depth" do
+      3.times { |index| @alice.chat_with(create_user(name: "P#{index}")) }
+      3.times { |index| @alice.chat_with(@desk, about: create_listing(title: "L#{index}")) }
+      shallow = count_inbox_queries
+
+      7.times { |index| @alice.chat_with(create_user(name: "Q#{index}")) }
+      12.times { |index| @alice.chat_with(@desk, about: create_listing(title: "D#{index}")) }
+      deep = count_inbox_queries
+
+      assert_equal shallow, deep, "the inbox must not go N+1 as it grows"
+      # Two legs (ordinary + stacked) with their preloads, one grouped
+      # unread-count query, and two aggregates for the one stack.
+      assert_operator deep, :<=, 14, "and it must stay a small, fixed budget"
+    end
+
+    private
+
+    def count_inbox_queries
       queries = 0
       counter = ->(*, payload) { queries += 1 unless payload[:name] == "SCHEMA" }
 
@@ -197,9 +250,7 @@ module Chats
         inbox.unread_count
       end
 
-      # conversations + last_messages + subjects + participants + messagers
-      # + ONE grouped unread-count query. No per-row follow-ups.
-      assert_operator queries, :<=, 7, "the inbox must not go N+1 when it stacks"
+      queries
     end
   end
 end

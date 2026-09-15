@@ -9,6 +9,7 @@ module Chats
     def create
       conversation = find_conversation(params[:conversation_id])
       message = conversation.messages.find(params[:message_id])
+      return refuse_when_locked(conversation) if conversation.locked?
 
       Chats::Reaction.toggle!(
         message: message,
@@ -28,6 +29,19 @@ module Chats
       end
     rescue ActiveRecord::RecordInvalid
       head :unprocessable_entity
+    end
+
+    private
+
+    # Same shape as the messages controller: swap the composer for the
+    # reason, 422, never an exception page.
+    def refuse_when_locked(conversation)
+      @conversation = conversation
+
+      respond_to do |format|
+        format.turbo_stream { render "chats/messages/locked", status: :unprocessable_entity }
+        format.html { redirect_to conversation_path(conversation), alert: conversation.locked_notice }
+      end
     end
   end
 end

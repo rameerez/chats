@@ -6,6 +6,11 @@ module Chats
     before_action :set_conversation
     before_action :set_message, only: %i[show update destroy]
     before_action :require_ownership!, only: %i[update destroy]
+    # A locked conversation refuses every write, not just new messages.
+    # `create` is NOT in this list: its own validation produces the same
+    # response, and going through the model keeps the "locked since you
+    # opened the composer" race in one place.
+    before_action :refuse_when_locked!, only: %i[update destroy]
 
     # Per-sender send throttle via Rails 8's built-in controller rate
     # limiting (https://api.rubyonrails.org/classes/ActionController/RateLimiting.html).
@@ -101,6 +106,17 @@ module Chats
     # for another reason still reports that reason.
     def locked?
       @message.errors.of_kind?(:base, :locked)
+    end
+
+    # Gate the action, explain it in place: the composer becomes the locked
+    # notice (422), or a plain redirect carrying the notice without Turbo.
+    def refuse_when_locked!
+      return unless @conversation.locked?
+
+      respond_to do |format|
+        format.turbo_stream { render :locked, status: :unprocessable_entity }
+        format.html { redirect_to conversation_path(@conversation), alert: @conversation.locked_notice }
+      end
     end
 
     def set_message

@@ -78,6 +78,75 @@ class LockedConversationTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "This listing is closed."
   end
 
+  # --- every write endpoint, not just create --------------------------------
+
+  test "editing a message in a locked conversation is refused, body untouched" do
+    said = @alice.message!(@conversation, "before the lock")
+    @listing.update!(locked: true)
+
+    patch "/messages/#{@conversation.id}/messages/#{said.id}",
+          params: { message: { body: "sneaking an edit in" } },
+          as: :turbo_stream
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "This listing is closed."
+    assert_equal "before the lock", said.reload.body
+    assert_nil said.edited_at
+  end
+
+  test "deleting a message in a locked conversation is refused, no tombstone" do
+    said = @alice.message!(@conversation, "before the lock")
+    @listing.update!(locked: true)
+
+    delete "/messages/#{@conversation.id}/messages/#{said.id}", as: :turbo_stream
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "This listing is closed."
+    assert_not said.reload.deleted?
+  end
+
+  test "reacting in a locked conversation is refused" do
+    said = @alice.message!(@conversation, "before the lock")
+    @listing.update!(locked: true)
+
+    post "/messages/#{@conversation.id}/messages/#{said.id}/reactions",
+         params: { emoji: "👍" },
+         as: :turbo_stream
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "This listing is closed."
+    assert_equal 0, Chats::Reaction.count
+  end
+
+  test "the no-JS write paths redirect with the notice instead of raising" do
+    said = @alice.message!(@conversation, "before the lock")
+    @listing.update!(locked: true)
+
+    delete "/messages/#{@conversation.id}/messages/#{said.id}"
+
+    assert_redirected_to "/messages/#{@conversation.id}"
+    assert_equal "This listing is closed.", flash[:alert]
+  end
+
+  test "a locked thread stops offering edit, delete and reactions" do
+    said = @alice.message!(@conversation, "before the lock")
+    Chats::Reaction.toggle!(message: said, reactor: @bob, emoji: "👍")
+
+    get "/messages/#{@conversation.id}"
+    assert_includes response.body, "data-chats-action=\"edit\""
+    assert_equal 1, css_select("form.button_to .chats-reaction").size
+
+    @listing.update!(locked: true)
+    get "/messages/#{@conversation.id}"
+
+    assert_response :success
+    assert_not_includes response.body, "data-chats-action=\"edit\""
+    assert_not_includes response.body, I18n.t("chats.message.delete_confirm")
+    assert_empty css_select("form.button_to .chats-reaction"), "no toggle buttons in a closed thread"
+    assert_equal 1, css_select(".chats-reaction--locked").size, "existing reactions still show, as plain counts"
+    assert_includes response.body, I18n.t("chats.message.copy"), "copying is not a write"
+  end
+
   test "the locked_composer slot replaces the body and keeps the id contract" do
     @listing.update!(locked: true)
 

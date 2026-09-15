@@ -32,8 +32,16 @@ module Chats
       conversation_read: nil
     }.freeze
 
-    # Reserved key for the subscriber `config.notifier=` registers on every
-    # event, so re-assigning the deprecated hook replaces rather than stacks.
+    # The events the deprecated `config.notifier=` hook is subscribed to:
+    # exactly the two that existed in 0.1.1, and no more. A 0.1.x notifier is
+    # commonly written `->(event, message:, **)`, which would raise
+    # ArgumentError on an event that carries no `message:` — so the new
+    # events are `Chats.on` only, and an old hook keeps behaving exactly as
+    # it did.
+    LEGACY_NOTIFIER_EVENTS = %i[message_created conversation_read].freeze
+
+    # Reserved key for the subscriber `config.notifier=` registers, so
+    # re-assigning the deprecated hook replaces rather than stacks.
     NOTIFIER_KEY = :chats_config_notifier
 
     # One registered callable. +style+ is how it gets invoked:

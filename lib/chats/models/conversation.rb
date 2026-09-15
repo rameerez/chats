@@ -263,6 +263,13 @@ module Chats
       subject.try(:chat_locked_notice).presence || I18n.t("chats.composer.locked")
     end
 
+    # The guard every write that ISN'T a message itself calls (reactions
+    # today). Message writes go through Chats::Message#refuse_when_locked!,
+    # which exempts system messages.
+    def refuse_writes_when_locked! # :nodoc:
+      raise Chats::LockedError.new(conversation: self) if locked?
+    end
+
     # --- Membership -----------------------------------------------------------
 
     # Idempotent, race-safe membership. Re-adding someone who left re-joins
