@@ -4,9 +4,76 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-15
+
+The release that makes `chats` a foundation other products can be built on:
+a messager that isn't a person, a conversation whose openness belongs to its
+subject, a message someone wrote on someone else's behalf, and extension
+points that don't require ejecting a screen. **Nothing here changes existing
+behaviour until you set an option** — 0.1.1 installs upgrade by running
+`rails generate chats:upgrade && rails db:migrate`.
 
 ### Added
+- **Headless messagers.** `acts_as_messager notifications: false, blockable:
+  false, inbox: :grouped` — a support desk, a bot, an org mailbox. Class
+  predicates (`chat_notifications?`, `chat_blockable?`, `chat_inbox_mode`,
+  `chat_group_path`) are read duck-typed everywhere, `Participant#
+  notifiable_for?` honours them, and the bundled views hide block/report
+  affordances against a non-blockable counterpart. Hosts stop writing
+  `is_a?(User)` in every notifier and view.
+- **Subject-owned locks.** `Chats::ChatSubject#chat_locked?` /
+  `#chat_locked_notice` (both inert by default) decide whether a conversation
+  still accepts messages; `Conversation#locked?` / `#locked_notice` read
+  them, and `Chats::Message` refuses non-system writes with an `:locked`
+  error. The thread stays readable: the composer is replaced by the notice
+  (`chats/conversations/_locked_composer`, overridable through the
+  `locked_composer` slot), and a send that lands on a freshly locked
+  conversation gets a **422 that swaps the composer** instead of an
+  exception. System messages are exempt, so your app can always explain the
+  lock in the thread it just closed.
+- **Message authorship.** `chats_messages.author_type/author_id` (nullable,
+  polymorphic, indexed) plus `Message#author`, `#signed?`, `#authored_by?`
+  and `Messager#message!(…, author:)`. `sender` stays the seat; `author` is
+  who wrote it. Signed bubbles render a signature line ("— Lucía G."),
+  rewritable with `config.message_signature`. New generator: **`rails
+  generate chats:upgrade`** writes the migration (guarded, so it is a no-op
+  on a fresh 0.2.0 install, which already has the columns).
+- **Grouped inbox rows.** `Chats::Inbox.for(viewer)` returns
+  `Chats::Conversation | Chats::InboxGroup` rows sorted by activity; every
+  direct thread with an `inbox: :grouped` counterpart folds into one stack
+  (`#messager`, `#conversations`, `#unread_count`, `#last_message`,
+  `#last_message_at`, `#open_count`). A stack of one links straight to its
+  thread, which gains a "see all" link back; a deeper stack opens
+  `GET /conversations?with=<signed gid>` (purpose `:chats_inbox_with`, minted
+  by `Chats.inbox_with_sgid`) or wherever `group_path:` points. Grouping
+  happens in ONE place, folded out of the already-limited relation plus the
+  existing grouped unread-count query — no N+1, no "load everything to
+  group it". `Chats::Inbox#unread_count` is the stack-aware badge number;
+  `unread_chats_count` is unchanged.
+- **`config.inbox_limit`** (200, replacing a literal in the controller) and
+  **`config.inbox_scope`** `->(relation, viewer) { relation }`, composed into
+  the inbox query before the limit.
+- **View slots.** The bundled views render `chats/slots/_inbox_top`,
+  `_inbox_empty`, `_conversation_header_actions`, `_locked_composer` and
+  `_message_meta` when such a partial exists — one memoized lookup when it
+  doesn't. Hosts (and engines mounted on top of chats) add a row or a button
+  without ejecting a screen.
+- **Subscribers.** `Chats.on(:message_created | :conversation_created |
+  :participant_left | :conversation_read)` replaces the single notifier
+  proc: many subscribers per event, each isolated through
+  `Rails.error.report(e, handled: true, context: { event: })` so a failing
+  one is *visible* and never stops the others or the write that emitted
+  them. Registration is reload-safe (`key:` replaces in place;
+  `Chats.reset_subscribers!` clears). Two NEW events:
+  `:conversation_created` (once per conversation, never on resume) and
+  `:participant_left`.
+- **`config.messager_url`** `->(messager) { nil }` — the bundled views link
+  names and titles to it, and render plain text when it returns nil. The gem
+  no longer assumes a host has `user_path`.
+- **`Participant#reseat!(new_messager)`** — hand a seat to another messager
+  inside a transaction, keeping the read horizon, the role and the history,
+  and re-indexing a direct thread's `direct_key` so `chat_with` keeps
+  resolving to it instead of stranding a duplicate.
 - **Inbox missed-broadcast recovery** (`chats--refresh-inbox` controller): the
   inbox already receives Turbo 8 page *refreshes*, but Action Cable has no
   replay — a refresh broadcast sent while the client's socket was down
@@ -18,6 +85,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<turbo-cable-stream-source>` `connected` attribute), so no new Action Cable
   channel is introduced. Auto-registered via the engine importmap pin; hosts
   need zero changes.
+
+### Changed
+- `config.notifier` is **deprecated** (removed in 1.0). It still works and
+  still receives every event — it now registers as a subscriber under a
+  reserved key, so re-assigning it replaces rather than stacks — and warns
+  through `Chats.deprecator`, which the engine registers with
+  `Rails.application.deprecators`.
+- The install migration now creates the `author` columns, so a fresh install
+  needs no upgrade step.
+
+### Fixed
+- `:participant_added` was documented as a notifier event but never emitted.
+  The event catalogue is now exactly what the gem fires, and registering for
+  anything else raises at boot with the valid list.
 
 ## [0.1.1] - 2026-06-10
 
