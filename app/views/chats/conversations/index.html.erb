@@ -3,6 +3,10 @@
     re-renders this page per-viewer — see Chats::Broadcasts for why refreshes
     beat surgical row patches here.
 
+    Rows come from Chats::Inbox and are either a Chats::Conversation or a
+    Chats::InboxGroup (every direct thread with a `inbox: :grouped` messager,
+    stacked into one row).
+
     The chats--refresh-inbox wrapper heals a MISSED refresh broadcast: Action
     Cable has no replay, so a broadcast sent while the socket was down (tab
     backgrounded, network blip) would leave the inbox stale until the user
@@ -20,7 +24,14 @@
     <h1 class="chats-inbox__title"><%= t("chats.inbox.title") %></h1>
   </header>
 
-  <% if Chats.config.search %>
+  <% if @inbox.filtered? %>
+    <p class="chats-inbox__filter">
+      <%= t("chats.inbox.filtered_by", name: Chats.display_name_for(@inbox.with)) %>
+      <%= link_to t("chats.inbox.clear_filter"), conversations_path, class: "chats-inbox__filter-clear" %>
+    </p>
+  <% end %>
+
+  <% if Chats.config.search && !@inbox.filtered? %>
     <%= form_with url: conversations_path,
           method: :get,
           class: "chats-search",
@@ -39,13 +50,21 @@
   <% end %>
 
   <%= turbo_frame_tag "chats_inbox_results", target: "_top" do %>
-    <% if @conversations.any? %>
+    <%# Slot: anything the host wants above the first row — a support door,
+        an announcement, a filter bar. Renders only when the partial exists. %>
+    <%= chats_slot :inbox_top, viewer: chats_current_messager, inbox: @inbox %>
+
+    <% if @rows.any? %>
       <ul class="chats-inbox__list">
-        <% @conversations.each do |conversation| %>
-          <%= render "chats/conversations/conversation_row",
-                conversation: conversation,
-                viewer: chats_current_messager,
-                unread_count: @unread_counts.fetch(conversation.id, 0) %>
+        <% @rows.each do |row| %>
+          <% if row.is_a?(Chats::InboxGroup) %>
+            <%= render "chats/conversations/group", group: row, viewer: chats_current_messager %>
+          <% else %>
+            <%= render "chats/conversations/conversation_row",
+                  conversation: row,
+                  viewer: chats_current_messager,
+                  unread_count: @unread_counts.fetch(row.id, 0) %>
+          <% end %>
         <% end %>
       </ul>
     <% elsif params[:q].present? %>
@@ -58,6 +77,7 @@
         <span class="chats-empty__icon" aria-hidden="true">💬</span>
         <p class="chats-empty__title"><%= t("chats.inbox.empty_title") %></p>
         <p class="chats-empty__hint"><%= t("chats.inbox.empty_hint") %></p>
+        <%= chats_slot :inbox_empty, viewer: chats_current_messager, inbox: @inbox %>
       </div>
     <% end %>
   <% end %>

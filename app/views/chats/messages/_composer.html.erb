@@ -2,8 +2,12 @@
     the response — instant, no cable round-trip needed); the chats--composer
     controller adds autosize, desktop Enter-to-send, throttled typing pings,
     and reset-on-success. Plain form POST still works with JS disabled. %>
+<%# id: the swap target — a conversation that locks while this form is open
+    gets the locked notice rendered straight over it (see
+    chats/messages/locked.turbo_stream.erb). %>
 <%= form_with model: Chats::Message.new,
       url: conversation_messages_path(conversation),
+      id: dom_id(conversation, :composer),
       class: "chats-composer",
       data: {
         controller: "chats--composer",

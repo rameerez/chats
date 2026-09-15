@@ -105,6 +105,36 @@ module Chats
 
     def leave!
       update!(left_at: Time.current)
+      Chats.notify(:participant_left, participant: self)
+      self
+    end
+
+    # Hand this seat to a different messager, keeping the read horizon, the
+    # role and the history: the guest who signs up, the agent who takes over
+    # a shared mailbox. The MESSAGES keep their original sender — what was
+    # said was said by whoever said it.
+    #
+    # Direct conversations have their +direct_key+ recomputed, so the thread
+    # keeps resolving through `chat_with` for the NEW pair instead of
+    # stranding a duplicate.
+    def reseat!(new_messager)
+      raise ArgumentError, "reseat! requires a messager" if new_messager.nil?
+      unless Chats.messager_class?(new_messager.class)
+        raise Chats::NotAllowedError, "#{new_messager.class.name} is not a messager (acts_as_messager)"
+      end
+
+      transaction do
+        if conversation.participants.where.not(id: id).exists?(
+          messager_type: new_messager.class.polymorphic_name, messager_id: new_messager.id
+        )
+          raise Chats::NotAllowedError, "that messager already has a seat in this conversation"
+        end
+
+        update!(messager: new_messager)
+        conversation.reindex_direct_key!
+      end
+
+      self
     end
 
     # --- Notification etiquette (for host notifier hooks) ----------------------
@@ -114,6 +144,10 @@ module Chats
     # re-derive it: don't notify yourself, the muted, the departed — and for
     # debounced email digests, don't notify twice for the same unread burst.
     def notifiable_for?(message)
+      # Headless messagers (`acts_as_messager notifications: false`) — a
+      # support desk, a bot, an org mailbox — are never notifiable. This is
+      # THE reason hosts no longer branch on class in their notifiers.
+      return false unless Chats.notifications_for?(messager)
       return false if left? || muted?
       return false if message.sender == messager
 

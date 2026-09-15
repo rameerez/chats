@@ -36,7 +36,12 @@ module ActiveSupport
       Chats.reset!
       Chats.configure { |config| config.messager_class = "User" }
       Chats.register_messager(User)
+      Chats.register_messager(Desk)
       Chats.register_chat_subject(Listing)
+      # The gem's own deprecator would otherwise print on every test that
+      # exercises the deprecated `config.notifier`. `assert_deprecated`
+      # swaps the behavior itself, so assertions still work.
+      Chats.deprecator.behavior = :silence
     end
 
     teardown do
@@ -51,6 +56,19 @@ module ActiveSupport
 
     def create_listing(title: "Madrid → Barcelona", **attributes)
       Listing.create!(title: title, **attributes)
+    end
+
+    # The headless messager (no notifications, not blockable, stacked inbox).
+    def create_desk(name: "Support", **attributes)
+      Desk.create!(name: name, **attributes)
+    end
+
+    # Collect every subscriber payload fired for +event+ while the block runs.
+    def capture_chats_events(event)
+      fired = []
+      Chats.on(event) { |*args, **kwargs| fired << (kwargs.presence || args.first) }
+      yield
+      fired
     end
 
     # A direct conversation with both seats taken — the canonical fixture.

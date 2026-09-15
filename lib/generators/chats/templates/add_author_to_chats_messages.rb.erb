@@ -1,0 +1,44 @@
+# frozen_string_literal: true
+
+# chats 0.2.0 — message AUTHORSHIP.
+#
+# `sender` is the seat a message came from; `author` is who wrote it on that
+# seat's behalf (an agent answering from a shared support desk). Both
+# nullable, both polymorphic, indexed together because they're always read
+# together. See Chats::Message#signed?.
+#
+# Safe to run on an install that already has the columns (a 0.2.0 fresh
+# install does): every step is guarded, so this migration is a no-op there.
+class AddAuthorToChatsMessages < ActiveRecord::Migration<%= migration_version %>
+  def up
+    unless column_exists?(:chats_messages, :author_type)
+      add_reference :chats_messages, :author, polymorphic: true, null: true,
+                                              type: chats_foreign_key_type, index: false
+    end
+
+    return if index_exists?(:chats_messages, [ :author_type, :author_id ], name: "index_chats_messages_on_author")
+
+    add_index :chats_messages, [ :author_type, :author_id ], name: "index_chats_messages_on_author"
+  end
+
+  def down
+    if index_exists?(:chats_messages, [ :author_type, :author_id ], name: "index_chats_messages_on_author")
+      remove_index :chats_messages, name: "index_chats_messages_on_author"
+    end
+
+    return unless column_exists?(:chats_messages, :author_type)
+
+    remove_column :chats_messages, :author_type
+    remove_column :chats_messages, :author_id
+  end
+
+  private
+
+  # Honor the host's configured primary key type (uuid vs bigint), exactly
+  # like the install migration does — the author columns must match the key
+  # type of the models they point at.
+  def chats_foreign_key_type
+    config = Rails.configuration.generators
+    config.options[config.orm][:primary_key_type] || :bigint
+  end
+end

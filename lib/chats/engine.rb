@@ -30,7 +30,7 @@ module Chats
     CHATS_LIB = File.expand_path("chats", LIB_ROOT)
 
     ZEITWERK_IGNORED = %w[
-      version.rb errors.rb configuration.rb engine.rb macros.rb
+      version.rb errors.rb configuration.rb engine.rb macros.rb subscribers.rb
     ].freeze
 
     initializer "chats.autoload", before: :set_autoload_paths do
@@ -62,6 +62,13 @@ module Chats
           app.config.paths["db/migrate"] << path
         end
       end
+    end
+
+    # Hand the gem's deprecator to the app, so `config.active_support.
+    # deprecation` (and `deprecators.silence`) govern chats' own deprecation
+    # warnings like any other framework's.
+    initializer "chats.deprecator" do |app|
+      app.deprecators[:chats] = Chats.deprecator if app.respond_to?(:deprecators)
     end
 
     # Expose `acts_as_messager` / `acts_as_chat_subject` on every AR model.

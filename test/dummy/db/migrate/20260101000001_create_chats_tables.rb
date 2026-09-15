@@ -50,6 +50,7 @@ class CreateChatsTables < ActiveRecord::Migration[7.1]
       t.references :conversation, null: false, type: foreign_key_type,
                                   foreign_key: { to_table: :chats_conversations }, index: false
       t.references :sender, polymorphic: true, null: true, type: foreign_key_type, index: false
+      t.references :author, polymorphic: true, null: true, type: foreign_key_type, index: false
 
       t.string :kind, null: false, default: "text"
       t.text :body
@@ -65,6 +66,7 @@ class CreateChatsTables < ActiveRecord::Migration[7.1]
     add_index :chats_messages, %i[conversation_id created_at id],
               name: "index_chats_messages_on_conversation_and_created_at"
     add_index :chats_messages, %i[sender_type sender_id], name: "index_chats_messages_on_sender"
+    add_index :chats_messages, %i[author_type author_id], name: "index_chats_messages_on_author"
     add_index :chats_messages, :reply_to_id, name: "index_chats_messages_on_reply_to_id"
 
     create_table :chats_reactions, id: primary_key_type do |t|

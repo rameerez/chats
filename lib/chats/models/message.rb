@@ -33,6 +33,11 @@ module Chats
                inverse_of: :messages,
                counter_cache: :messages_count
     belongs_to :sender, polymorphic: true, optional: true
+    # The person (or bot) who WROTE this on the sender's behalf — an agent
+    # answering from a shared support-desk seat. The sender stays the
+    # conversation identity ("Soporte CarHey"); the author signs the bubble
+    # ("— Lucía G."). Optional, and nil for every ordinary message.
+    belongs_to :author, polymorphic: true, optional: true
     belongs_to :reply_to, class_name: "Chats::Message", optional: true
 
     has_many :reactions,
@@ -90,6 +95,7 @@ module Chats
     validate :body_must_fit_length_limit
     validate :sender_must_be_active_participant, on: :create
     validate :sender_must_not_be_blocked, on: :create
+    validate :conversation_must_not_be_locked, on: :create
     validate :files_must_be_allowed
 
     after_create :register_on_conversation
@@ -110,6 +116,17 @@ module Chats
 
     def sent_by?(messager)
       sender.present? && sender == messager
+    end
+
+    # Written by someone OTHER than the seat it was sent from — the case a
+    # signature exists for. A message an author sent from their own seat is
+    # not "signed"; it's just theirs.
+    def signed?
+      author.present? && author != sender
+    end
+
+    def authored_by?(messager)
+      author.present? && author == messager
     end
 
     # The body as the UI should show it (tombstones render a localized
@@ -265,6 +282,16 @@ module Chats
 
       other = conversation.other_participants(sender).first&.messager
       errors.add(:base, :blocked) if other && Chats.blocked_between?(sender, other)
+    end
+
+    # The subject owns the conversation's openness (Chats::ChatSubject#
+    # chat_locked?). System messages are exempt: the host must always be able
+    # to post "This ticket was closed" into the thread it just closed.
+    def conversation_must_not_be_locked
+      return if system? || conversation.nil?
+      return unless conversation.locked?
+
+      errors.add(:base, :locked)
     end
 
     def files_must_be_allowed

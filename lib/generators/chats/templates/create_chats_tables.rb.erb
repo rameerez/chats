@@ -88,6 +88,12 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
                                   foreign_key: { to_table: :chats_conversations }, index: false
       t.references :sender, polymorphic: true, null: true, type: foreign_key_type, index: false
 
+      # Who WROTE it, when that isn't the seat it was sent FROM: an agent
+      # answering from a shared support-desk seat signs the bubble while the
+      # desk stays the conversation identity. Nullable — ordinary messages
+      # have no author. See Chats::Message#signed?.
+      t.references :author, polymorphic: true, null: true, type: foreign_key_type, index: false
+
       t.string :kind, null: false, default: "text"
       t.text :body
       t.references :reply_to, type: foreign_key_type, null: true,
@@ -103,6 +109,7 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
     # (created_at, id) — see Chats::Message.before_message.
     add_index :chats_messages, [ :conversation_id, :created_at, :id ], name: "index_chats_messages_on_conversation_and_created_at"
     add_index :chats_messages, [ :sender_type, :sender_id ], name: "index_chats_messages_on_sender"
+    add_index :chats_messages, [ :author_type, :author_id ], name: "index_chats_messages_on_author"
     add_index :chats_messages, :reply_to_id, name: "index_chats_messages_on_reply_to_id"
 
     # ---------------------------------------------------------------------------

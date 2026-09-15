@@ -1,0 +1,38 @@
+<%# One STACKED inbox row: every direct conversation the viewer has with a
+    `acts_as_messager inbox: :grouped` counterpart (a support desk, a
+    storefront), folded into a single line — their avatar and name, the
+    freshest message across the stack, and the aggregate unread badge.
+
+    A stack of one links straight to that thread (and the thread offers a
+    "see all" link back here); a deeper stack opens the stack list, which is
+    either the host's `group_path:` or chats' own filtered inbox. %>
+<li class="chats-row chats-row--group <%= "chats-row--unread" if group.unread? %>"
+    id="<%= group.dom_id %>">
+  <%= link_to chats_group_path(group), class: "chats-row__link" do %>
+    <%= chats_messager_avatar(group.messager) %>
+
+    <span class="chats-row__body">
+      <span class="chats-row__top">
+        <span class="chats-row__title"><%= group.title_for(viewer) %></span>
+        <time class="chats-row__time" datetime="<%= group.last_message_at&.iso8601 %>">
+          <%= chats_timestamp(group.last_message_at) %>
+        </time>
+      </span>
+
+      <% if group.open_count > 1 %>
+        <span class="chats-row__subject"><%= t("chats.inbox.group_count", count: group.open_count) %></span>
+      <% elsif group.conversation&.subject_label %>
+        <span class="chats-row__subject"><%= group.conversation.subject_label %></span>
+      <% end %>
+
+      <span class="chats-row__bottom">
+        <span class="chats-row__preview">
+          <%= group.conversation ? chats_preview_for(group.conversation, viewer) : "" %>
+        </span>
+        <% if group.unread? %>
+          <span class="chats-badge"><%= group.unread_count > 99 ? "99+" : group.unread_count %></span>
+        <% end %>
+      </span>
+    </span>
+  <% end %>
+</li>

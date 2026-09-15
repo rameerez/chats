@@ -9,12 +9,12 @@ module Chats
     # The inbox. Everything is preloaded/batched so rendering N rows costs a
     # constant number of queries (conversations + last messages + participants
     # + one grouped unread-count query — see Conversation.unread_counts_for).
+    # Rows are Conversation | InboxGroup: stacking, search and the `?with=`
+    # filter all live in Chats::Inbox, so this action stays three lines.
     def index
-      @conversations = chats_current_messager.chats
-                                             .includes(:last_message, :subject, participants: :messager)
-                                             .limit(200)
-      @conversations = apply_search(@conversations)
-      @unread_counts = Chats::Conversation.unread_counts_for(chats_current_messager, @conversations)
+      @inbox = Chats::Inbox.for(chats_current_messager, query: params[:q], with: inbox_filter)
+      @rows = @inbox.rows
+      @unread_counts = @inbox.unread_counts
     end
 
     # The thread. Renders the LATEST page of messages; older pages stream in
@@ -22,6 +22,7 @@ module Chats
     # Message.before_message and _messages_page.html.erb).
     def show
       @participant = @conversation.participant_for(chats_current_messager)
+      @counterpart = counterpart_of(@conversation)
 
       anchor = params[:before].present? ? @conversation.messages.find_by(id: params[:before]) : nil
       scope = @conversation.messages.includes(:sender, :reactions)
@@ -156,43 +157,25 @@ module Chats
       GlobalID::Locator.locate_signed(sgid, for: purpose) || raise(ActiveRecord::RecordNotFound)
     end
 
-    # Partial, case-insensitive matching across the inbox metadata users can
-    # actually see: participant names, conversation titles, subject labels,
-    # and message bodies. The inbox is capped at 200 rows, so metadata is
-    # filtered portably in Ruby from the already-preloaded objects while the
-    # potentially larger message-body set stays in SQL. No PostgreSQL-only
-    # full-text dependency is needed for this scale.
-    def apply_search(conversations)
-      return conversations unless Chats.config.search
+    # `?with=<signed gid>` — the inbox filtered to one counterpart (a stack's
+    # contents). Signed and purpose-scoped like every other polymorphic
+    # param the engine accepts; a tampered one is a plain 404.
+    def inbox_filter
+      return nil if params[:with].blank?
 
-      query = params[:q].to_s.strip
-      return conversations if query.empty?
+      messager = locate_signed!(params[:with], purpose: :chats_inbox_with)
+      raise ActiveRecord::RecordNotFound unless Chats.messager_class?(messager.class)
 
-      loaded = conversations.to_a
-      normalized_query = query.downcase
-      pattern = "%#{Chats::Conversation.sanitize_sql_like(query.downcase)}%"
-      message_match_ids =
-        if Chats.config.encrypt_messages
-          []
-        else
-          Chats::Message.where(conversation_id: loaded.map(&:id), deleted_at: nil)
-                        .where("LOWER(chats_messages.body) LIKE ?", pattern)
-                        .distinct
-                        .pluck(:conversation_id)
-        end
-
-      loaded.select do |conversation|
-        message_match_ids.include?(conversation.id) ||
-          searchable_metadata(conversation).downcase.include?(normalized_query)
-      end
+      messager
     end
 
-    def searchable_metadata(conversation)
-      participant_names = conversation.participants.filter_map do |participant|
-        Chats.display_name_for(participant.messager) if participant.active?
-      end
+    # The other party of a direct thread (nil for groups) — the thread header
+    # names them, links to their profile, and decides whether to offer the
+    # "see all" link back to their stack.
+    def counterpart_of(conversation)
+      return nil unless conversation.direct?
 
-      [conversation.title, conversation.subject_label, *participant_names].compact.join(" ")
+      conversation.other_participants(chats_current_messager).includes(:messager).first&.messager
     end
   end
 end

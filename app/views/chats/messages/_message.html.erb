@@ -27,7 +27,7 @@
   <% else %>
     <div class="chats-message__content">
       <% if message.conversation.group? && message.sender %>
-        <span class="chats-message__sender"><%= Chats.display_name_for(message.sender) %></span>
+        <%= chats_messager_name(message.sender, css_class: "chats-message__sender") %>
       <% end %>
 
       <div class="chats-message__bubble-row">
@@ -76,11 +76,20 @@
             <% end %>
           <% end %>
 
+          <%# Signature: who WROTE this, when that isn't who it was sent
+              from — an agent answering from a shared desk seat. The sender
+              stays the conversation identity; this line keeps the human
+              visible. See Chats::Message#signed?. %>
+          <% if (signature = chats_message_signature(message)) %>
+            <div class="chats-message__signature" data-chats-message-signature><%= signature %></div>
+          <% end %>
+
           <span class="chats-message__meta">
             <% if message.edited? && !message.deleted? %>
               <span class="chats-message__edited"><%= t("chats.message.edited") %></span>
             <% end %>
             <time datetime="<%= message.created_at.iso8601 %>"><%= message.created_at.in_time_zone.strftime("%H:%M") %></time>
+            <%= chats_slot :message_meta, message: message %>
             <% if Chats.config.read_receipts %>
               <span class="chats-message__receipt"
                     data-chats-message-receipt

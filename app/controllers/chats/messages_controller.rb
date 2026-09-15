@@ -40,6 +40,17 @@ module Chats
           format.turbo_stream
           format.html { redirect_to conversation_path(@conversation) }
         end
+      elsif locked?
+        # The subject closed the conversation (Chats::ChatSubject#
+        # chat_locked?) — possibly while this composer sat open. Swap the
+        # composer for the locked notice instead of flashing an error at
+        # someone whose screen is now lying to them. 422, never a raise.
+        respond_to do |format|
+          format.turbo_stream { render :locked, status: :unprocessable_entity }
+          format.html do
+            redirect_to conversation_path(@conversation), alert: @conversation.locked_notice
+          end
+        end
       else
         respond_to do |format|
           format.turbo_stream { render :errors, status: :unprocessable_entity }
@@ -83,6 +94,13 @@ module Chats
 
     def set_conversation
       @conversation = find_conversation(params[:conversation_id])
+    end
+
+    # Did THIS save fail because the conversation is locked? Reads the error
+    # type, not the conversation, so a message that also failed validation
+    # for another reason still reports that reason.
+    def locked?
+      @message.errors.of_kind?(:base, :locked)
     end
 
     def set_message

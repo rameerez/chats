@@ -8,6 +8,11 @@ en:
       no_results_title: "No results"
       no_results_hint: "Nothing matched “%{query}”."
       no_messages: "No messages yet"
+      filtered_by: "Conversations with %{name}"
+      clear_filter: "Show all conversations"
+      group_count:
+        one: "1 conversation"
+        other: "%{count} conversations"
       you_prefix: "You:"
     thread:
       back: "Back"
@@ -22,6 +27,7 @@ en:
       yesterday: "Yesterday"
       typing_suffix: "is typing…"
       new_messages: "New messages"
+      see_all: "See all"
     conversation:
       empty_title: "Conversation"
     message:
@@ -30,6 +36,7 @@ en:
       copy: "Copy"
       copied: "Copied!"
       attachment: "Photo"
+      signature: "— %{name}"
       close_attachment: "Close photo"
       edit: "Edit"
       delete: "Delete"
@@ -44,6 +51,7 @@ en:
       placeholder: "Write a message…"
       send: "Send"
       attach: "Attach images"
+      locked: "This conversation is closed."
     buttons:
       chat: "Message"
     flashes:
@@ -67,6 +75,7 @@ en:
         chats/message:
           attributes:
             base:
+              locked: "This conversation is closed."
               blocked: "You can't message this person."
             sender:
               blank: "is required"

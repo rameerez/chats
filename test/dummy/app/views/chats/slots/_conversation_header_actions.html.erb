@@ -1,0 +1,9 @@
+<%# Slot fixture: the safety affordances a host adds to the thread menu.
+    They are guarded by the `blockable` local, which chats computes from
+    `acts_as_messager blockable:` — so a headless messager (Desk) shows no
+    block button and the host never writes a class check. %>
+<div data-dummy-slot="conversation_header_actions">
+  <% if blockable %>
+    <button type="button" class="dummy-block-button">Block</button>
+  <% end %>
+</div>
