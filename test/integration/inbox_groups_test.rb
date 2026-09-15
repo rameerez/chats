@@ -129,6 +129,16 @@ class InboxGroupsTest < ActionDispatch::IntegrationTest
     assert_equal 2, css_select("li.chats-row").size
   end
 
+  test "the controller still assigns @conversations for inboxes ejected under 0.1.x" do
+    conversation = @alice.chat_with(@bob)
+    login_as @alice
+
+    get "/messages"
+
+    assert_response :success
+    assert_equal [conversation], @controller.view_assigns["conversations"]
+  end
+
   private
 
   # Declare a `group_path:` on the headless messager for one test. Assigning

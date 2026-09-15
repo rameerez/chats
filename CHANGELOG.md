@@ -94,6 +94,12 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
   `Rails.application.deprecators`.
 - The install migration now creates the `author` columns, so a fresh install
   needs no upgrade step.
+- **If you ejected the inbox or the composer under 0.1.x**, nothing breaks:
+  `ConversationsController#index` still assigns `@conversations` (the flat,
+  unstacked list an ejected inbox loops over), and an ejected composer simply
+  misses the DOM id the locked-composer swap targets — the 422 is then a
+  no-op instead of a replace. Re-eject (or delete) those two files to pick up
+  stacked rows and locked composers.
 
 ### Fixed
 - `:participant_added` was documented as a notifier event but never emitted.

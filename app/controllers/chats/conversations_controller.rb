@@ -15,6 +15,11 @@ module Chats
       @inbox = Chats::Inbox.for(chats_current_messager, query: params[:q], with: inbox_filter)
       @rows = @inbox.rows
       @unread_counts = @inbox.unread_counts
+      # Back-compat for inboxes ejected under 0.1.x, which loop over
+      # @conversations: they keep rendering the flat list (no stacking, i.e.
+      # exactly what they rendered before). Re-eject or delete your copy to
+      # get the stacked rows.
+      @conversations = @inbox.conversations
     end
 
     # The thread. Renders the LATEST page of messages; older pages stream in

@@ -138,6 +138,7 @@ module Chats
 
     test "reseat! re-indexes a direct thread so chat_with finds it for the NEW pair" do
       carol = create_user(name: "Carol")
+      @conversation.participants.load # a stale, already-loaded roster must not fool the re-index
 
       @participant.reseat!(carol)
 

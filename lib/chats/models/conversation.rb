@@ -285,7 +285,9 @@ module Chats
     def reindex_direct_key! # :nodoc:
       return self unless direct?
 
-      messagers = participants.includes(:messager).filter_map(&:messager)
+      # `reset`: the caller just changed a seat, and a participants
+      # association loaded BEFORE that would name the old pair.
+      messagers = participants.reset.includes(:messager).filter_map(&:messager)
       return self unless messagers.size == 2
 
       update_columns(

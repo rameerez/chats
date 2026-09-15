@@ -51,7 +51,6 @@ module Chats
     def size
       rows.size
     end
-    alias count size
 
     def any?
       rows.any?
