@@ -108,5 +108,74 @@ module Chats
       @conversation.messages.create!(sender: @bob, body: "a new burst")
       assert @participant.reload.should_notify?
     end
+
+    # --- reseat! --------------------------------------------------------------
+
+    test "reseat! swaps the messager and keeps the read horizon" do
+      @conversation.messages.create!(sender: @bob, body: "before the handover")
+      @participant.read!
+      horizon = @participant.reload.last_read_at
+      carol = create_user(name: "Carol")
+
+      @participant.reseat!(carol)
+
+      assert_equal carol, @participant.reload.messager
+      assert_equal horizon.to_i, @participant.last_read_at.to_i
+      assert_equal "member", @participant.role
+      assert_includes carol.chats, @conversation
+      assert_empty @alice.chats
+    end
+
+    test "reseat! keeps history — messages belong to whoever sent them" do
+      said = @conversation.messages.create!(sender: @alice, body: "I said this")
+      carol = create_user(name: "Carol")
+
+      @participant.reseat!(carol)
+
+      assert_equal @alice, said.reload.sender
+      assert_equal "I said this", said.body
+    end
+
+    test "reseat! re-indexes a direct thread so chat_with finds it for the NEW pair" do
+      carol = create_user(name: "Carol")
+
+      @participant.reseat!(carol)
+
+      assert_equal @conversation, carol.chat_with(@bob)
+      assert_equal @conversation, Chats::Conversation.direct_between(carol, @bob)
+      assert_equal 1, Chats::Conversation.count, "reseating must never strand a duplicate thread"
+    end
+
+    test "reseat! preserves the owner role in a group" do
+      carol = create_user(name: "Carol")
+      dave = create_user(name: "Dave")
+      group = @alice.chat_with(@bob, dave, title: "Trip")
+      seat = group.participant_for(@alice)
+
+      seat.reseat!(carol)
+
+      assert seat.reload.owner?
+      assert_equal carol, seat.messager
+    end
+
+    test "reseat! refuses a non-messager and a messager who already has a seat" do
+      assert_raises(ArgumentError) { @participant.reseat!(nil) }
+
+      error = assert_raises(Chats::NotAllowedError) { @participant.reseat!(create_listing) }
+      assert_match(/not a messager/, error.message)
+
+      error = assert_raises(Chats::NotAllowedError) { @participant.reseat!(@bob) }
+      assert_match(/already has a seat/, error.message)
+      assert_equal @alice, @participant.reload.messager
+    end
+
+    test "reseat! works across messager classes" do
+      desk = create_desk(name: "Support")
+
+      @participant.reseat!(desk)
+
+      assert_equal desk, @participant.reload.messager
+      assert_equal @conversation, desk.chat_with(@bob)
+    end
   end
 end

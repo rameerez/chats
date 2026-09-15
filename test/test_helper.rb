@@ -103,9 +103,10 @@ end
 
 module ActionDispatch
   class IntegrationTest
-    # Act as +user+ for subsequent requests (see the dummy SessionsController).
-    def login_as(user)
-      post "/test_login", params: { user_id: user.id }
+    # Act as +messager+ for subsequent requests (any acts_as_messager
+    # model — a User, a Desk — see the dummy SessionsController).
+    def login_as(messager)
+      post "/test_login", params: { messager_gid: messager.to_global_id.to_s }
       assert_response :no_content
     end
   end

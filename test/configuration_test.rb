@@ -25,7 +25,14 @@ class ConfigurationTest < ActiveSupport::TestCase
     assert_equal 5_000, config.max_message_length
     assert_equal 32, config.max_group_size
     assert_equal({ to: 60, within: 60 }, config.send_rate_limit)
+    assert_equal 200, config.inbox_limit
     refute config.encrypt_messages
+
+    # 0.2.0 seams, all inert until a host sets them.
+    relation = Object.new
+    assert_same relation, config.inbox_scope.call(relation, nil)
+    assert_nil config.messager_url.call(nil)
+    assert_nil config.message_signature
   end
 
   test "configure yields, validates and returns the config" do
@@ -141,5 +148,21 @@ class ConfigurationTest < ActiveSupport::TestCase
     Chats.config.notifier = ->(_event, **) { raise "boom" }
 
     assert_nothing_raised { Chats.notify(:message_created, message: nil) }
+  end
+
+  test "reset! also drops every subscriber" do
+    fired = []
+    Chats.on(:message_created) { fired << :yes }
+
+    Chats.reset!
+    Chats.notify(:message_created, message: nil)
+
+    assert_empty fired
+  end
+
+  test "the 0.2.0 hooks must all be callable" do
+    assert_raises(Chats::ConfigurationError) { Chats.config.inbox_scope = :not_callable }
+    assert_raises(Chats::ConfigurationError) { Chats.config.messager_url = :not_callable }
+    assert_raises(Chats::ConfigurationError) { Chats.config.message_signature = :not_callable }
   end
 end

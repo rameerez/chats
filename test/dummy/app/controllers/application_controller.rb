@@ -8,7 +8,9 @@ class ApplicationController < ActionController::Base
   helper_method :current_user
 
   def current_user
-    @current_user ||= User.find_by(id: session[:user_id])
+    return @current_user if defined?(@current_user)
+
+    @current_user = session[:messager_gid].presence && GlobalID::Locator.locate(session[:messager_gid])
   end
 
   def authenticate_user!

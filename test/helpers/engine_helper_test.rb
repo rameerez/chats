@@ -134,4 +134,58 @@ class EngineHelperTest < ActionView::TestCase
     assert_includes html, 'id="chats_unread_badge"'
     assert_includes html, ">1<"
   end
+
+  # --- 0.2.0 helpers ---------------------------------------------------------
+
+  test "chats_slot renders an existing partial and nothing at all for a missing one" do
+    assert chats_slot?(:inbox_top)
+    assert_includes chats_slot(:inbox_top), "Need help?"
+
+    assert_not chats_slot?(:inbox_empty)
+    assert_nil chats_slot(:inbox_empty)
+  end
+
+  test "chats_slot? memoizes its lookup per view" do
+    assert chats_slot?(:inbox_top)
+    assert_not chats_slot?(:inbox_empty)
+
+    # Asking again must not hit the resolver — that's what keeps a slot
+    # rendered inside a collection cheap, present or absent.
+    lookup_context.stub(:exists?, ->(*) { raise "looked up twice" }) do
+      assert chats_slot?(:inbox_top)
+      assert_not chats_slot?(:inbox_empty)
+    end
+  end
+
+  test "chats_messager_name is plain text without messager_url and a link with it" do
+    assert_equal "<span>Bob</span>", chats_messager_name(@bob)
+
+    Chats.config.messager_url = ->(messager) { "/people/#{messager.id}" }
+    html = chats_messager_name(@bob, css_class: "who")
+
+    assert_includes html, %(href="/people/#{@bob.id}")
+    assert_includes html, %(class="who")
+    assert_includes html, "Bob"
+  end
+
+  test "chats_messager_name renders text when messager_url returns nil for THIS messager" do
+    desk = create_desk(name: "Support")
+    Chats.config.messager_url = ->(messager) { messager.is_a?(User) ? "/people/#{messager.id}" : nil }
+
+    assert_includes chats_messager_name(@bob), "href"
+    assert_not_includes chats_messager_name(desk), "href"
+  end
+
+  test "chats_blockable? mirrors the messager declaration" do
+    assert chats_blockable?(@bob)
+    assert_not chats_blockable?(create_desk)
+  end
+
+  test "chats_message_signature returns the line only for signed messages" do
+    desk = create_desk(name: "Support")
+    conversation = @alice.chat_with(desk)
+
+    assert_equal "— Alice Wonder", chats_message_signature(desk.message!(conversation, "hi", author: @alice))
+    assert_nil chats_message_signature(@alice.message!(conversation, "hi"))
+  end
 end

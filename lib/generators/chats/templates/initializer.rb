@@ -14,6 +14,20 @@ Chats.configure do |config|
   # Default: "User"
   config.messager_class = "User"
 
+  # Any model can converse, and a model that isn't a person can say so:
+  #
+  #   class SupportDesk < ApplicationRecord
+  #     acts_as_messager notifications: false,   # never notifiable
+  #                      blockable:     false,   # no block/report affordances
+  #                      inbox:         :grouped # every thread with it is ONE
+  #                                              # inbox row (a "stack")
+  #   end
+  #
+  # `group_path:` says where that stacked row goes when it holds more than
+  # one conversation (default: chats' own filtered inbox):
+  #
+  #   acts_as_messager inbox: :grouped, group_path: ->(viewer) { support_path }
+
   # ==========================================================================
   # CONTROLLER INTEGRATION
   # ==========================================================================
@@ -62,6 +76,12 @@ Chats.configure do |config|
   #
   # config.send_rate_limit = { to: 60, within: 1.minute }
   #
+  # How many conversations the inbox loads (and therefore how deep search
+  # and stacking see). The inbox is a "recent activity" surface, not an
+  # archive.
+  #
+  # config.inbox_limit = 200
+  #
   # Encrypt message bodies at rest (ActiveRecord Encryption; requires
   # `bin/rails db:encryption:init`). Body search degrades when enabled.
   #
@@ -80,6 +100,23 @@ Chats.configure do |config|
   # }
   #
   # config.can_create_group = ->(creator) { creator.admin? }
+  #
+  # Composed into the inbox query before the limit — hide rows, re-scope
+  # them, whatever your product needs, without overriding the controller:
+  #
+  # config.inbox_scope = ->(relation, viewer) { relation }
+  #
+  # Whether a conversation still accepts messages is NOT a proc: the SUBJECT
+  # owns it, because the subject already owns the conversation's meaning.
+  #
+  #   class Ticket < ApplicationRecord
+  #     acts_as_chat_subject
+  #     def chat_locked?       = closed?
+  #     def chat_locked_notice = "This ticket is closed. Reply to reopen it."
+  #   end
+  #
+  # Locking gates SENDING only: the thread stays readable and the composer
+  # is replaced by the notice (see the `locked_composer` slot below).
 
   # ==========================================================================
   # TRUST & SAFETY — snap onto the `moderate` gem (or anything else)
@@ -103,25 +140,34 @@ Chats.configure do |config|
   # config.filter "Chats::Message", :body, mode: :flag
 
   # ==========================================================================
-  # NOTIFICATIONS — one hook, fan out anywhere
+  # EVENTS — subscribe to the domain moments, fan out anywhere
   # ==========================================================================
   #
-  # Called on notification-worthy domain moments. Keep it fast (enqueue jobs,
-  # don't do work inline). Events:
+  # Many subscribers per event; each runs isolated (a raising one is reported
+  # through Rails.error and never breaks message delivery). Keep them fast —
+  # enqueue jobs, don't do work inline.
   #
-  #   :message_created    message:      every persisted human message
-  #   :participant_added  participant:  someone added to a group
+  #   Chats.on(:message_created)      { |message| }       # every human message
+  #   Chats.on(:conversation_created) { |conversation| }  # a thread came into being
+  #   Chats.on(:participant_left)     { |participant| }   # someone left a group
+  #   Chats.on(:conversation_read)    { |conversation:, participant:| }
   #
   # With Noticed:
-  #   config.notifier = ->(event, **payload) {
-  #     NewMessageNotifier.with(**payload).deliver if event == :message_created
-  #   }
+  #   Chats.on(:message_created) { |message| NewMessageNotifier.with(record: message).deliver }
   #
-  # With a plain debounced-email job (see Chats::Participant#should_notify?
-  # for the "only email once until they come back" etiquette helper):
-  #   config.notifier = ->(event, message:, **) {
-  #     ChatsUnreadEmailJob.set(wait: 10.minutes).perform_later(message) if event == :message_created
-  #   }
+  # With a debounced-email job (see Chats::Participant#should_notify? for the
+  # "only email once until they come back" etiquette helper):
+  #   Chats.on(:message_created) { |message| ChatsUnreadEmailJob.set(wait: 10.minutes).perform_later(message) }
+  #
+  # Registering from reloadable code? Pass a key, and a reload replaces the
+  # subscriber instead of stacking a second one:
+  #
+  #   Rails.application.config.to_prepare do
+  #     Chats.on(:message_created, key: :unread_email) { |message| … }
+  #   end
+  #
+  # DEPRECATED (removed in 1.0): `config.notifier = ->(event, **payload) {}`
+  # still works and receives every event.
 
   # ==========================================================================
   # DISPLAY — how messagers appear in the bundled views
@@ -135,4 +181,32 @@ Chats.configure do |config|
   # config.messager_avatar = ->(messager) {
   #   messager.avatar.attached? ? messager.avatar.variant(:thumb) : nil
   # }
+  #
+  # Where a messager's profile lives. nil (the default) means the bundled
+  # views render names as plain text — chats never assumes you have a
+  # `user_path`, and never renders a dead anchor:
+  #
+  # config.messager_url = ->(messager) { Rails.application.routes.url_helpers.user_path(messager) }
+  #
+  # The signature under a message written by an AUTHOR on a sender's behalf
+  # (`desk.message!(user, "On it!", author: agent)`). Defaults to the
+  # localized "— Agent Name":
+  #
+  # config.message_signature = ->(message) { "answered by #{message.author.first_name}" }
+
+  # ==========================================================================
+  # SLOTS — add one row or one button without ejecting a screen
+  # ==========================================================================
+  #
+  # The bundled views render a partial named `chats/slots/_<slot>` whenever
+  # one exists in your app. No configuration, no registration: create the
+  # file and it appears.
+  #
+  #   app/views/chats/slots/_inbox_top.html.erb                 above the first inbox row
+  #   app/views/chats/slots/_inbox_empty.html.erb               inside the empty state
+  #   app/views/chats/slots/_conversation_header_actions.html.erb  thread menu
+  #   app/views/chats/slots/_locked_composer.html.erb           the locked composer's body
+  #   app/views/chats/slots/_message_meta.html.erb              after each bubble's timestamp
+  #
+  # `rails generate chats:views` is still there for wholesale restyling.
 end

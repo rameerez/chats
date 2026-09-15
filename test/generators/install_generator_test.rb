@@ -31,6 +31,10 @@ class InstallGeneratorTest < Rails::Generators::TestCase
       # Polymorphic references must carry the adaptive FK type.
       assert_match(/t\.references :messager, polymorphic: true, null: false, type: foreign_key_type/, migration)
       assert_match(/t\.references :sender, polymorphic: true, null: true, type: foreign_key_type/, migration)
+      # 0.2.0: a FRESH install already carries the authorship columns, so
+      # `chats:upgrade` has nothing to do there.
+      assert_match(/t\.references :author, polymorphic: true, null: true, type: foreign_key_type/, migration)
+      assert_match(/add_index :chats_messages, \[ :author_type, :author_id \]/, migration)
 
       # The race-safety backbone: unique indexes. (Omakase array spacing —
       # `[ :a, :b ]` — so installs are rubocop-clean in stock Rails apps.)
@@ -45,7 +49,10 @@ class InstallGeneratorTest < Rails::Generators::TestCase
       assert_match(/Chats\.configure do \|config\|/, initializer)
       assert_match(/config\.messager_class = "User"/, initializer)
       assert_match(/blocked_messager_ids/, initializer) # the moderate seam, documented
-      assert_match(/config\.notifier/, initializer)
+      assert_match(/Chats\.on\(:message_created\)/, initializer) # the event bus, documented
+      assert_match(/config\.messager_url/, initializer)
+      assert_match(/config\.inbox_limit/, initializer)
+      assert_match(/acts_as_messager notifications: false/, initializer)
     end
   end
 
