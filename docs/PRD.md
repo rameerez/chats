@@ -18,7 +18,7 @@ Direct messages, group chats, reactions, attachments, read receipts — Hotwire-
 
 A gem you add to a Rails app to get **Instagram/X-DM-class** user-to-user messaging without building it again. The happy path is one generator + one `acts_as_messager` line + a mounted engine; the result is a working, real-time, polished inbox. Power users override views, policies, and adapters.
 
-It is **not** a chatbot/LLM framework, not a Slack-clone with workspaces, and not a support-ticketing tool. It is peer-to-peer (and group) human messaging.
+It is **not** a chatbot/LLM framework, not a Slack-clone with workspaces, and not a support-ticketing tool (that is `support_desk`, a separate product gem built on this one — see README). It is peer-to-peer (and group) human messaging.
 
 **Why it exists:** every consumer app eventually needs DMs, and everyone rebuilds the same Conversation/Message/Participant/Receipt model, the same Action Cable + Turbo plumbing, and the same "report this message / block this user / filter this text" surface. We already built the moderation half for CarHey; `chats` is the messaging half, and the two snap together.
 

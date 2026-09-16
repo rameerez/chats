@@ -86,6 +86,9 @@ And a live unread badge in your nav:
 
 **Doesn't:** chatbots/LLM agents, workspaces/tenancy, voice/video, public channels, federation. It's peer-to-peer (and group) human messaging — not a Slack clone, not a support-ticketing tool.
 
+> [!NOTE]
+> **Want customer support?** Ticketing stays out of `chats` on purpose — queues, assignment and SLAs are not messaging. [`support_desk`](https://github.com/rameerez/support_desk) is the product gem that adds them ON TOP of this one: tickets that are real conversations, a support desk that sends while your staff sign, and a BYOUI agent console. It uses the seams below (headless messagers, subject locks, message authorship, grouped inbox rows), so you get the same threads, attachments and read state you already have.
+
 ## 🧱 The data model
 
 Five concepts, namespaced and polymorphic from day one (no hard `User` coupling anywhere):
@@ -94,7 +97,7 @@ Five concepts, namespaced and polymorphic from day one (no hard `User` coupling 
 - **`Chats::Participant`** — a messager's seat in a conversation. Holds role, read horizon, mute, soft-leave, and notification bookkeeping.
 - **`Chats::Message`** — `text` (human) or `system` (posted by your app). Soft-deletes to a tombstone. Attachments via ActiveStorage.
 - **`Chats::Reaction`** — one row per (message, reactor, emoji); tap-to-toggle, race-safe.
-- **Any model with `acts_as_messager`** — users, organizations, support agents: participants and senders are polymorphic.
+- **Any model with `acts_as_messager`** — users, organizations, support desks, bots: participants and senders are polymorphic. A messager that is not a person declares it (`notifications: false, blockable: false, inbox: :grouped`) and the gem stops treating it like one. See [`support_desk`](https://github.com/rameerez/support_desk) for the worked example.
 
 Two deliberate design decisions worth knowing:
 
