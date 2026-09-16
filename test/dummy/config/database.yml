@@ -8,7 +8,11 @@
 # matrix.
 test:
   adapter: sqlite3
-  database: <%= File.expand_path("../db/test.sqlite3", __dir__) %>
+  # The file name carries the Rails version because the appraisal legs share
+  # this directory. A database migrated under one Rails version and reused
+  # under another fails with NOT NULL violations that look like product bugs
+  # and are not; a file per leg makes the matrix order-independent.
+  database: <%= File.expand_path("../db/test-rails-#{Rails::VERSION::STRING.split(%q{.}).first(2).join(%q{-})}.sqlite3", __dir__) %>
   pool: 5
   timeout: 5000
   url: <%= ENV["DATABASE_URL"] %>
