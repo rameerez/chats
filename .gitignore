@@ -13,6 +13,15 @@ Gemfile.lock
 gemfiles/*.lock
 
 test/dummy/db/*.sqlite3*
+
+# The dummy migrates from test/dummy/db/migrate, never from a dump, and
+# `dump_schema_after_migration = false` holds for `db:migrate`. It does NOT
+# hold for `db:migrate:reset`, which Rails hardwires to db:drop, db:create,
+# db:schema:dump, db:migrate — and CI runs exactly that on the PostgreSQL and
+# MySQL legs (.github/workflows/test.yml). So a routine matrix run leaves an
+# untracked schema.rb shaped like whichever adapter happened to run last, one
+# `git add .` away from a schema the other two cannot load.
+test/dummy/db/schema.rb
 /log/
 /test/dummy/log/
 test/dummy/tmp/
