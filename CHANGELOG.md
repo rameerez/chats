@@ -144,6 +144,18 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
 - `:participant_added` was documented as a notifier event but never emitted.
   The event catalogue is now exactly what the gem fires, and registering for
   anything else raises at boot with the valid list.
+- **A signed message is its author's to answer for.** `Message#reported_owner`
+  now returns `author || sender`. With authorship, an answer sent from a
+  headless seat (a support desk) carries a human author, and a host's
+  moderation `owner` is typed to its user class — a desk there raised an
+  association type mismatch from inside the agent's own reply the first time
+  a text filter tripped, and the moderation screens then asked the desk for
+  an avatar it does not have. Found by the CarHey integration.
+- **`jsonb` on PostGIS.** The install migration decided jsonb-or-json with
+  `adapter_name.downcase.include?("postgresql")`, and activerecord-postgis-
+  adapter answers `"PostGIS"`, so PostGIS hosts silently got plain `json`
+  columns. The template now matches the prefix (`/\Apostg/i`). Existing
+  installs are unaffected; a host that wants jsonb can `change_column` it.
 
 ## [0.1.1] - 2026-06-10
 

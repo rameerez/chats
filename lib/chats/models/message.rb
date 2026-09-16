@@ -204,8 +204,14 @@ module Chats
     # seams for attachment filtering. Without moderate installed they're
     # inert and cost nothing.
 
+    # Who answers for this message: its AUTHOR when it is signed, else its
+    # sender. A signed message was written by a human from a seat that is not
+    # a person — an agent answering from a support desk — and the seat cannot
+    # be the owner a moderation flag or report points at: the host's `owner`
+    # is typed to its user class, so a desk there is a type mismatch raised
+    # from inside the agent's own reply the first time a filter trips.
     def reported_owner
-      sender
+      author || sender
     end
 
     def moderation_label

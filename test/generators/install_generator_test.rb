@@ -25,8 +25,11 @@ class InstallGeneratorTest < Rails::Generators::TestCase
       # JSON column type, and MySQL-safe JSON defaults.
       assert_match(/primary_key_type, foreign_key_type = primary_and_foreign_key_types/, migration)
       assert_match(/config\.options\[config\.orm\]\[:primary_key_type\]/, migration)
-      assert_match(/return :jsonb if connection\.adapter_name\.downcase\.include\?\("postgresql"\)/, migration)
-      assert_match(/return nil if connection\.adapter_name\.downcase\.include\?\("mysql"\)/, migration)
+      # By prefix, not `include?("postgresql")`: PostGIS answers "PostGIS".
+      assert_match(%r{return :jsonb if connection\.adapter_name\.match\?\(/\\Apostg/i\)}, migration)
+      # Both MySQL spellings: Trilogy is MySQL under a different ADAPTER_NAME,
+      # and a pattern that misses it hands that host a default MySQL rejects.
+      assert_match(%r{return nil if connection\.adapter_name\.match\?\(/mysql\|trilogy/i\)}, migration)
 
       # Polymorphic references must carry the adaptive FK type.
       assert_match(/t\.references :messager, polymorphic: true, null: false, type: foreign_key_type/, migration)
