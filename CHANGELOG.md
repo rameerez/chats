@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-09-16
+
+### Fixed
+- **The verified badge was a star, not a check.** 0.3.0 shipped a
+  five-pointed star as the "official account" mark, copied from a host icon
+  that was named `verified_badge` but drawn as a star. A star reads as
+  "favourite" or "rated", not "this account is really us", and at 14px a
+  solid star and a solid rosette are the same blob. It is now heroicons
+  `check-badge`: a scalloped rosette with a tick knocked out of it, which
+  is the mark people already read as verified. `fill-rule="evenodd"` is
+  what knocks the tick out — without it the rosette fills solid.
+
 ## [0.3.0] - 2026-09-16
 
 Official accounts. Some counterparts are not people you met — they are a
