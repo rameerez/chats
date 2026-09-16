@@ -150,7 +150,7 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
   moderation `owner` is typed to its user class — a desk there raised an
   association type mismatch from inside the agent's own reply the first time
   a text filter tripped, and the moderation screens then asked the desk for
-  an avatar it does not have. Found by the CarHey integration.
+  an avatar it does not have.
 - **`jsonb` on PostGIS.** The install migration decided jsonb-or-json with
   `adapter_name.downcase.include?("postgresql")`, and activerecord-postgis-
   adapter answers `"PostGIS"`, so PostGIS hosts silently got plain `json`
