@@ -82,11 +82,18 @@ module Chats
       # A backlog deeper than one page would mean splicing an arbitrary
       # amount of history through surgical appends; a Turbo 8 page refresh
       # (morph + scroll preservation) re-renders the latest page + frame
-      # chain correctly instead. Raw tag rather than `turbo_stream.refresh`
-      # so we don't depend on turbo-rails ≥ 2.0 helpers.
+      # chain correctly instead.
+      #
+      # `render turbo_stream:`, NOT `render html: … content_type:` — the
+      # latter forces text/html and silently ignores the content type, so the
+      # body says <turbo-stream> while the response says it isn't one.
+      #
+      # `request_id: nil` on purpose: Turbo skips a refresh tagged with a
+      # request id it recognizes as its own, and this response is the answer
+      # to the client's OWN catch-up fetch — the one client that must not
+      # skip it.
       if @new_messages.size > Chats.config.messages_per_page
-        render html: '<turbo-stream action="refresh"></turbo-stream>'.html_safe,
-               content_type: "text/vnd.turbo-stream.html"
+        render turbo_stream: turbo_stream.refresh(request_id: nil)
         return
       end
 

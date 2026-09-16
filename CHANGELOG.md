@@ -131,6 +131,16 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
   stacked rows and locked composers.
 
 ### Fixed
+- **The thread's missed-broadcast recovery never took effect for a deep
+  backlog.** `ConversationsController#refresh` answered with `render html:
+  … content_type: "text/vnd.turbo-stream.html"`, and `render html:` forces
+  `text/html` and ignores the content type — so the response said
+  `<turbo-stream action="refresh">` in a body nothing would treat as a
+  stream. It now renders `turbo_stream.refresh(request_id: nil)`; the nil
+  request id matters, because Turbo skips a refresh tagged with a request id
+  it recognizes as its own, and this response answers the client's own
+  catch-up fetch. The failure was invisible by construction: a recovery path
+  that does nothing looks exactly like the staleness it exists to fix.
 - `:participant_added` was documented as a notifier event but never emitted.
   The event catalogue is now exactly what the gem fires, and registering for
   anything else raises at boot with the valid list.
