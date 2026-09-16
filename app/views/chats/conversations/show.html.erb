@@ -44,11 +44,15 @@
     <% end %>
 
     <div class="chats-thread__identity">
+      <%# Both arms wrap the name in .chats-thread__name: the <h1> is a flex
+          row (the badge is its second child), and only a real element can
+          carry the ellipsis. %>
       <h1 class="chats-thread__title">
         <% if chats_counterpart %>
-          <%= chats_messager_name(chats_counterpart) %>
+          <%= chats_messager_name(chats_counterpart, css_class: "chats-thread__name") %>
+          <%= chats_verified_badge(chats_counterpart) %>
         <% else %>
-          <%= @conversation.title_for(chats_current_messager) %>
+          <span class="chats-thread__name"><%= @conversation.title_for(chats_current_messager) %></span>
         <% end %>
       </h1>
       <% if @conversation.subject_label %>

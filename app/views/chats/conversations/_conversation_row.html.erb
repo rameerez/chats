@@ -7,7 +7,13 @@
 
     <span class="chats-row__body">
       <span class="chats-row__top">
-        <span class="chats-row__title"><%= conversation.title_for(viewer) %></span>
+        <%# The badge sits OUTSIDE the ellipsizing title so a long name
+            truncates without ever eating the mark. Nil for an ordinary
+            counterpart and for groups, so the row is unchanged. %>
+        <span class="chats-row__name">
+          <span class="chats-row__title"><%= conversation.title_for(viewer) %></span>
+          <%= chats_verified_badge(conversation.counterpart_for(viewer)) %>
+        </span>
         <time class="chats-row__time" datetime="<%= conversation.last_message_at&.iso8601 %>">
           <%= chats_timestamp(conversation.last_message_at) %>
         </time>

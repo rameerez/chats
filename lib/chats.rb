@@ -219,6 +219,14 @@ module Chats
       messager_option(messager, :chat_grouped_inbox?, default: false)
     end
 
+    # Whether +messager+ is an OFFICIAL account (`acts_as_messager verified:
+    # true`) — a support desk, an organization, a brand. The bundled views
+    # badge its name; hosts can read it to do the same on their own screens.
+    # Defaults to false: nothing is verified until a model says so.
+    def verified?(messager)
+      messager_option(messager, :chat_verified?, default: false)
+    end
+
     # The polymorphic type names of every registered messager class that
     # stacks (`inbox: :grouped`). Empty in an ordinary app — which is what
     # keeps the inbox query there byte-identical to 0.1.x. Used as a SQL

@@ -127,6 +127,39 @@ module Chats
 
     # --- naming ----------------------------------------------------------------
 
+    test "counterpart_for names the other side of a direct thread, from either seat" do
+      conversation = conversation_between(@alice, @bob)
+
+      assert_equal @bob, conversation.counterpart_for(@alice)
+      assert_equal @alice, conversation.counterpart_for(@bob)
+    end
+
+    test "counterpart_for is nil for a group and for a thread whose other seat left" do
+      group = Conversation.group!(@alice, [@bob, @carol], title: "Roadtrip")
+      assert_nil group.counterpart_for(@alice)
+
+      direct = conversation_between(@alice, @bob)
+      direct.participant_for(@bob).leave!
+
+      assert_nil Conversation.find(direct.id).counterpart_for(@alice)
+    end
+
+    test "counterpart_for resolves once per viewer, however often a row asks" do
+      conversation = conversation_between(@alice, @bob)
+      conversation.counterpart_for(@alice)
+
+      # An inbox row asks for the title, the avatar and the badge. That must
+      # stay ONE query, the way it was before the badge existed — so after
+      # the first resolution, none of them go back to the database.
+      statements = capture_sql do
+        assert_equal @bob, conversation.counterpart_for(@alice)
+        assert_equal "Bob", conversation.title_for(@alice)
+      end
+
+      assert_empty statements,
+                   "the counterpart is memoized per viewer, so a row resolves it once: #{statements.inspect}"
+    end
+
     test "title_for names direct threads after the counterpart" do
       conversation = conversation_between(@alice, @bob)
 

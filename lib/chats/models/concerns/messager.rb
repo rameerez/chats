@@ -22,14 +22,15 @@ module Chats
       notifications: true,
       blockable: true,
       inbox: :default,
-      group_path: nil
+      group_path: nil,
+      verified: false
     }.freeze
 
     INBOX_MODES = %i[default grouped].freeze
 
     # Validate + freeze the macro's options, failing at BOOT with a plain
     # English message rather than at 3am with a NoMethodError.
-    def self.normalize_options(notifications:, blockable:, inbox:, group_path:)
+    def self.normalize_options(notifications:, blockable:, inbox:, group_path:, verified: false)
       inbox = inbox.to_sym
       unless INBOX_MODES.include?(inbox)
         raise Chats::ConfigurationError,
@@ -41,11 +42,21 @@ module Chats
               "acts_as_messager group_path: must respond to #call (a proc/lambda), got #{group_path.inspect}"
       end
 
+      # Deliberately STRICTER than its boolean neighbours, which coerce with
+      # `!!`. "Official account" is a trust claim shown to everyone who talks
+      # to this messager, so `verified: "false"` (an ENV var, a YAML
+      # round-trip) has to fail at boot rather than quietly verify it.
+      unless [true, false].include?(verified)
+        raise Chats::ConfigurationError,
+              "acts_as_messager verified: must be true or false, got #{verified.inspect}"
+      end
+
       {
         notifications: !!notifications,
         blockable: !!blockable,
         inbox: inbox,
-        group_path: group_path
+        group_path: group_path,
+        verified: verified
       }.freeze
     end
 
@@ -75,6 +86,13 @@ module Chats
       # filtered inbox).
       def chat_group_path
         chat_options[:group_path]
+      end
+
+      # True when declared with `acts_as_messager verified: true` — an
+      # OFFICIAL account (a support desk, an organization, a brand). The
+      # bundled views badge its name wherever they show it.
+      def chat_verified?
+        chat_options[:verified]
       end
     end
 

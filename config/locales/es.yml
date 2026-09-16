@@ -30,6 +30,8 @@ es:
       see_all: "Ver todas"
     conversation:
       empty_title: "Conversación"
+    verified:
+      label: "Cuenta oficial"
     message:
       deleted: "Mensaje eliminado"
       edited: "editado"

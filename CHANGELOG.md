@@ -4,6 +4,61 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-16
+
+Official accounts. Some counterparts are not people you met — they are a
+support desk, an organization, a shop, a brand — and a person should be able
+to tell at a glance. **Nothing changes until a model says so**: 0.2.x
+installs upgrade by bumping the gem, with no migration and no new
+configuration.
+
+### Added
+- **`acts_as_messager verified: true`.** A messager declares itself an
+  OFFICIAL account, and every bundled view that shows its name marks it: the
+  inbox row, the stacked inbox row, and the thread header. `Klass.
+  chat_verified?` is the class predicate and `Chats.verified?(messager)`
+  reads it duck-typed — false for a plain model, a nil, a non-messager — so
+  hosts can badge their own screens without a class check. The option is
+  independent of the headless ones: a desk is usually headless *and*
+  official, a shop is usually official and nothing else. Unlike its boolean
+  neighbours it refuses to coerce — `verified: "false"` raises
+  `Chats::ConfigurationError` at boot rather than quietly verifying an
+  account, because a badge is a trust claim and not a display preference.
+- **The badge itself**, `chats/shared/_verified_badge` — an inline rosette
+  that sizes itself from the text it sits beside. It is an image with a
+  name, not decoration: `role="img"` plus a localized label
+  (`chats.verified.label`, "Official account" / "Cuenta oficial"), and the
+  glyph is `aria-hidden` so a screen reader never announces it twice.
+- **`config.verified_badge`** `->(messager) { markup }` — swap the glyph for
+  your design system's own, vary it per messager, or return nil for no badge.
+  The default (nil) renders the gem's rosette.
+- **`--chats-verified`** (`#0284c7`) — the badge colour, a CSS custom
+  property like the rest of the gem's theming, inherited through
+  `currentColor`. Not the familiar `#1d9bf0`: the badge is a meaningful
+  graphic, so WCAG 1.4.11 asks 3:1 of it, and `#1d9bf0` is 3.00:1 on
+  `--chats-bg` but 2.73:1 on `--chats-surface` — the inbox row's HOVER
+  background, so it failed exactly while somebody was pointing at it.
+  `#0284c7` clears the bar on both grounds and on a dark one, so a host
+  inverting the palette inherits a badge that still passes.
+  `test/verified_badge_contrast_test.rb` computes it rather than trusting a
+  swatch.
+- **`chats_verified_badge(messager)`** — the view helper behind all three
+  surfaces, available in host views too. Nil for everyone who hasn't
+  declared `verified: true`, so it is safe to drop next to any name
+  unconditionally.
+- **`Chats::Conversation#counterpart_for(viewer)`** — the other messager in a
+  direct thread (nil for a group, and for a thread whose other seat left).
+  The title, the avatar and the badge on an inbox row now resolve the
+  counterpart through this one method, memoized per viewer, so a row that
+  cost one query in 0.2.0 still costs one.
+
+### Changed
+- The bundled inbox row wraps its title in `.chats-row__name`, and the thread
+  header wraps its name in `.chats-thread__name`, so a long name still
+  ellipsizes while the badge beside it stays visible. If you ejected these
+  views with `rails generate chats:views`, your copies are untouched and keep
+  working; re-run the generator only if you want the badge.
+
 ## [0.2.0] - 2026-09-16
 
 The release that makes `chats` a foundation other products can be built on:
