@@ -155,7 +155,8 @@ module Chats
         # Preserve the recent search window, plus the freshest conversation
         # of each counterpart. A busy stack cannot consume another stack's
         # row; at most twice the row limit is materialized.
-        candidates = base_relation.where(id: recent).or(base_relation.where(id: stack_representatives))
+        candidates = base_relation.where(id: limited_ids(recent))
+                                  .or(base_relation.where(id: limited_ids(stack_representatives)))
         @stacked = apply_search(candidates)
       end
 
@@ -163,6 +164,12 @@ module Chats
       # The relation itself when nothing had to be assembled in Ruby (it is
       # loaded, so iterating it costs nothing extra); the flat Array otherwise.
       @flat = @stacked.empty? && query.nil? ? @ungrouped_relation : @ungrouped + @stacked
+    end
+
+    # MySQL rejects LIMIT directly in an IN subquery. A derived table keeps
+    # the bounded selection in SQL and works on all three supported adapters.
+    def limited_ids(relation)
+      Chats::Conversation.from(relation, :limited_conversations).select(:id)
     end
 
     # ROW_NUMBER works on every supported adapter (PostgreSQL, SQLite and
