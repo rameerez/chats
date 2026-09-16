@@ -288,7 +288,7 @@ acts_as_messager verified: true                                   # official, no
 acts_as_messager notifications: false, inbox: :grouped, verified: true  # an official desk
 ```
 
-It is the one boolean option that **refuses to coerce**: `verified: "false"` raises at boot instead of quietly verifying an account, because a badge is a trust claim and not a display preference.
+It is the one boolean option that **refuses to coerce**, and that is deliberate — please don't "fix" it into a `!!` to match its neighbours. `notifications:` and `blockable:` coerce, so `notifications: "false"` quietly means `true`; on those two the damage is a stray notification. Here the same slip would hand an account the mark that tells people it is really us, and the strings that reach a model declaration come from exactly the places that produce `"false"`: an ENV var, a YAML round-trip, a settings row. So `verified: "false"` raises `Chats::ConfigurationError` at boot, where somebody is looking, rather than shipping a verified impostor nobody notices.
 
 Read it anywhere you render your own screens — duck-typed, never a class check:
 
@@ -301,8 +301,10 @@ chats_verified_badge(messager)   # the view helper: markup, or nil for everyone 
 **Change the colour** with one CSS variable (the badge inherits it through `currentColor`):
 
 ```css
-:root { --chats-verified: #1d9bf0; }
+:root { --chats-verified: #0284c7; }
 ```
+
+The default is `#0284c7` rather than the more familiar `#1d9bf0`. The badge is a meaningful graphic, so it owes 3:1 against what it sits on (WCAG 1.4.11), and `#1d9bf0` is 3.00:1 on the page but **2.73:1 on `--chats-surface`** — the inbox row's hover background, so it failed exactly while someone was pointing at it. `#0284c7` clears the bar on both (4.10 and 3.72) and on a dark ground too (4.33 on `#111827`), so inverting the palette doesn't leave you with a badge you have to remember to fix. If you override it, `test/verified_badge_contrast_test.rb` shows the arithmetic worth repeating.
 
 **Change the glyph** — to your design system's icon, a per-messager mark, or nothing — with a callable that gets the messager and returns html_safe markup (or `nil` for no badge):
 
@@ -413,7 +415,7 @@ The bundled UI is intentionally framework-free (semantic `chats-*` classes + one
 :root {
   --chats-accent: #facc15;           /* own bubbles, send button, badges */
   --chats-accent-contrast: #111827;
-  --chats-verified: #1d9bf0;         /* the "official account" badge */
+  --chats-verified: #0284c7;         /* the "official account" badge */
 }
 ```
 

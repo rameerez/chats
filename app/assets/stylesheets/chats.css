@@ -11,7 +11,7 @@
  *   :root {
  *     --chats-accent: #facc15;          /\* brand color: own bubbles, send button *\/
  *     --chats-accent-contrast: #111827; /\* text on top of the accent *\/
- *     --chats-verified: #1d9bf0;        /\* the "official account" badge *\/
+ *     --chats-verified: #0284c7;        /\* the "official account" badge *\/
  *   }
  *
  * Want a completely different look? `rails g chats:views` ejects the
@@ -27,7 +27,7 @@
   --chats-border: rgba(0, 0, 0, 0.08);
   --chats-text: #111827;
   --chats-text-muted: #6b7280;
-  --chats-verified: #1d9bf0;
+  --chats-verified: #0284c7;
   --chats-bubble-bg: #f3f4f6;
   --chats-bubble-text: #111827;
   --chats-radius: 1.1rem;
@@ -161,6 +161,15 @@
  * itself from the text it sits next to, so it reads right in an inbox row and
  * in the thread header without either one hard-coding a pixel value. Recolour
  * it with --chats-verified; replace the glyph with config.verified_badge.
+ *
+ * On #0284c7 rather than the more familiar #1d9bf0: the badge is a meaningful
+ * graphic, so WCAG 1.4.11 asks for 3:1 against what it sits on, and #1d9bf0
+ * is 3.00:1 on --chats-bg but only 2.73:1 on --chats-surface — which is the
+ * row hover background, so the mark failed exactly while someone was pointing
+ * at it. #0284c7 clears 3:1 on both (4.10 and 3.72) and on a dark ground too
+ * (4.33 on #111827), so a host that inverts the palette inherits a badge that
+ * still passes instead of one it has to remember to fix. Pinned by
+ * test/verified_badge_contrast_test.rb.
  */
 .chats-verified {
   flex-shrink: 0;

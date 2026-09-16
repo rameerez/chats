@@ -32,9 +32,16 @@ configuration.
 - **`config.verified_badge`** `->(messager) { markup }` — swap the glyph for
   your design system's own, vary it per messager, or return nil for no badge.
   The default (nil) renders the gem's rosette.
-- **`--chats-verified`** (`#1d9bf0`) — the badge colour, a CSS custom
+- **`--chats-verified`** (`#0284c7`) — the badge colour, a CSS custom
   property like the rest of the gem's theming, inherited through
-  `currentColor`.
+  `currentColor`. Not the familiar `#1d9bf0`: the badge is a meaningful
+  graphic, so WCAG 1.4.11 asks 3:1 of it, and `#1d9bf0` is 3.00:1 on
+  `--chats-bg` but 2.73:1 on `--chats-surface` — the inbox row's HOVER
+  background, so it failed exactly while somebody was pointing at it.
+  `#0284c7` clears the bar on both grounds and on a dark one, so a host
+  inverting the palette inherits a badge that still passes.
+  `test/verified_badge_contrast_test.rb` computes it rather than trusting a
+  swatch.
 - **`chats_verified_badge(messager)`** — the view helper behind all three
   surfaces, available in host views too. Nil for everyone who hasn't
   declared `verified: true`, so it is safe to drop next to any name
