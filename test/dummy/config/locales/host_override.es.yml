@@ -1,0 +1,6 @@
+# What a real host does: reword one of the gem's strings by shipping the same
+# key. The gem must not win this. See test/locale_precedence_test.rb.
+es:
+  chats:
+    flashes:
+      blocked: "No puedes escribir a esta persona (copy del host)"
