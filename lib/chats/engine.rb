@@ -30,7 +30,7 @@ module Chats
     CHATS_LIB = File.expand_path("chats", LIB_ROOT)
 
     ZEITWERK_IGNORED = %w[
-      version.rb errors.rb configuration.rb engine.rb macros.rb subscribers.rb
+      version.rb errors.rb configuration.rb engine.rb macros.rb subscribers.rb send_rate_limited.rb
     ].freeze
 
     initializer "chats.autoload", before: :set_autoload_paths do

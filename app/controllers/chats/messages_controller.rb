@@ -12,19 +12,7 @@ module Chats
     # opened the composer" race in one place.
     before_action :refuse_when_locked!, only: %i[update destroy]
 
-    # Per-sender send throttle via Rails 8's built-in controller rate
-    # limiting (https://api.rubyonrails.org/classes/ActionController/RateLimiting.html).
-    # Feature-detected so the gem still loads on Rails 7.1 (where this is
-    # simply not enforced). Keyed by messager, not IP — one abusive account
-    # behind a corporate NAT must not silence the rest.
-    if respond_to?(:rate_limit) && Chats.config.send_rate_limit
-      rate_limit(
-        **Chats.config.send_rate_limit,
-        only: :create,
-        by: -> { send(Chats.config.current_messager_method)&.to_gid&.to_s || request.remote_ip },
-        with: -> { head :too_many_requests }
-      )
-    end
+    include Chats::SendRateLimited
 
     # A single bubble, re-rendered. Exists for one delightful reason: it's
     # the "cancel edit" target — replacing the inline edit form back with the

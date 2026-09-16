@@ -96,7 +96,7 @@ module Chats
     validate :sender_must_be_active_participant, on: :create
     validate :sender_must_not_be_blocked, on: :create
     validate :conversation_must_not_be_locked, on: :create
-    validate :author_must_be_a_messager
+    validate :author_must_be_persisted
     validate :files_must_be_allowed
 
     after_create :register_on_conversation
@@ -312,13 +312,13 @@ module Chats
       errors.add(:base, :blocked) if other && Chats.blocked_between?(sender, other)
     end
 
-    # An author signs the bubble with `Chats.display_name_for`, so it has to
-    # be something that HAS a name in this system — a messager, not a ride or
-    # a listing that would render as "Listing 1".
-    def author_must_be_a_messager
-      return if author.nil? || Chats.messager_class?(author.class)
+    # Authorship is a signature, not a conversation seat. A host may keep
+    # staff in a separate model without giving them messaging capabilities.
+    # Never implicitly create that identity while sending a message.
+    def author_must_be_persisted
+      return if author.nil? || author.persisted?
 
-      errors.add(:author, :not_a_messager)
+      errors.add(:author, :invalid)
     end
 
     # The subject owns the conversation's openness (Chats::ChatSubject#
