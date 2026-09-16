@@ -70,6 +70,30 @@ module ActiveSupport
       Shop.create!(name: name, **attributes)
     end
 
+    # Every SQL statement ActiveRecord runs while the block runs.
+    #
+    # NOT `assert_no_queries` / `assert_queries_count`: those became public
+    # test API in Rails 7.2, and this gem's floor is 7.1 (see the gemspec and
+    # the rails-7.1 appraisal), where calling them is a NoMethodError. The
+    # notification is the one thing every supported version fires, so an
+    # assertion built on it means the same on all of them.
+    #
+    # SCHEMA and TRANSACTION statements are left out: they are the adapter
+    # talking to itself (column lookups, savepoints), they differ between
+    # SQLite and PostgreSQL, and they depend on whether the schema cache is
+    # already warm — none of which is ever the thing under test.
+    def capture_sql(&block)
+      statements = []
+      counter = lambda do |_name, _start, _finish, _id, payload|
+        next if %w[SCHEMA TRANSACTION].include?(payload[:name].to_s)
+
+        statements << payload[:sql]
+      end
+
+      ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
+      statements
+    end
+
     # Collect every subscriber payload fired for +event+ while the block runs.
     def capture_chats_events(event)
       fired = []

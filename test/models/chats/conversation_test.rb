@@ -149,11 +149,15 @@ module Chats
       conversation.counterpart_for(@alice)
 
       # An inbox row asks for the title, the avatar and the badge. That must
-      # stay ONE query, the way it was before the badge existed.
-      assert_no_queries do
+      # stay ONE query, the way it was before the badge existed — so after
+      # the first resolution, none of them go back to the database.
+      statements = capture_sql do
         assert_equal @bob, conversation.counterpart_for(@alice)
         assert_equal "Bob", conversation.title_for(@alice)
       end
+
+      assert_empty statements,
+                   "the counterpart is memoized per viewer, so a row resolves it once: #{statements.inspect}"
     end
 
     test "title_for names direct threads after the counterpart" do
