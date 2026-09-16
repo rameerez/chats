@@ -7,6 +7,10 @@
 #
 # Set VERBOSE_TEST_LOG=1 to get the full debug log back for one run.
 Rails.application.configure do
+  # The suite eager-loads (see application.rb), so there is nothing to
+  # reload and no reason to pay the file watcher for every request.
+  config.enable_reloading = false
+
   if ENV["VERBOSE_TEST_LOG"].present?
     config.log_level = :debug
   else
