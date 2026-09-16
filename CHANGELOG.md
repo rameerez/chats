@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2026-09-15
+## [0.2.0] - 2026-09-16
 
 The release that makes `chats` a foundation other products can be built on:
 a messager that isn't a person, a conversation whose openness belongs to its
@@ -131,6 +131,19 @@ behaviour until you set an option** — 0.1.1 installs upgrade by running
   stacked rows and locked composers.
 
 ### Fixed
+- **A host's own locale file no longer loses to the gem's.** The engine
+  appended its `config/locales` onto the application's `i18n.load_path` on
+  top of Rails' own `:add_locales`. Railtie paths are unshifted ahead of
+  everything, so that second copy landed *after* the host's files and
+  silently overrode them — a host rewording `chats.flashes.blocked` in its
+  own `es.yml` kept reading ours, with no error to see. Gem first, host last,
+  pinned by a test that ships a host override in the dummy app.
+- **Migrations name every adapter they actually run on.** `json_column_type`
+  matched `"postgresql"`, which activerecord-postgis-adapter never reports
+  (it answers `"PostGIS"`), so PostGIS hosts silently got `json` where the
+  gem meant `jsonb`. `json_column_default` matched `/mysql/`, which misses
+  Trilogy (Rails reports `"Trilogy"`), handing those hosts a default MySQL
+  rejects. Both now match by prefix and by both spellings.
 - **The thread's missed-broadcast recovery never took effect for a deep
   backlog.** `ConversationsController#refresh` answered with `render html:
   … content_type: "text/vnd.turbo-stream.html"`, and `render html:` forces
