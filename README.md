@@ -321,6 +321,10 @@ message.authored_by?(lucia)
 
 The bundled bubble renders a signature line ("— Lucía G.") via `Chats.display_name_for`; `config.message_signature = ->(message) { … }` rewrites it. Ordinary messages have no author and render exactly as before.
 
+An author must be persisted, but needs neither `acts_as_messager` nor a conversation
+seat. The host authorizes who may send on behalf of a shared identity; the HTTP
+message controller never accepts an author from request parameters.
+
 Existing installs get the columns with one command:
 
 ```bash
@@ -409,7 +413,7 @@ Chats.configure do |config|
   config.max_group_size = 32
   config.max_attachment_size = 10.megabytes
   config.max_attachments_per_message = 4
-  config.send_rate_limit = { to: 60, within: 1.minute }  # Rails 8 rate_limit; nil disables
+  config.send_rate_limit = { to: 60, within: 1.minute }  # shared sender budget; nil disables
   config.encrypt_messages = false           # ActiveRecord Encryption on bodies
 
   # Policies (on top of — never instead of — block enforcement)

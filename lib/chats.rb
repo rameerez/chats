@@ -7,6 +7,7 @@ require_relative "chats/version"
 require_relative "chats/errors"
 require_relative "chats/configuration"
 require_relative "chats/subscribers"
+require_relative "chats/send_rate_limited"
 require_relative "chats/macros"
 
 require_relative "chats/engine" if defined?(::Rails::Engine)

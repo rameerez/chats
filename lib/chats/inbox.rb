@@ -151,16 +151,35 @@ module Chats
       else
         stacked = Chats::Conversation.direct.where(id: stacked_seats)
         @ungrouped_relation = base_relation.where.not(id: stacked).limit(limit)
-        # Ordered by recency and limited like the other leg, which also makes
-        # the FIRST conversation of each counterpart that counterpart's
-        # freshest — that's the one the stacked row previews.
-        @stacked = apply_search(base_relation.direct.where(id: stacked_seats).limit(limit))
+        recent = base_relation.direct.where(id: stacked_seats).except(:includes).select(:id).limit(limit)
+        # Preserve the recent search window, plus the freshest conversation
+        # of each counterpart. A busy stack cannot consume another stack's
+        # row; at most twice the row limit is materialized.
+        candidates = base_relation.where(id: recent).or(base_relation.where(id: stack_representatives))
+        @stacked = apply_search(candidates)
       end
 
       @ungrouped = apply_search(@ungrouped_relation)
       # The relation itself when nothing had to be assembled in Ruby (it is
       # loaded, so iterating it costs nothing extra); the flat Array otherwise.
       @flat = @stacked.empty? && query.nil? ? @ungrouped_relation : @ungrouped + @stacked
+    end
+
+    # ROW_NUMBER works on every supported adapter (PostgreSQL, SQLite and
+    # MySQL 8). Ranking in SQL avoids loading an entire busy desk's history.
+    def stack_representatives
+      activity = "COALESCE(chats_conversations.last_message_at, chats_conversations.created_at)"
+      ranking = "ROW_NUMBER() OVER (PARTITION BY stack_seats.messager_type, stack_seats.messager_id " \
+                "ORDER BY #{activity} DESC, chats_conversations.id DESC) AS stack_rank"
+      ranked = base_relation.direct.except(:includes, :order)
+                            .joins("INNER JOIN chats_participants stack_seats " \
+                                   "ON stack_seats.conversation_id = chats_conversations.id")
+                            .where(stack_seats: { messager_type: grouped_types })
+                            .where.not(stack_seats: { messager_type: viewer.class.polymorphic_name,
+                                                      messager_id: viewer.id })
+                            .select("chats_conversations.id, #{activity} AS activity_at", ranking)
+      Chats::Conversation.from(ranked, :ranked_stacks).where("stack_rank = 1")
+                         .order(Arel.sql("activity_at DESC, id DESC")).limit(limit).select(:id)
     end
 
     # Only the direct threads shared with one counterpart. Direct only, by

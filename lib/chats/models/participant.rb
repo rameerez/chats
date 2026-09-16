@@ -43,6 +43,8 @@ module Chats
     # concurrent joins race-safe. Same rationale as Conversation#direct_key.
     validate :group_must_have_room, on: :create
 
+    after_update_commit :notify_departure, if: -> { saved_change_to_left_at? && left? }
+
     def owner? = role == "owner"
     def left? = left_at.present?
     def active? = left_at.nil?
@@ -104,10 +106,16 @@ module Chats
     def unmute! = update!(muted_at: nil)
 
     def leave!
+      return self if left?
+
       update!(left_at: Time.current)
-      Chats.notify(:participant_left, participant: self)
       self
     end
+
+    def notify_departure
+      Chats.notify(:participant_left, participant: self)
+    end
+    private :notify_departure
 
     # Hand this seat to a different messager, keeping the read horizon, the
     # role and the history: the guest who signs up, the agent who takes over

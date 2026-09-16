@@ -114,6 +114,8 @@ module Chats
     # mechanism. https://api.rubyonrails.org/classes/ActiveRecord/Relation.html#method-i-create_or_find_by
     validate :groups_must_be_enabled, if: :group?
 
+    after_create_commit -> { Chats.notify(:conversation_created, conversation: self) }
+
     # --- Finding & creating ---------------------------------------------------
 
     class << self
@@ -133,21 +135,17 @@ module Chats
         raise Chats::BlockedError, "messagers are blocked" if Chats.blocked_between?(a, b)
         raise Chats::NotAllowedError, "policy forbids messaging" unless Chats.can_message?(a, b)
 
-        conversation = create_or_find_by!(direct_key: direct_key_for([a, b], subject: about)) do |c|
-          c.kind = "direct"
-          c.subject = about
+        transaction do
+          conversation = create_or_find_by!(direct_key: direct_key_for([a, b], subject: about)) do |c|
+            c.kind = "direct"
+            c.subject = about
+          end
+          # Keep the roster in the creation transaction: the after-commit
+          # event must describe a complete conversation, including under an
+          # outer host transaction or a failed participant insertion.
+          [a, b].each { |messager| conversation.add_participant!(messager) }
+          conversation
         end
-
-        # `create_or_find_by!` may have FOUND a conversation created a moment
-        # ago by the other side — participants are ensured idempotently
-        # either way (their own unique index makes this race-safe too).
-        # `previously_new_record?` is how we tell the two apart, so the
-        # :conversation_created event fires ONCE per conversation, not on
-        # every resume.
-        created = conversation.previously_new_record?
-        [a, b].each { |messager| conversation.add_participant!(messager) }
-        Chats.notify(:conversation_created, conversation: conversation) if created
-        conversation
       end
 
       # Create a group conversation. +others+ excludes the creator (who joins
@@ -163,17 +161,12 @@ module Chats
         others = Array(others) - [creator]
         raise ArgumentError, "a group needs at least 2 other participants" if others.size < 2
 
-        conversation = transaction do
+        transaction do
           created = create!(kind: "group", title: title, subject: about)
           created.add_participant!(creator, role: "owner")
           others.each { |messager| created.add_participant!(messager) }
           created
         end
-
-        # Emitted AFTER the transaction: subscribers see a complete roster
-        # and never run inside the write that created it.
-        Chats.notify(:conversation_created, conversation: conversation)
-        conversation
       end
 
       # Deterministic identity for a direct pair (+ optional subject).

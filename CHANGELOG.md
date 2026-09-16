@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - Unreleased
+
+### Fixed
+
+- Grouped inbox limits preserve other counterparts even when one desk has many recent conversations.
+- Conversation creation and participant departure events run after commit and remain silent on rollback. Direct conversation creation includes its roster in the transaction.
+- A message author may be any persisted model; staff need not become messagers to sign a desk's reply.
+
+### Added
+
+- `Chats::SendRateLimited`, a controller concern sharing the configured sender budget across chat and product-specific composers, using the host's cache store on all supported Rails versions.
+
 ## [0.2.0] - 2026-09-16
 
 The release that makes `chats` a foundation other products can be built on:
