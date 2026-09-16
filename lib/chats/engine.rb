@@ -133,6 +133,11 @@ module Chats
       if app.config.respond_to?(:assets)
         app.config.assets.paths << root.join("app/javascript")
         app.config.assets.paths << root.join("app/assets/stylesheets")
+
+        # Propshaft serves anything on the load path; Sprockets serves only
+        # what is on the precompile list, so a Sprockets host 404s the
+        # stylesheet without this line.
+        app.config.assets.precompile << "chats.css" if app.config.assets.respond_to?(:precompile)
       end
     end
 
