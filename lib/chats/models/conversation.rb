@@ -141,7 +141,12 @@ module Chats
         # `create_or_find_by!` may have FOUND a conversation created a moment
         # ago by the other side — participants are ensured idempotently
         # either way (their own unique index makes this race-safe too).
+        # `previously_new_record?` is how we tell the two apart, so the
+        # :conversation_created event fires ONCE per conversation, not on
+        # every resume.
+        created = conversation.previously_new_record?
         [a, b].each { |messager| conversation.add_participant!(messager) }
+        Chats.notify(:conversation_created, conversation: conversation) if created
         conversation
       end
 
@@ -158,12 +163,17 @@ module Chats
         others = Array(others) - [creator]
         raise ArgumentError, "a group needs at least 2 other participants" if others.size < 2
 
-        transaction do
-          conversation = create!(kind: "group", title: title, subject: about)
-          conversation.add_participant!(creator, role: "owner")
-          others.each { |messager| conversation.add_participant!(messager) }
-          conversation
+        conversation = transaction do
+          created = create!(kind: "group", title: title, subject: about)
+          created.add_participant!(creator, role: "owner")
+          others.each { |messager| created.add_participant!(messager) }
+          created
         end
+
+        # Emitted AFTER the transaction: subscribers see a complete roster
+        # and never run inside the write that created it.
+        Chats.notify(:conversation_created, conversation: conversation)
+        conversation
       end
 
       # Deterministic identity for a direct pair (+ optional subject).
@@ -235,6 +245,31 @@ module Chats
       subject.try(:chat_subject_label) || "#{subject.class.model_name.human} #{subject.id}"
     end
 
+    # Whether new messages are refused here, decided by the SUBJECT (see
+    # Chats::ChatSubject#chat_locked?). A subjectless conversation is never
+    # locked. Reading is never affected — only sending.
+    def locked?
+      return false if subject.nil?
+
+      subject.try(:chat_locked?) || false
+    end
+
+    # The host's explanation for the lock, or the gem's localized fallback.
+    # Always a sentence worth showing: a locked composer that says nothing is
+    # indistinguishable from a broken one.
+    def locked_notice
+      return nil unless locked?
+
+      subject.try(:chat_locked_notice).presence || I18n.t("chats.composer.locked")
+    end
+
+    # The guard every write that ISN'T a message itself calls (reactions
+    # today). Message writes go through Chats::Message#refuse_when_locked!,
+    # which exempts system messages.
+    def refuse_writes_when_locked! # :nodoc:
+      raise Chats::LockedError.new(conversation: self) if locked?
+    end
+
     # --- Membership -----------------------------------------------------------
 
     # Idempotent, race-safe membership. Re-adding someone who left re-joins
@@ -248,6 +283,25 @@ module Chats
       end
       participant.update!(left_at: nil) if participant.left?
       participant
+    end
+
+    # Recompute the deterministic identity of a DIRECT thread after its
+    # roster changed (see Chats::Participant#reseat!). Without this the key
+    # would still name the old pair, and `chat_with` would open a SECOND
+    # thread for the new one. No-op for groups (they have no key).
+    def reindex_direct_key! # :nodoc:
+      return self unless direct?
+
+      # `reset`: the caller just changed a seat, and a participants
+      # association loaded BEFORE that would name the old pair.
+      messagers = participants.reset.includes(:messager).filter_map(&:messager)
+      return self unless messagers.size == 2
+
+      update_columns(
+        direct_key: self.class.direct_key_for(messagers, subject: subject),
+        updated_at: Time.current
+      )
+      self
     end
 
     # --- Messaging ------------------------------------------------------------

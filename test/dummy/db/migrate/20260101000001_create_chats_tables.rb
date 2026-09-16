@@ -12,11 +12,35 @@ class CreateChatsTables < ActiveRecord::Migration[7.1]
   def change
     primary_key_type, foreign_key_type = primary_and_foreign_key_types
 
+    # ---------------------------------------------------------------------------
+    # chats_conversations
+    #
+    # A direct (1:1) or group thread, optionally *about* a polymorphic host
+    # record (subject: a ride, an order, a listing…). `last_message_at` /
+    # `last_message_id` / `messages_count` are denormalized so the inbox is a
+    # single indexed ORDER BY with no MAX() subqueries.
+    # ---------------------------------------------------------------------------
     create_table :chats_conversations, id: primary_key_type do |t|
       t.string :kind, null: false, default: "direct"
       t.string :title
+
+      # What the conversation is about (optional). `index: false` because we
+      # declare the polymorphic index explicitly below with a stable name;
+      # without it, `t.references` would ALSO auto-create one and the two
+      # would collide ("index ... already exists") when the migration runs.
       t.references :subject, polymorphic: true, type: foreign_key_type, null: true, index: false
+
+      # Deterministic identity for direct threads ("sorted pair of messager
+      # keys [+ subject]"). The UNIQUE index is what makes concurrent
+      # find-or-create race-safe (create_or_find_by! resolves collisions
+      # through it). NULL for groups — multiple NULLs are allowed in unique
+      # indexes on every supported adapter.
       t.string :direct_key
+
+      # Inbox denormalization. last_message_id has NO foreign key on purpose:
+      # a circular conversations<->messages FK pair makes row deletion
+      # order-dependent (you couldn't delete either row first). The column is
+      # best-effort bookkeeping, healed by the model when messages vanish.
       t.datetime :last_message_at
       t.column :last_message_id, foreign_key_type
       t.integer :messages_count, null: false, default: 0
@@ -24,10 +48,18 @@ class CreateChatsTables < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_index :chats_conversations, %i[subject_type subject_id], name: "index_chats_conversations_on_subject"
+    add_index :chats_conversations, [ :subject_type, :subject_id ], name: "index_chats_conversations_on_subject"
     add_index :chats_conversations, :direct_key, unique: true, name: "index_chats_conversations_on_direct_key"
     add_index :chats_conversations, :last_message_at, name: "index_chats_conversations_on_last_message_at"
 
+    # ---------------------------------------------------------------------------
+    # chats_participants
+    #
+    # A messager's seat in a conversation, holding ALL per-member state:
+    # role, read horizon (last_read_at — there is deliberately no per-message
+    # receipts table; see Chats::Participant), mute, soft-leave, and the
+    # debounced-notification bookkeeping (last_notified_at).
+    # ---------------------------------------------------------------------------
     create_table :chats_participants, id: primary_key_type do |t|
       t.references :conversation, null: false, type: foreign_key_type,
                                   foreign_key: { to_table: :chats_conversations }, index: false
@@ -42,14 +74,33 @@ class CreateChatsTables < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_index :chats_participants, %i[conversation_id messager_type messager_id],
+    # One seat per messager per conversation — also the lock that makes
+    # concurrent add_participant! idempotent.
+    add_index :chats_participants, [ :conversation_id, :messager_type, :messager_id ],
               unique: true, name: "index_chats_participants_uniqueness"
-    add_index :chats_participants, %i[messager_type messager_id], name: "index_chats_participants_on_messager"
+    # The inbox entry point: "all of MY participations" (then join
+    # conversations ordered by last_message_at).
+    add_index :chats_participants, [ :messager_type, :messager_id ], name: "index_chats_participants_on_messager"
 
+    # ---------------------------------------------------------------------------
+    # chats_messages
+    #
+    # kind: "text" (human, has sender) | "system" (posted by the host app —
+    # "Your ride was cancelled" — no sender). Soft deletion keeps a tombstone
+    # (deleted_at set, body cleared) for thread continuity + T&S evidence.
+    # sender is nullable: system messages have none, and destroyed messager
+    # accounts nullify theirs (history survives account deletion).
+    # ---------------------------------------------------------------------------
     create_table :chats_messages, id: primary_key_type do |t|
       t.references :conversation, null: false, type: foreign_key_type,
                                   foreign_key: { to_table: :chats_conversations }, index: false
       t.references :sender, polymorphic: true, null: true, type: foreign_key_type, index: false
+
+      # Who WROTE it, when that isn't the seat it was sent FROM: an agent
+      # answering from a shared support-desk seat signs the bubble while the
+      # desk stays the conversation identity. Nullable — ordinary messages
+      # have no author. See Chats::Message#signed?.
+      t.references :author, polymorphic: true, null: true, type: foreign_key_type, index: false
 
       t.string :kind, null: false, default: "text"
       t.text :body
@@ -62,11 +113,18 @@ class CreateChatsTables < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_index :chats_messages, %i[conversation_id created_at id],
-              name: "index_chats_messages_on_conversation_and_created_at"
-    add_index :chats_messages, %i[sender_type sender_id], name: "index_chats_messages_on_sender"
+    # THE hot path: a conversation's message page, keyset-paginated on
+    # (created_at, id) — see Chats::Message.before_message.
+    add_index :chats_messages, [ :conversation_id, :created_at, :id ], name: "index_chats_messages_on_conversation_and_created_at"
+    add_index :chats_messages, [ :sender_type, :sender_id ], name: "index_chats_messages_on_sender"
+    add_index :chats_messages, [ :author_type, :author_id ], name: "index_chats_messages_on_author"
     add_index :chats_messages, :reply_to_id, name: "index_chats_messages_on_reply_to_id"
 
+    # ---------------------------------------------------------------------------
+    # chats_reactions
+    #
+    # Emoji reactions; the unique index makes tap-to-toggle race-safe.
+    # ---------------------------------------------------------------------------
     create_table :chats_reactions, id: primary_key_type do |t|
       t.references :message, null: false, type: foreign_key_type,
                              foreign_key: { to_table: :chats_messages }, index: false
@@ -76,12 +134,21 @@ class CreateChatsTables < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_index :chats_reactions, %i[message_id reactor_type reactor_id emoji],
+    add_index :chats_reactions, [ :message_id, :reactor_type, :reactor_id, :emoji ],
               unique: true, name: "index_chats_reactions_uniqueness"
+
+    # NOTE: value-list vocabularies (kind, role) are validated in the MODELS
+    # (frozen constants + inclusion validations), NOT by DB check constraints —
+    # so the gem can grow its taxonomy without shipping a migration to widen a
+    # CHECK. Same rationale as the rest of the gem ecosystem (moderate, …).
   end
 
   private
 
+  # Honor the host's configured primary key type (uuid vs bigint). Reads the
+  # same setting `rails g model` uses, so an app generated with
+  # `config.generators { |g| g.orm :active_record, primary_key_type: :uuid }`
+  # gets uuid chats tables and uuid foreign keys, automatically.
   def primary_and_foreign_key_types
     config = Rails.configuration.generators
     setting = config.options[config.orm][:primary_key_type]
@@ -90,14 +157,26 @@ class CreateChatsTables < ActiveRecord::Migration[7.1]
     [primary_key_type, foreign_key_type]
   end
 
+  # jsonb on every PostgreSQL adapter — matched by prefix because PostGIS
+  # (activerecord-postgis-adapter) answers "PostGIS", not "PostgreSQL", and
+  # an `include?("postgresql")` check silently sent such hosts down the plain
+  # json path.
   def json_column_type
-    return :jsonb if connection.adapter_name.downcase.include?("postgresql")
+    return :jsonb if connection.adapter_name.match?(/\Apostg/i)
 
     :json
   end
 
+  # MySQL 8+ doesn't allow default values on JSON columns.
+  # Returns an empty-hash default for SQLite/PostgreSQL, nil for MySQL.
+  # The model handles nil metadata gracefully (attribute default {}).
+  #
+  # Trilogy is MySQL under a different ADAPTER_NAME (Rails reports "Trilogy"),
+  # so match both — a /mysql/ pattern alone hands a Trilogy host a default
+  # MySQL rejects. api_keys hit this first; see its create_api_keys_table
+  # template, which matches /mysql|trilogy/.
   def json_column_default
-    return nil if connection.adapter_name.downcase.include?("mysql")
+    return nil if connection.adapter_name.match?(/mysql|trilogy/i)
 
     {}
   end

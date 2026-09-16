@@ -31,5 +31,28 @@ module Chats
     def chat_subject_label
       "#{self.class.model_name.human} #{id}"
     end
+
+    # Whether conversations ABOUT this record still accept messages. The
+    # subject already owns the conversation's meaning, so it owns its
+    # openness too — a closed ticket, a delivered order, an archived listing:
+    #
+    #   class Ticket < ApplicationRecord
+    #     acts_as_chat_subject
+    #     def chat_locked?       = closed?
+    #     def chat_locked_notice = "This ticket is closed. Reply to reopen it."
+    #   end
+    #
+    # System messages are exempt (the host can always post "Ticket closed"),
+    # and locking is a WRITE rule only: the thread stays readable. See
+    # Chats::Conversation#locked?.
+    def chat_locked?
+      false
+    end
+
+    # The sentence shown where the composer would be. Nil falls back to the
+    # gem's localized "This conversation is closed."
+    def chat_locked_notice
+      nil
+    end
   end
 end

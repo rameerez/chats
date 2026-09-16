@@ -1,0 +1,6 @@
+<%# The send landed on a conversation whose subject has since locked it.
+    Replace the composer with the locked notice (422) so the screen stops
+    lying to whoever had it open, and clear any stale error text. %>
+<%= turbo_stream.replace dom_id(@conversation, :composer) do %>
+  <%= render "chats/conversations/locked_composer", conversation: @conversation %>
+<% end %>

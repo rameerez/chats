@@ -220,6 +220,19 @@ module Chats
 
     # --- moderation contract ------------------------------------------------------------------
 
+    test "a signed message's reported owner is its author, not the seat it was sent from" do
+      # A desk is a seat, not a person: a host's moderation `owner` is typed
+      # to its user class, so the desk as owner raised from inside the agent's
+      # own reply the first time a text filter tripped. The human who signed
+      # the message answers for it; an unsigned message stays its sender's.
+      desk = Desk.create!(name: "Support")
+      conversation = Chats::Conversation.direct_between!(@alice, desk)
+
+      assert_equal @bob, desk.message!(conversation, "On it", author: @bob).reported_owner
+      assert_equal desk, desk.message!(conversation, "Automated notice").reported_owner
+      assert_equal @alice, @alice.message!(conversation, "Thanks").reported_owner
+    end
+
     test "exposes the moderation duck-typed contract" do
       message = @conversation.messages.create!(sender: @alice, body: "reportable")
 

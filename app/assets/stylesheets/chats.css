@@ -816,3 +816,47 @@ turbo-frame[id^="chats_page_"] {
   border-radius: 0.5rem;
 }
 .chats-emoji:hover { background: var(--chats-surface); }
+
+/* ---------------------------------------------------------------------------
+   0.2.0 — stacked inbox rows, locked composers, signed messages
+   --------------------------------------------------------------------------- */
+
+/* A stack (Chats::InboxGroup) reads as one row; the count line sits where a
+   single conversation shows its subject. */
+.chats-row--group .chats-row__subject { font-weight: 600; }
+
+/* The inbox filtered to one counterpart (?with=). */
+.chats-inbox__filter {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--chats-text-muted);
+}
+.chats-inbox__filter-clear { color: inherit; text-decoration: underline; }
+
+/* "See all" back to the stack, under the thread title. */
+.chats-thread__see-all { margin: 0; font-size: 0.72rem; }
+.chats-thread__see-all-link { color: var(--chats-text-muted); text-decoration: underline; }
+
+/* Who wrote it, when that isn't the seat it came from. */
+.chats-message__signature {
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  font-style: italic;
+  opacity: 0.75;
+}
+
+/* The composer, replaced by the reason the conversation is closed. Same box,
+   so the thread doesn't jump when a subject locks under an open composer. */
+.chats-composer--locked {
+  display: block;
+  padding: 0.85rem 1rem;
+  text-align: center;
+}
+.chats-composer__locked-notice {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--chats-text-muted);
+}

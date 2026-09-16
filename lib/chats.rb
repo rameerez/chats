@@ -6,6 +6,7 @@ require "global_id"
 require_relative "chats/version"
 require_relative "chats/errors"
 require_relative "chats/configuration"
+require_relative "chats/subscribers"
 require_relative "chats/macros"
 
 require_relative "chats/engine" if defined?(::Rails::Engine)
@@ -23,6 +24,8 @@ require_relative "chats/engine" if defined?(::Rails::Engine)
 #
 #   user.chat_with(other)              # find-or-create a direct conversation
 #   user.message!(other, "hello!")     # ...and say something in one line
+#
+#   Chats.on(:message_created) { |m| } # subscribe to the domain moments
 #
 # Everything else (controllers, views, broadcasts) ships with the engine and
 # is overridable the Devise way (`rails g chats:views`).
@@ -48,7 +51,14 @@ module Chats
       @config = Configuration.new
       @messager_classes = nil
       @subject_classes = nil
+      reset_subscribers!
       self
+    end
+
+    # The gem's own deprecator (registered with `Rails.application.deprecators`
+    # by the engine, so `config.active_support.deprecation` governs it).
+    def deprecator
+      @deprecator ||= ActiveSupport::Deprecation.new("1.0", "chats")
     end
 
     # --- Registries -----------------------------------------------------------
@@ -123,23 +133,34 @@ module Chats
       config.can_message.call(sender, recipient)
     end
 
-    # Fire a domain event through the host's notifier hook (no-op by default).
-    # Events (see Chats::Configuration#notifier):
-    #   :message_created      message:      (every persisted, non-system message)
-    #   :participant_added    participant:  (someone added to a group)
+    # --- Events ---------------------------------------------------------------
+
+    # Subscribe to a domain moment. Many subscribers per event; each one runs
+    # isolated, so a raising subscriber is reported and the others still run.
     #
-    # Hosts typically point this at a Noticed notifier or a mailer job:
-    #   config.notifier = ->(event, **payload) {
-    #     NewMessageNotifier.with(**payload).deliver if event == :message_created
-    #   }
+    #   Chats.on(:message_created)      { |message| }
+    #   Chats.on(:conversation_created) { |conversation| }
+    #   Chats.on(:participant_left)     { |participant| }
+    #   Chats.on(:conversation_read)    { |conversation:, participant:| }
+    #
+    # Pass `key:` from reloadable code (a `to_prepare` block): re-registering
+    # the same key REPLACES the previous subscriber instead of stacking a
+    # duplicate on every code reload.
+    def on(event, key: nil, &block)
+      Subscribers.on(event, key: key, &block)
+    end
+
+    # Drop every `Chats.on` registration (also called by `reset!`).
+    def reset_subscribers!
+      Subscribers.reset!
+      self
+    end
+
+    # Fire a domain event at every subscriber (see Chats.on). Error-isolated:
+    # a broken subscriber must never break message delivery itself — the
+    # message is already committed; notifications are best-effort fan-out.
     def notify(event, **payload)
-      config.notifier.call(event, **payload)
-    rescue StandardError => e
-      # A broken notifier must never break message delivery itself — the
-      # message is already committed; notifications are best-effort fan-out.
-      # Same error-isolation philosophy as pricing_plans' lifecycle callbacks.
-      logger&.error("[chats] notifier raised on #{event}: #{e.class}: #{e.message}")
-      nil
+      Subscribers.emit(event, **payload)
     end
 
     # --- Display helpers (used by the bundled views) --------------------------
@@ -154,6 +175,72 @@ module Chats
       return nil if messager.nil?
 
       config.messager_avatar.call(messager)
+    end
+
+    # Where a messager's profile lives, per `config.messager_url` (nil by
+    # default — the bundled views then render plain text, never a dead link).
+    def messager_url_for(messager)
+      return nil if messager.nil?
+
+      config.messager_url.call(messager).presence
+    end
+
+    # The signature line under a signed message ("— Lucía G."), per
+    # `config.message_signature` when the host sets one. Nil for messages
+    # that aren't signed (see Chats::Message#signed?).
+    def message_signature_for(message)
+      return nil if message.nil? || !message.signed?
+
+      if config.message_signature
+        config.message_signature.call(message).presence
+      else
+        I18n.t("chats.message.signature", name: display_name_for(message.author))
+      end
+    end
+
+    # --- Messager options (see acts_as_messager) --------------------------------
+
+    # Whether +messager+ can be notified at all. False for headless messagers
+    # declared with `acts_as_messager notifications: false` (a support desk, a
+    # bot): hosts stop branching on class in every notifier.
+    def notifications_for?(messager)
+      messager_option(messager, :chat_notifications?)
+    end
+
+    # Whether block/report affordances make sense against +messager+.
+    # False for `acts_as_messager blockable: false`.
+    def blockable?(messager)
+      messager_option(messager, :chat_blockable?)
+    end
+
+    # Whether +messager+'s direct conversations stack into one inbox row
+    # (`acts_as_messager inbox: :grouped`).
+    def grouped_inbox?(messager)
+      messager_option(messager, :chat_grouped_inbox?, default: false)
+    end
+
+    # The polymorphic type names of every registered messager class that
+    # stacks (`inbox: :grouped`). Empty in an ordinary app — which is what
+    # keeps the inbox query there byte-identical to 0.1.x. Used as a SQL
+    # PREFILTER only; whether a given counterpart actually stacks is still
+    # decided per-record by `grouped_inbox?` (STI subclasses share a
+    # polymorphic_name with siblings that may not be grouped).
+    def grouped_messager_types
+      messager_class_names.filter_map do |name|
+        klass = name.safe_constantize
+        next unless klass.respond_to?(:chat_grouped_inbox?) && klass.chat_grouped_inbox?
+
+        klass.polymorphic_name
+      end.uniq
+    end
+
+    # The signed GlobalID that scopes the inbox to conversations with
+    # +messager+ (`GET /conversations?with=…`). Purpose-scoped and
+    # non-expiring: inbox rows live on long-lived pages.
+    def inbox_with_sgid(messager)
+      return nil if messager.nil?
+
+      messager.to_sgid(expires_in: nil, for: :chats_inbox_with).to_s
     end
 
     # --- Internals ------------------------------------------------------------
@@ -171,6 +258,18 @@ module Chats
     end
 
     private
+
+    # Ask a messager's CLASS about an `acts_as_messager` option. Duck-typed
+    # (never `is_a?`): anything that doesn't answer is treated as a stock
+    # messager, so a plain host model keeps 0.1.x behaviour.
+    def messager_option(messager, predicate, default: true)
+      return default if messager.nil?
+
+      klass = messager.is_a?(Class) ? messager : messager.class
+      return default unless klass.respond_to?(predicate)
+
+      klass.public_send(predicate)
+    end
 
     def registered_class?(registry, klass)
       klass = klass.class unless klass.is_a?(Class) || klass.is_a?(String)

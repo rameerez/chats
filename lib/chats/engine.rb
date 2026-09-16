@@ -30,7 +30,7 @@ module Chats
     CHATS_LIB = File.expand_path("chats", LIB_ROOT)
 
     ZEITWERK_IGNORED = %w[
-      version.rb errors.rb configuration.rb engine.rb macros.rb
+      version.rb errors.rb configuration.rb engine.rb macros.rb subscribers.rb
     ].freeze
 
     initializer "chats.autoload", before: :set_autoload_paths do
@@ -64,6 +64,13 @@ module Chats
       end
     end
 
+    # Hand the gem's deprecator to the app, so `config.active_support.
+    # deprecation` (and `deprecators.silence`) govern chats' own deprecation
+    # warnings like any other framework's.
+    initializer "chats.deprecator" do |app|
+      app.deprecators[:chats] = Chats.deprecator if app.respond_to?(:deprecators)
+    end
+
     # Expose `acts_as_messager` / `acts_as_chat_subject` on every AR model.
     initializer "chats.active_record" do
       ActiveSupport.on_load(:active_record) do
@@ -71,11 +78,20 @@ module Chats
       end
     end
 
-    # Ship the gem's locale files (en, es). Host locale files with the same
-    # keys override these automatically (I18n's load order puts the app last).
-    initializer "chats.locales" do |app|
-      app.config.i18n.load_path += Dir[root.join("config", "locales", "**", "*.{rb,yml}").to_s]
-    end
+    # The gem's locale files (en, es) ship through Rails::Engine's own
+    # :add_locales initializer, which picks up every engine's config/locales
+    # automatically — and deliberately NOT through a manual
+    # `app.config.i18n.load_path +=` on top of it.
+    #
+    # That append is not merely redundant, it inverts the contract: railtie
+    # paths are unshifted ahead of everything in load_path, so an appended
+    # copy lands AFTER the host's own locales and silently overrides them. A
+    # host rewording `chats.flashes.blocked` in its own es.yml would keep
+    # reading ours, with no error and nothing to see.
+    #
+    # Gem first, host last. `clickwrap` carries the same note; `support_desk`
+    # shipped the bug and measured it (its file sat in load_path 14 times and
+    # the host's override lost).
 
     # NOTE: the host-facing helpers (`chat_button_to`, `chats_unread_badge`, …)
     # are exposed to ActionView from the BOTTOM of engine_helper.rb itself
@@ -126,6 +142,11 @@ module Chats
       if app.config.respond_to?(:assets)
         app.config.assets.paths << root.join("app/javascript")
         app.config.assets.paths << root.join("app/assets/stylesheets")
+
+        # Propshaft serves anything on the load path; Sprockets serves only
+        # what is on the precompile list, so a Sprockets host 404s the
+        # stylesheet without this line.
+        app.config.assets.precompile << "chats.css" if app.config.assets.respond_to?(:precompile)
       end
     end
 

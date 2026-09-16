@@ -86,6 +86,9 @@ And a live unread badge in your nav:
 
 **Doesn't:** chatbots/LLM agents, workspaces/tenancy, voice/video, public channels, federation. It's peer-to-peer (and group) human messaging — not a Slack clone, not a support-ticketing tool.
 
+> [!NOTE]
+> **Want customer support?** Ticketing stays out of `chats` on purpose — queues, assignment and SLAs are not messaging. [`support_desk`](https://github.com/rameerez/support_desk) is the product gem that adds them ON TOP of this one: tickets that are real conversations, a support desk that sends while your staff sign, and a BYOUI agent console. It uses the seams below (headless messagers, subject locks, message authorship, grouped inbox rows), so you get the same threads, attachments and read state you already have.
+
 ## 🧱 The data model
 
 Five concepts, namespaced and polymorphic from day one (no hard `User` coupling anywhere):
@@ -94,7 +97,7 @@ Five concepts, namespaced and polymorphic from day one (no hard `User` coupling 
 - **`Chats::Participant`** — a messager's seat in a conversation. Holds role, read horizon, mute, soft-leave, and notification bookkeeping.
 - **`Chats::Message`** — `text` (human) or `system` (posted by your app). Soft-deletes to a tombstone. Attachments via ActiveStorage.
 - **`Chats::Reaction`** — one row per (message, reactor, emoji); tap-to-toggle, race-safe.
-- **Any model with `acts_as_messager`** — users, organizations, support agents: participants and senders are polymorphic.
+- **Any model with `acts_as_messager`** — users, organizations, support desks, bots: participants and senders are polymorphic. A messager that is not a person declares it (`notifications: false, blockable: false, inbox: :grouped`) and the gem stops treating it like one. See [`support_desk`](https://github.com/rameerez/support_desk) for the worked example.
 
 Two deliberate design decisions worth knowing:
 
@@ -201,30 +204,32 @@ Moderate::Flag.flag!(
 - [ ] admin queue handles chat flags/reports (it does, automatically — verify with one test)
 - [ ] a test that a block placed mid-conversation stops the next send
 
-## 🔔 Notifications: one hook, fan out anywhere
+## 🔔 Events: subscribe to the domain moments
 
-`chats` fires domain moments through a single no-op-default notifier — it does **not** build its own notification bus:
+`chats` fires domain moments at subscribers — it does **not** build its own notification bus:
 
 ```ruby
-config.notifier = ->(event, **payload) {
-  case event
-  when :message_created
-    # payload: message:
-    NewMessageNotifier.with(record: payload[:message]).deliver  # Noticed, email, push…
-  when :conversation_read
-    # payload: conversation:, participant: — fired when a read actually
-    # consumed unread content. Use it to keep EXTERNAL notification
-    # surfaces truthful: e.g. mark this chat's rows read in your
-    # notification center the moment the thread is read, so a bell badge
-    # doesn't keep advertising messages the user has already seen.
-  end
-}
+# config/initializers/chats.rb (or anywhere that runs at boot)
+Chats.on(:message_created)      { |message| NewMessageNotifier.with(record: message).deliver }
+Chats.on(:conversation_created) { |conversation| Analytics.track("chat_started", conversation) }
+Chats.on(:participant_left)     { |participant| AuditLog.log("chat_left", participant) }
+Chats.on(:conversation_read)    { |conversation:, participant:| Bell.mark_read(participant.messager, conversation) }
 ```
 
-> Write the lambda as `->(event, **payload)` (not `->(event, message:, **)`):
-> events carry different payloads, and a keyword the event doesn't include
-> would raise — harmlessly (the hook is error-isolated and logged), but
-> noisily.
+Four properties, all of which matter the first time something goes wrong at 3am:
+
+- **Many subscribers per event.** Your mailer, your analytics and your audit log don't have to share one `case` statement.
+- **Each one is isolated.** A raising subscriber is reported through `Rails.error.report(e, handled: true, context: { event: })` — *visible*, not swallowed — and the next subscriber still runs. The message is already committed; notifications are best-effort fan-out.
+- **Reload-safe.** Registering from reloadable code? Pass a key and a reload replaces the subscriber instead of stacking a second one:
+
+  ```ruby
+  Rails.application.config.to_prepare do
+    Chats.on(:message_created, key: :unread_email) { |message| … }
+  end
+  ```
+- **Unknown events fail loudly**, at boot, naming the ones that exist.
+
+> **Deprecated:** `config.notifier = ->(event, **payload) {}` still works and will be removed in 1.0. It receives `:message_created` and `:conversation_read` — the two events that existed in 0.1.1 — and *only* those, so an old `->(event, message:, **)` hook can never start raising on an event it was never written for. The events added in 0.2.0 are `Chats.on`-only. Move it to `Chats.on` — that's the whole migration.
 
 The etiquette helpers every messaging product needs ship on the participant, so a debounced "email me only once until I come back" digest is a tiny host job:
 
@@ -232,7 +237,7 @@ The etiquette helpers every messaging product needs ship on the participant, so 
 class ChatsUnreadEmailJob < ApplicationJob
   def perform(message)
     message.conversation.participants.active.each do |participant|
-      next unless participant.notifiable_for?(message) # not the sender, not muted, not departed
+      next unless participant.notifiable_for?(message) # not the sender, not muted, not departed, not headless
       next unless participant.should_notify?           # unread + not already notified this burst
 
       ChatsMailer.with(participant: participant).unread_messages.deliver_now
@@ -241,15 +246,118 @@ class ChatsUnreadEmailJob < ApplicationJob
   end
 end
 
-config.notifier = ->(event, message:, **) {
-  ChatsUnreadEmailJob.set(wait: 10.minutes).perform_later(message) if event == :message_created
-}
+Chats.on(:message_created) { |message| ChatsUnreadEmailJob.set(wait: 10.minutes).perform_later(message) }
 ```
 
 And it works in the other direction too — your app can post **into** conversations:
 
 ```ruby
 ride.chat_conversations.find_each { |c| c.post_system_message!("Your ride was cancelled") }
+```
+
+## 🤖 Headless messagers: desks, bots, storefronts
+
+Not every messager is a person. A support desk, an order bot or an organization mailbox converses like anyone else but must never be notified, can't meaningfully be blocked, and shouldn't fill the inbox with one row per thread. Say so once, on the model:
+
+```ruby
+class SupportDesk < ApplicationRecord
+  acts_as_messager notifications: false,   # Participant#notifiable_for? says no, always
+                   blockable:     false,   # the views hide block/report affordances
+                   inbox:         :grouped # every thread with it is ONE inbox row
+end
+```
+
+That's the whole point of the option: **your notifiers and views stop asking `is_a?(User)`**. The predicates are on the class (`SupportDesk.chat_notifications?`, `.chat_blockable?`, `.chat_inbox_mode`) and duck-typed everywhere the gem reads them, so an ordinary `acts_as_messager` model behaves exactly as it always did.
+
+## 🗂️ Grouped inbox rows
+
+With `inbox: :grouped`, every direct conversation a viewer has with that messager folds into a single inbox row — a stack:
+
+```ruby
+inbox = Chats::Inbox.for(current_user)   # [Chats::Conversation | Chats::InboxGroup], newest activity first
+inbox.unread_count                       # the stack-aware badge number
+
+group = inbox.rows.first
+group.messager       # the desk
+group.conversations  # the stacked threads, freshest first
+group.unread_count   # aggregated across the stack
+group.open_count     # how many are in it
+```
+
+- `config.inbox_limit` bounds **rows**, not conversations: stacked threads are queried separately from ordinary ones, so a desk with 500 open tickets can never evict your friends from the inbox. A stack's `open_count` and `unread_count` are **global** — two indexed aggregates per stack, however deep it runs — so stacking neither goes N+1 nor loads a stack to count it.
+- A stack of one links **straight to the thread**, which then carries a small "see all" link back to the stack.
+- The stack list is chats' own filtered inbox — `GET /conversations?with=<signed gid>` — unless you point it somewhere else with `group_path: ->(viewer) { support_path }`.
+- Two knobs shape the whole query: `config.inbox_limit` (200) and `config.inbox_scope = ->(relation, viewer) { relation }`.
+
+`user.unread_chats_count` is unchanged (it counts conversations); `Chats::Inbox#unread_count` is the stack-aware number for badges.
+
+## 🔒 Locked conversations
+
+Whether a conversation still takes messages belongs to the thing it's **about** — a closed ticket, a delivered order, an archived listing. The subject already owns the conversation's meaning; it owns its openness too:
+
+```ruby
+class Ticket < ApplicationRecord
+  acts_as_chat_subject
+
+  def chat_locked?       = closed?
+  def chat_locked_notice = "This ticket is closed. Reply to reopen it."
+end
+```
+
+- `Chats::Message` refuses new messages with an `:locked` error; `Conversation#locked?` and `#locked_notice` read the subject.
+- **System messages are exempt**: your app can always post "This ticket was closed" into the thread it just closed.
+- The thread **stays readable**. Only the composer changes: it's replaced by the notice (the `locked_composer` slot overrides the body). Gate the action, never hide the explanation.
+- A send that lands on a conversation locked since the page loaded gets a **422 that swaps the composer for the notice** — no raise, no lying screen.
+
+## ✍️ Signed messages
+
+`sender` is the seat a message came from; `author` is who **wrote** it on that seat's behalf. That's how a shared desk answers as itself while the human stays visible:
+
+```ruby
+desk.message!(alice, "On it!", author: lucia)   # sender: the desk, author: Lucía
+message.signed?          # true — author present and not the sender
+message.authored_by?(lucia)
+```
+
+The bundled bubble renders a signature line ("— Lucía G.") via `Chats.display_name_for`; `config.message_signature = ->(message) { … }` rewrites it. Ordinary messages have no author and render exactly as before.
+
+Existing installs get the columns with one command:
+
+```bash
+rails generate chats:upgrade && rails db:migrate
+```
+
+## 🔌 View slots
+
+Ejecting a whole screen to add one row or one button is too coarse. The bundled views render a partial named `chats/slots/_<slot>` **when it exists** — no configuration, no registration, and an absent slot costs one memoized lookup:
+
+| slot | where it renders |
+|---|---|
+| `inbox_top` | above the first inbox row |
+| `inbox_empty` | inside the empty state |
+| `conversation_header_actions` | the thread's menu (gets `blockable:`) |
+| `locked_composer` | the locked composer's body |
+| `message_meta` | after each bubble's timestamp |
+
+```erb
+<%# app/views/chats/slots/_inbox_top.html.erb %>
+<%= link_to "Need help? Write to us", support_path, class: "support-door" %>
+```
+
+An engine mounted on top of chats ships its own `app/views/chats/slots/…`; the host's file wins by view-path order. `rails generate chats:views` is still there for wholesale restyling.
+
+## 🔗 Profile links
+
+`chats` never assumes your app has a `user_path`. Tell it where a messager lives and names become links; leave it alone and they render as plain text:
+
+```ruby
+config.messager_url = lambda do |messager|
+  routes = Rails.application.routes.url_helpers
+
+  case messager
+  when User then routes.user_path(messager)   # a desk or a bot has no profile: nil
+  end
+end
 ```
 
 ## 🎨 Make it yours
@@ -308,13 +416,19 @@ Chats.configure do |config|
   config.can_message = ->(sender, recipient) { true }
   config.can_create_group = ->(creator) { true }
 
+  # Inbox shaping
+  config.inbox_limit = 200
+  config.inbox_scope = ->(relation, viewer) { relation }
+
   # Ecosystem seams (no-op defaults; chats runs standalone)
   config.blocked_messager_ids = ->(messager) { [] }
-  config.notifier = ->(event, **payload) {}
+  config.notifier = ->(event, **payload) {}   # DEPRECATED — use Chats.on
 
   # Display (used by the bundled views)
   config.messager_display_name = ->(messager) { messager.display_name }
   config.messager_avatar = ->(messager) { messager.avatar }  # URL/attachment/variant or nil
+  config.messager_url = ->(messager) { nil }                 # nil ⇒ names render as plain text
+  config.message_signature = nil                             # ->(message) { } for signed bubbles
 end
 ```
 
@@ -329,6 +443,8 @@ alice.message!(bob, "hi", about: ride)        # send (resolves the thread)
 alice.message!(conversation, "hi", files: []) # send into a conversation
 alice.chats                                   # inbox relation, newest first
 alice.unread_chats_count                      # conversations with unread messages
+alice.message!(bob, "hi", author: lucia)      # written by lucia, sent from alice's seat
+Chats::Inbox.for(alice)                       # [Conversation | InboxGroup] + #unread_count
 
 # Conversations
 conversation.participant?(user)               # active membership
@@ -339,11 +455,14 @@ conversation.unread_count_for(user)
 conversation.mark_read_by!(user)
 conversation.post_system_message!("Ride cancelled")
 conversation.add_participant!(user)           # idempotent, race-safe
+conversation.locked?                          # the SUBJECT decides (chat_locked?)
+conversation.locked_notice                    # why, in words
 
 # Messages
 message.edit!("fixed")                        # stamps edited_at
 message.soft_delete!                          # tombstone (or destroy, per config)
 message.read_by?(user)
+message.signed? / message.authored_by?(lucia) # authorship
 Chats::Reaction.toggle!(message:, reactor:, emoji: "👍")
 
 # Participants (the per-member state)
@@ -352,9 +471,25 @@ participant.mute! / participant.unmute!
 participant.leave!                            # groups
 participant.notifiable_for?(message)          # notification etiquette
 participant.should_notify? / participant.mark_notified!
+participant.reseat!(new_messager)             # hand the seat over, read horizon intact
+
+# Events
+Chats.on(:message_created) { |message| }      # also :conversation_created,
+                                              # :participant_left, :conversation_read
 ```
 
 Errors are namespaced and meaningful: `Chats::BlockedError`, `Chats::NotAllowedError`, `Chats::ConfigurationError` — all under `Chats::Error`.
+
+## Upgrading
+
+`chats` ships the migrations a version bump needs; your initializer and views stay yours:
+
+```bash
+rails generate chats:upgrade   # 0.2.0: message authorship columns
+rails db:migrate
+```
+
+Nothing in 0.2.0 changes behaviour until you set an option — see the [CHANGELOG](CHANGELOG.md).
 
 ## Database support
 

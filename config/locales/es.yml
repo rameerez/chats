@@ -8,6 +8,11 @@ es:
       no_results_title: "Sin resultados"
       no_results_hint: "No hay nada que coincida con «%{query}»."
       no_messages: "Sin mensajes todavía"
+      filtered_by: "Conversaciones con %{name}"
+      clear_filter: "Ver todas las conversaciones"
+      group_count:
+        one: "1 conversación"
+        other: "%{count} conversaciones"
       you_prefix: "Tú:"
     thread:
       back: "Atrás"
@@ -22,6 +27,7 @@ es:
       yesterday: "Ayer"
       typing_suffix: "está escribiendo…"
       new_messages: "Mensajes nuevos"
+      see_all: "Ver todas"
     conversation:
       empty_title: "Conversación"
     message:
@@ -30,6 +36,7 @@ es:
       copy: "Copiar"
       copied: "¡Copiado!"
       attachment: "Foto"
+      signature: "— %{name}"
       close_attachment: "Cerrar foto"
       edit: "Editar"
       delete: "Eliminar"
@@ -44,6 +51,7 @@ es:
       placeholder: "Escribe un mensaje…"
       send: "Enviar"
       attach: "Adjuntar imágenes"
+      locked: "Esta conversación está cerrada."
     buttons:
       chat: "Mensaje"
     flashes:
@@ -67,7 +75,10 @@ es:
         chats/message:
           attributes:
             base:
+              locked: "Esta conversación está cerrada."
               blocked: "No puedes enviar mensajes a esta persona."
+            author:
+              not_a_messager: "debe ser un mensajero (acts_as_messager)"
             sender:
               blank: "es obligatorio"
               not_a_participant: "no participa en esta conversación"

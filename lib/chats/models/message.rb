@@ -33,6 +33,11 @@ module Chats
                inverse_of: :messages,
                counter_cache: :messages_count
     belongs_to :sender, polymorphic: true, optional: true
+    # The person (or bot) who WROTE this on the sender's behalf — an agent
+    # answering from a shared support-desk seat. The sender stays the
+    # conversation identity ("Soporte CarHey"); the author signs the bubble
+    # ("— Lucía G."). Optional, and nil for every ordinary message.
+    belongs_to :author, polymorphic: true, optional: true
     belongs_to :reply_to, class_name: "Chats::Message", optional: true
 
     has_many :reactions,
@@ -90,6 +95,8 @@ module Chats
     validate :body_must_fit_length_limit
     validate :sender_must_be_active_participant, on: :create
     validate :sender_must_not_be_blocked, on: :create
+    validate :conversation_must_not_be_locked, on: :create
+    validate :author_must_be_a_messager
     validate :files_must_be_allowed
 
     after_create :register_on_conversation
@@ -110,6 +117,19 @@ module Chats
 
     def sent_by?(messager)
       sender.present? && sender == messager
+    end
+
+    # Written by someone OTHER than the seat it was sent from — the case a
+    # signature exists for. A message an author sent from their own seat is
+    # not "signed"; it's just theirs.
+    def signed?
+      author.present? && author != sender
+    end
+
+    # Whether +messager+ is the one who WROTE this (not necessarily the seat
+    # it was sent from).
+    def authored_by?(messager)
+      author.present? && author == messager
     end
 
     # The body as the UI should show it (tombstones render a localized
@@ -133,12 +153,19 @@ module Chats
       raise Chats::NotAllowedError, "editing is disabled" unless Chats.config.editing
       raise Chats::NotAllowedError, "can't edit a deleted message" if deleted?
 
+      refuse_when_locked!
       update!(body: new_body, edited_at: Time.current)
     end
 
     # Delete according to `config.deletion` (see class comment). Returns
     # false when deletion is disabled.
-    def soft_delete!
+    #
+    # `enforce_lock: false` is for MODERATION only (see
+    # #remove_reported_field!): a product lock must never shield reported
+    # content from removal.
+    def soft_delete!(enforce_lock: true)
+      refuse_when_locked! if enforce_lock
+
       case Chats.config.deletion
       when :soft
         transaction do
@@ -158,6 +185,16 @@ module Chats
       respond_to?(:files) && files.attached?
     end
 
+    # Every WRITE to an existing message goes through here, for the same
+    # reason `create` validates the lock: a closed conversation is closed for
+    # editing and deleting too, not just for new messages. System messages
+    # stay exempt — the app owns them.
+    def refuse_when_locked! # :nodoc:
+      return if system? || conversation.nil? || !conversation.locked?
+
+      raise Chats::LockedError.new(conversation: conversation)
+    end
+
     # --- Moderation contract (duck-typed, zero coupling) ------------------------
     #
     # Plain-Ruby methods that make a message a first-class citizen of the
@@ -167,8 +204,14 @@ module Chats
     # seams for attachment filtering. Without moderate installed they're
     # inert and cost nothing.
 
+    # Who answers for this message: its AUTHOR when it is signed, else its
+    # sender. A signed message was written by a human from a seat that is not
+    # a person — an agent answering from a support desk — and the seat cannot
+    # be the owner a moderation flag or report points at: the host's `owner`
+    # is typed to its user class, so a desk there is a type mismatch raised
+    # from inside the agent's own reply the first time a filter trips.
     def reported_owner
-      sender
+      author || sender
     end
 
     def moderation_label
@@ -189,7 +232,9 @@ module Chats
     def remove_reported_field!(field)
       return false unless field.to_s == "body"
 
-      soft_delete!
+      # Trust & Safety outranks a product lock: a closed conversation must
+      # never be a place reported content can hide.
+      soft_delete!(enforce_lock: false)
     end
 
     # Only people *in* the conversation may report a message (a message
@@ -265,6 +310,25 @@ module Chats
 
       other = conversation.other_participants(sender).first&.messager
       errors.add(:base, :blocked) if other && Chats.blocked_between?(sender, other)
+    end
+
+    # An author signs the bubble with `Chats.display_name_for`, so it has to
+    # be something that HAS a name in this system — a messager, not a ride or
+    # a listing that would render as "Listing 1".
+    def author_must_be_a_messager
+      return if author.nil? || Chats.messager_class?(author.class)
+
+      errors.add(:author, :not_a_messager)
+    end
+
+    # The subject owns the conversation's openness (Chats::ChatSubject#
+    # chat_locked?). System messages are exempt: the host must always be able
+    # to post "This ticket was closed" into the thread it just closed.
+    def conversation_must_not_be_locked
+      return if system? || conversation.nil?
+      return unless conversation.locked?
+
+      errors.add(:base, :locked)
     end
 
     def files_must_be_allowed

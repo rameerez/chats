@@ -19,6 +19,10 @@
       "chats--thread-refresh-url-value": refresh_conversation_path(@conversation),
       "chats--thread-thread-url-value": conversation_path(@conversation),
       "chats--thread-copied-label-value": t("chats.message.copied"),
+      # A plain data attribute (not a Stimulus value): host CSS/JS keys its
+      # own block/report affordances off it. False for a messager declared
+      # `acts_as_messager blockable: false`.
+      "chats-blockable": chats_blockable?(chats_counterpart),
       action: "pointerdown->chats--thread#pressStart pointermove->chats--thread#pressMove " \
               "pointerup->chats--thread#pressEnd pointercancel->chats--thread#pressCancel " \
               "contextmenu->chats--thread#contextMenu"
@@ -31,12 +35,32 @@
       <span aria-hidden="true">‹</span>
     <% end %>
 
-    <%= chats_conversation_avatar(@conversation, chats_current_messager) %>
+    <%# The counterpart is already resolved for the title, the profile link
+        and the stack link — reuse it here instead of asking again. %>
+    <% if chats_counterpart %>
+      <%= chats_messager_avatar(chats_counterpart) %>
+    <% else %>
+      <%= chats_conversation_avatar(@conversation, chats_current_messager) %>
+    <% end %>
 
     <div class="chats-thread__identity">
-      <h1 class="chats-thread__title"><%= @conversation.title_for(chats_current_messager) %></h1>
+      <h1 class="chats-thread__title">
+        <% if chats_counterpart %>
+          <%= chats_messager_name(chats_counterpart) %>
+        <% else %>
+          <%= @conversation.title_for(chats_current_messager) %>
+        <% end %>
+      </h1>
       <% if @conversation.subject_label %>
         <p class="chats-thread__subject"><%= @conversation.subject_label %></p>
+      <% end %>
+      <%# A stacked counterpart's thread is one of many: offer the way back
+          to the whole stack (chats' filtered inbox, or the host's own
+          screen via `group_path:`). %>
+      <% if Chats.grouped_inbox?(chats_counterpart) %>
+        <p class="chats-thread__see-all">
+          <%= link_to t("chats.thread.see_all"), chats_group_path_for(chats_counterpart), class: "chats-thread__see-all-link" %>
+        </p>
       <% end %>
     </div>
 
@@ -51,6 +75,15 @@
         <% if @conversation.group? %>
           <%= button_to t("chats.thread.leave"), leave_conversation_path(@conversation), method: :post, class: "chats-menu__item chats-menu__item--danger" %>
         <% end %>
+        <%# Slot: the host's own thread actions (block, report, archive…).
+            `blockable` is false for messagers declared
+            `acts_as_messager blockable: false`, so safety affordances
+            disappear against a support desk without any class check. %>
+        <%= chats_slot :conversation_header_actions,
+              conversation: @conversation,
+              viewer: chats_current_messager,
+              counterpart: chats_counterpart,
+              blockable: chats_blockable?(chats_counterpart) %>
       </div>
     </details>
   </header>
@@ -133,5 +166,13 @@
     </div>
   </div>
 
-  <%= render "chats/messages/composer", conversation: @conversation %>
+  <%# A locked conversation (its SUBJECT says so — Chats::ChatSubject#
+      chat_locked?) keeps its whole history readable and swaps the composer
+      for the reason it's closed. Never a hidden screen: gate the action,
+      explain it in place. %>
+  <% if @conversation.locked? %>
+    <%= render "chats/conversations/locked_composer", conversation: @conversation %>
+  <% else %>
+    <%= render "chats/messages/composer", conversation: @conversation %>
+  <% end %>
 <% end %>

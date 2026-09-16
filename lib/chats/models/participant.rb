@@ -105,6 +105,37 @@ module Chats
 
     def leave!
       update!(left_at: Time.current)
+      Chats.notify(:participant_left, participant: self)
+      self
+    end
+
+    # Hand this seat to a different messager, keeping the read horizon, the
+    # role and the history: the guest who signs up, the agent who takes over
+    # a shared mailbox. The MESSAGES keep their original sender — what was
+    # said was said by whoever said it.
+    #
+    # Direct conversations have their +direct_key+ recomputed, so the thread
+    # keeps resolving through `chat_with` for the NEW pair instead of
+    # stranding a duplicate.
+    def reseat!(new_messager)
+      raise ArgumentError, "reseat! requires a messager" if new_messager.nil?
+      unless Chats.messager_class?(new_messager.class)
+        raise Chats::NotAllowedError, "#{new_messager.class.name} is not a messager (acts_as_messager)"
+      end
+
+      refuse_reseat_conflicts!(new_messager)
+
+      transaction do
+        update!(messager: new_messager)
+        conversation.reindex_direct_key!
+      end
+
+      self
+    rescue ActiveRecord::RecordNotUnique
+      # The race backstop for the checks above (two reseats, or a DM opened,
+      # between the check and the write). Translated so a host never has a
+      # driver-level exception poison its transaction.
+      raise Chats::NotAllowedError, "that conversation already exists for the new pair"
     end
 
     # --- Notification etiquette (for host notifier hooks) ----------------------
@@ -114,6 +145,10 @@ module Chats
     # re-derive it: don't notify yourself, the muted, the departed — and for
     # debounced email digests, don't notify twice for the same unread burst.
     def notifiable_for?(message)
+      # Headless messagers (`acts_as_messager notifications: false`) — a
+      # support desk, a bot, an org mailbox — are never notifiable. This is
+      # THE reason hosts no longer branch on class in their notifiers.
+      return false unless Chats.notifications_for?(messager)
       return false if left? || muted?
       return false if message.sender == messager
 
@@ -134,6 +169,30 @@ module Chats
     end
 
     private
+
+    # Everything that would make the reseat collide, checked BEFORE the
+    # write. A unique-index violation inside the transaction would abort the
+    # host's transaction too on PostgreSQL, so the pre-check is the real
+    # guard and the RecordNotUnique rescue is only the race backstop.
+    def refuse_reseat_conflicts!(new_messager)
+      if conversation.participants.where.not(id: id).exists?(
+        messager_type: new_messager.class.polymorphic_name, messager_id: new_messager.id
+      )
+        raise Chats::NotAllowedError, "that messager already has a seat in this conversation"
+      end
+
+      return unless conversation.direct?
+
+      other = conversation.other_participants(messager).includes(:messager).first&.messager
+      return if other.nil?
+
+      existing = Chats::Conversation.direct_between(new_messager, other, about: conversation.subject)
+      return if existing.nil? || existing == conversation
+
+      raise Chats::NotAllowedError,
+            "#{Chats.display_name_for(new_messager)} already has a direct conversation with " \
+            "#{Chats.display_name_for(other)}"
+    end
 
     def group_must_have_room
       return if conversation.nil? || conversation.direct?

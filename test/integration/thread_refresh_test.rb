@@ -59,6 +59,11 @@ class ThreadRefreshTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, %(<turbo-stream action="refresh">)
     assert_not_includes response.body, "burst 0"
+    # The content type is the contract: a body that says <turbo-stream> but
+    # arrives as text/html is not a stream to anything that checks, and this
+    # is the recovery path — when it silently does nothing, the symptom is
+    # exactly the staleness it exists to fix.
+    assert_equal "text/vnd.turbo-stream.html", response.media_type
   end
 
   test "refresh without a cursor is a no-op, and outsiders get a 404" do

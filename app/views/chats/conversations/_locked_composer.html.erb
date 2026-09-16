@@ -1,0 +1,15 @@
+<%# What sits where the composer would be when the conversation's SUBJECT
+    has locked it (Chats::ChatSubject#chat_locked?). It carries the same DOM
+    id as the composer form, so MessagesController#create can swap one for
+    the other with a single Turbo replace when a thread closes under an open
+    composer.
+
+    The `locked_composer` slot replaces the BODY (a reopen button, a link to
+    the closed ticket…) while keeping the id contract intact. %>
+<div id="<%= dom_id(conversation, :composer) %>" class="chats-composer chats-composer--locked">
+  <% if chats_slot?(:locked_composer) %>
+    <%= chats_slot :locked_composer, conversation: conversation, notice: conversation.locked_notice %>
+  <% else %>
+    <p class="chats-composer__locked-notice"><%= conversation.locked_notice %></p>
+  <% end %>
+</div>

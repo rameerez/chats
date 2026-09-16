@@ -5,6 +5,17 @@ module Chats
   # HOST app's views (mixed into ActionView via the engine's on_load hook,
   # the same pattern the moderate gem uses for `report_link`).
   module EngineHelper
+    # Every slot the bundled views render, and the whole list of them. A
+    # host drops `app/views/chats/slots/_<name>.html.erb` in and it appears;
+    # a name that isn't here renders nothing.
+    SLOTS = %w[
+      inbox_top
+      inbox_empty
+      conversation_header_actions
+      locked_composer
+      message_meta
+    ].freeze
+
     # The "message this person" affordance for host pages — a listing, a
     # profile, an order. Renders nothing when there's no viewer, the viewer
     # IS the target, or policy/blocks forbid the pair, so it's always safe
@@ -124,6 +135,89 @@ module Chats
         tag.span(initials.presence || "👥", class: "chats-avatar chats-avatar--initials chats-avatar--group",
                                            "aria-hidden": true)
       end
+    end
+
+    # --- Slots ----------------------------------------------------------------
+    #
+    # Named extension points the bundled views render WHEN a partial exists
+    # at `chats/slots/_<name>`. Hosts (and engines mounted on top of chats,
+    # like support_desk) drop a file in and it appears; nobody has to eject
+    # a whole screen to add one row or one button. Absent slots cost one
+    # memoized template lookup and render nothing.
+    #
+    #   app/views/chats/slots/_inbox_top.html.erb
+    #
+    # The slots: inbox_top, inbox_empty, conversation_header_actions,
+    # locked_composer, message_meta.
+    def chats_slot(name, **locals)
+      return unless chats_slot?(name)
+
+      render(partial: "chats/slots/#{name}", locals: locals)
+    end
+
+    # Whether a slot partial exists. Memoized per view instance, so a slot
+    # rendered inside a collection costs ONE lookup per request, not one per
+    # row. Anything outside SLOTS is ignored rather than looked up: the slot
+    # names are a contract, and a typo should render nothing instead of
+    # quietly becoming a new extension point nobody documented.
+    def chats_slot?(name)
+      key = name.to_s
+      return false unless Chats::EngineHelper::SLOTS.include?(key)
+
+      @chats_slots ||= {}
+      return @chats_slots[key] if @chats_slots.key?(key)
+
+      @chats_slots[key] = lookup_context.exists?("chats/slots/#{key}", [], true)
+    end
+
+    # --- Messager display -----------------------------------------------------
+
+    # Whether block/report affordances apply to this messager. False for
+    # `acts_as_messager blockable: false` (a support desk, a bot) — the
+    # bundled views hide the affordance instead of asking hosts to branch on
+    # class.
+    def chats_blockable?(messager)
+      Chats.blockable?(messager)
+    end
+
+    # A messager's profile URL per `config.messager_url`, or nil.
+    def chats_messager_url(messager)
+      Chats.messager_url_for(messager)
+    end
+
+    # A messager's name, linked to their profile when `config.messager_url`
+    # gives one and plain text when it doesn't — so the gem never renders a
+    # dead anchor or assumes a `user_path` exists.
+    def chats_messager_name(messager, css_class: nil)
+      name = Chats.display_name_for(messager)
+      url = chats_messager_url(messager)
+
+      url.present? ? link_to(name, url, class: css_class) : tag.span(name, class: css_class)
+    end
+
+    # The signature line under a signed message ("— Lucía G."), or nil.
+    def chats_message_signature(message)
+      Chats.message_signature_for(message)
+    end
+
+    # --- Grouped inbox rows ---------------------------------------------------
+
+    # Where a stacked inbox row goes: straight to the thread when the stack
+    # holds exactly one conversation, otherwise to the stack itself.
+    def chats_group_path(group)
+      return chats_routes.conversation_path(group.conversation) if group.single?
+
+      chats_group_path_for(group.messager)
+    end
+
+    # The stack list for a messager: the host's `group_path:` callable when
+    # `acts_as_messager` declared one (support_desk points it at its own
+    # screen), else chats' own filtered inbox.
+    def chats_group_path_for(messager)
+      custom = messager.class.try(:chat_group_path)
+      path = custom&.call(chats_viewer)
+
+      path.presence || chats_routes.conversations_path(with: Chats.inbox_with_sgid(messager))
     end
 
     # The gem's bundled stylesheet (CSS-variable themed — see chats.css).

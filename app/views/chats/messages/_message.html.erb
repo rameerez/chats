@@ -27,7 +27,7 @@
   <% else %>
     <div class="chats-message__content">
       <% if message.conversation.group? && message.sender %>
-        <span class="chats-message__sender"><%= Chats.display_name_for(message.sender) %></span>
+        <%= chats_messager_name(message.sender, css_class: "chats-message__sender") %>
       <% end %>
 
       <div class="chats-message__bubble-row">
@@ -76,11 +76,20 @@
             <% end %>
           <% end %>
 
+          <%# Signature: who WROTE this, when that isn't who it was sent
+              from — an agent answering from a shared desk seat. The sender
+              stays the conversation identity; this line keeps the human
+              visible. See Chats::Message#signed?. %>
+          <% if (signature = chats_message_signature(message)) %>
+            <div class="chats-message__signature" data-chats-message-signature><%= signature %></div>
+          <% end %>
+
           <span class="chats-message__meta">
             <% if message.edited? && !message.deleted? %>
               <span class="chats-message__edited"><%= t("chats.message.edited") %></span>
             <% end %>
             <time datetime="<%= message.created_at.iso8601 %>"><%= message.created_at.in_time_zone.strftime("%H:%M") %></time>
+            <%= chats_slot :message_meta, message: message %>
             <% if Chats.config.read_receipts %>
               <span class="chats-message__receipt"
                     data-chats-message-receipt
@@ -95,6 +104,12 @@
       </div>
 
       <% unless message.deleted? %>
+        <%# A locked conversation (its SUBJECT says so) refuses every write —
+            new messages, edits, deletes and reactions alike. The server
+            enforces it; here we stop OFFERING what would only 422: existing
+            reactions still render, as plain counts instead of toggles, and
+            the long-press menu keeps only Copy. %>
+        <% locked = message.conversation.locked? %>
         <% reactions = Chats.config.reactions ? Chats::Reaction.summary_for(message) : [] %>
         <% if reactions.any? %>
           <div class="chats-message__reactions">
@@ -103,10 +118,16 @@
                 through the HOST's renderer where engine helpers don't exist
                 unqualified. See EngineHelper#chats_routes. %>
             <% reactions.each do |emoji, count| %>
-              <%= button_to chats_routes.conversation_message_reactions_path(message.conversation, message),
-                    method: :post, params: { emoji: emoji },
-                    class: "chats-reaction", "aria-label": t("chats.message.toggle_reaction", emoji: emoji) do %>
-                <%= emoji %><% if count > 1 %><span class="chats-reaction__count"><%= count %></span><% end %>
+              <% if locked %>
+                <span class="chats-reaction chats-reaction--locked">
+                  <%= emoji %><% if count > 1 %><span class="chats-reaction__count"><%= count %></span><% end %>
+                </span>
+              <% else %>
+                <%= button_to chats_routes.conversation_message_reactions_path(message.conversation, message),
+                      method: :post, params: { emoji: emoji },
+                      class: "chats-reaction", "aria-label": t("chats.message.toggle_reaction", emoji: emoji) do %>
+                  <%= emoji %><% if count > 1 %><span class="chats-reaction__count"><%= count %></span><% end %>
+                <% end %>
               <% end %>
             <% end %>
           </div>
@@ -122,7 +143,7 @@
             button_to forms keep working when cloned: the CSRF token is
             baked in at render time. %>
         <template data-chats-message-menu>
-          <% if Chats.config.reactions %>
+          <% if Chats.config.reactions && !locked %>
             <div class="chats-popup__reactions" role="group" aria-label="<%= t("chats.message.react") %>">
               <% %w[👍 ❤️ 😂 😮 😢 🙏].each do |emoji| %>
                 <%= button_to emoji, chats_routes.conversation_message_reactions_path(message.conversation, message),
@@ -137,12 +158,12 @@
                 <%= t("chats.message.copy") %>
               </button>
             <% end %>
-            <% if Chats.config.editing && message.body.present? %>
+            <% if Chats.config.editing && message.body.present? && !locked %>
               <button type="button" class="chats-popup__item" role="menuitem" data-chats-action="edit" data-chats-own-only>
                 <%= t("chats.message.edit") %>
               </button>
             <% end %>
-            <% if Chats.config.deletion %>
+            <% if Chats.config.deletion && !locked %>
               <%= button_to t("chats.message.delete"),
                     chats_routes.conversation_message_path(message.conversation, message),
                     method: :delete,

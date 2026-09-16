@@ -86,6 +86,12 @@ module Chats
     attr_accessor :messages_per_page, :max_message_length, :max_group_size, :max_attachment_size,
                   :max_attachments_per_message
 
+    # How many conversations the inbox loads (and therefore how deep search
+    # and grouping see). The inbox is a "recent activity" surface, not an
+    # archive — raise it only if your users really keep hundreds of live
+    # threads.
+    attr_accessor :inbox_limit
+
     # Per-sender send throttle, enforced with Rails 8's built-in controller
     # `rate_limit` when available (feature-detected; on Rails 7.1 it's a
     # no-op). Shape: `{ to: Integer, within: ActiveSupport::Duration }`.
@@ -109,6 +115,12 @@ module Chats
     # May +creator+ create a group conversation?
     attr_reader :can_create_group
 
+    # ->(relation, viewer) { relation } — composed into the inbox query
+    # before the limit, so a host can hide or re-scope rows without
+    # overriding the controller:
+    #   config.inbox_scope = ->(relation, viewer) { relation.where.not(kind: "group") }
+    attr_reader :inbox_scope
+
     # --- Ecosystem seams (procs, no-op defaults) ------------------------------
 
     # ->(messager) { ids } — every messager id that can't talk with the given
@@ -129,6 +141,17 @@ module Chats
     # Return anything `image_tag` accepts (a URL, an ActiveStorage attachment
     # or variant), or nil to render an initials placeholder.
     attr_reader :messager_avatar
+
+    # ->(messager) { path_or_url_or_nil } — where a messager's profile lives.
+    # The bundled views link names and avatars to it; nil (the default) means
+    # no anchor at all, so the gem never assumes a `user_path` exists.
+    attr_reader :messager_url
+
+    # ->(message) { String } — the signature line under a SIGNED message
+    # (one written by an author on the sender's behalf — see
+    # Chats::Message#signed?). nil (the default) renders the localized
+    # "— Author Name".
+    attr_reader :message_signature
 
     def initialize
       @messager_class = "User"
@@ -152,14 +175,18 @@ module Chats
       @max_attachment_size = 10 * 1024 * 1024 # 10 MB
       @max_attachments_per_message = 4
       @send_rate_limit = { to: 60, within: 60 } # 60 messages per minute per sender
+      @inbox_limit = 200
 
       @encrypt_messages = false
 
       @can_message = ->(_sender, _recipient) { true }
       @can_create_group = ->(_creator) { true }
+      @inbox_scope = ->(relation, _viewer) { relation }
 
       @blocked_messager_ids = ->(_messager) { [] }
       @notifier = ->(_event, **_payload) {}
+      @messager_url = ->(_messager) { nil }
+      @message_signature = nil
 
       @messager_display_name = lambda do |messager|
         messager.try(:display_name) || messager.try(:name) ||
@@ -232,8 +259,41 @@ module Chats
       @blocked_messager_ids = ensure_callable(value, "blocked_messager_ids")
     end
 
+    # DEPRECATED (removed in 1.0): sugar that subscribes one `(event,
+    # **payload)` proc to the two events that existed in 0.1.1
+    # (:message_created, :conversation_read) — and ONLY those, so an old
+    # keyword-specific hook can't start raising on events it was never
+    # written for. `Chats.on` supersedes it: many subscribers, per-event
+    # payloads, reload-safe keys, and every event.
     def notifier=(value)
-      @notifier = ensure_callable(value, "notifier")
+      hook = ensure_callable(value, "notifier")
+      Chats.deprecator.warn(
+        "config.notifier is deprecated and will be removed in chats 1.0. " \
+        "It receives #{Chats::Subscribers::LEGACY_NOTIFIER_EVENTS.map(&:inspect).join(" and ")} only; " \
+        "the events added in 0.2.0 are Chats.on-only. " \
+        "Subscribe with Chats.on(:message_created) { |message| … } instead " \
+        "(see the README's \"Events\" section)."
+      )
+
+      Chats::Subscribers::LEGACY_NOTIFIER_EVENTS.each do |event|
+        Chats::Subscribers.on(event, key: Chats::Subscribers::NOTIFIER_KEY, style: :event) do |fired, **payload|
+          hook.call(fired, **payload)
+        end
+      end
+
+      @notifier = hook
+    end
+
+    def inbox_scope=(value)
+      @inbox_scope = ensure_callable(value, "inbox_scope")
+    end
+
+    def messager_url=(value)
+      @messager_url = ensure_callable(value, "messager_url")
+    end
+
+    def message_signature=(value)
+      @message_signature = value.nil? ? nil : ensure_callable(value, "message_signature")
     end
 
     def messager_display_name=(value)
@@ -258,6 +318,8 @@ module Chats
       if messages_per_page.to_i < 1
         raise ConfigurationError, "messages_per_page must be positive (got #{messages_per_page.inspect})"
       end
+
+      raise ConfigurationError, "inbox_limit must be positive (got #{inbox_limit.inspect})" if inbox_limit.to_i < 1
 
       true
     end

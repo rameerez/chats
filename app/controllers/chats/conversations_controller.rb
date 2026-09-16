@@ -5,16 +5,22 @@ module Chats
   # pages (create), and the per-member actions (read/typing/leave/mute).
   class ConversationsController < ApplicationController
     before_action :set_conversation, only: %i[show read typing leave mute unmute refresh]
+    helper_method :chats_counterpart
 
     # The inbox. Everything is preloaded/batched so rendering N rows costs a
     # constant number of queries (conversations + last messages + participants
     # + one grouped unread-count query — see Conversation.unread_counts_for).
+    # Rows are Conversation | InboxGroup: stacking, search and the `?with=`
+    # filter all live in Chats::Inbox, so this action stays three lines.
     def index
-      @conversations = chats_current_messager.chats
-                                             .includes(:last_message, :subject, participants: :messager)
-                                             .limit(200)
-      @conversations = apply_search(@conversations)
-      @unread_counts = Chats::Conversation.unread_counts_for(chats_current_messager, @conversations)
+      @inbox = Chats::Inbox.for(chats_current_messager, query: params[:q], with: inbox_filter)
+      @rows = @inbox.rows
+      @unread_counts = @inbox.unread_counts
+      # Back-compat for inboxes ejected under 0.1.x, which loop over
+      # @conversations: they keep rendering the flat list (no stacking, i.e.
+      # exactly what they rendered before). Re-eject or delete your copy to
+      # get the stacked rows.
+      @conversations = @inbox.conversations
     end
 
     # The thread. Renders the LATEST page of messages; older pages stream in
@@ -76,11 +82,18 @@ module Chats
       # A backlog deeper than one page would mean splicing an arbitrary
       # amount of history through surgical appends; a Turbo 8 page refresh
       # (morph + scroll preservation) re-renders the latest page + frame
-      # chain correctly instead. Raw tag rather than `turbo_stream.refresh`
-      # so we don't depend on turbo-rails ≥ 2.0 helpers.
+      # chain correctly instead.
+      #
+      # `render turbo_stream:`, NOT `render html: … content_type:` — the
+      # latter forces text/html and silently ignores the content type, so the
+      # body says <turbo-stream> while the response says it isn't one.
+      #
+      # `request_id: nil` on purpose: Turbo skips a refresh tagged with a
+      # request id it recognizes as its own, and this response is the answer
+      # to the client's OWN catch-up fetch — the one client that must not
+      # skip it.
       if @new_messages.size > Chats.config.messages_per_page
-        render html: '<turbo-stream action="refresh"></turbo-stream>'.html_safe,
-               content_type: "text/vnd.turbo-stream.html"
+        render turbo_stream: turbo_stream.refresh(request_id: nil)
         return
       end
 
@@ -156,43 +169,30 @@ module Chats
       GlobalID::Locator.locate_signed(sgid, for: purpose) || raise(ActiveRecord::RecordNotFound)
     end
 
-    # Partial, case-insensitive matching across the inbox metadata users can
-    # actually see: participant names, conversation titles, subject labels,
-    # and message bodies. The inbox is capped at 200 rows, so metadata is
-    # filtered portably in Ruby from the already-preloaded objects while the
-    # potentially larger message-body set stays in SQL. No PostgreSQL-only
-    # full-text dependency is needed for this scale.
-    def apply_search(conversations)
-      return conversations unless Chats.config.search
+    # `?with=<signed gid>` — the inbox filtered to one counterpart (a stack's
+    # contents). Signed and purpose-scoped like every other polymorphic
+    # param the engine accepts; a tampered one is a plain 404.
+    def inbox_filter
+      return nil if params[:with].blank?
 
-      query = params[:q].to_s.strip
-      return conversations if query.empty?
+      messager = locate_signed!(params[:with], purpose: :chats_inbox_with)
+      raise ActiveRecord::RecordNotFound unless Chats.messager_class?(messager.class)
 
-      loaded = conversations.to_a
-      normalized_query = query.downcase
-      pattern = "%#{Chats::Conversation.sanitize_sql_like(query.downcase)}%"
-      message_match_ids =
-        if Chats.config.encrypt_messages
-          []
-        else
-          Chats::Message.where(conversation_id: loaded.map(&:id), deleted_at: nil)
-                        .where("LOWER(chats_messages.body) LIKE ?", pattern)
-                        .distinct
-                        .pluck(:conversation_id)
-        end
-
-      loaded.select do |conversation|
-        message_match_ids.include?(conversation.id) ||
-          searchable_metadata(conversation).downcase.include?(normalized_query)
-      end
+      messager
     end
 
-    def searchable_metadata(conversation)
-      participant_names = conversation.participants.filter_map do |participant|
-        Chats.display_name_for(participant.messager) if participant.active?
-      end
+    # The other party of a direct thread (nil for groups) — the thread header
+    # names them, links to their profile, and decides whether to offer the
+    # "see all" link back to their stack. LAZY and memoized: a group thread
+    # never pays for it, and a direct one pays once no matter how many of
+    # those three things the rendered view asks for.
+    def chats_counterpart
+      return @chats_counterpart if defined?(@chats_counterpart)
 
-      [conversation.title, conversation.subject_label, *participant_names].compact.join(" ")
+      @chats_counterpart =
+        if @conversation&.direct?
+          @conversation.other_participants(chats_current_messager).includes(:messager).first&.messager
+        end
     end
   end
 end

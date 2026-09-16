@@ -88,6 +88,12 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
                                   foreign_key: { to_table: :chats_conversations }, index: false
       t.references :sender, polymorphic: true, null: true, type: foreign_key_type, index: false
 
+      # Who WROTE it, when that isn't the seat it was sent FROM: an agent
+      # answering from a shared support-desk seat signs the bubble while the
+      # desk stays the conversation identity. Nullable — ordinary messages
+      # have no author. See Chats::Message#signed?.
+      t.references :author, polymorphic: true, null: true, type: foreign_key_type, index: false
+
       t.string :kind, null: false, default: "text"
       t.text :body
       t.references :reply_to, type: foreign_key_type, null: true,
@@ -103,6 +109,7 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
     # (created_at, id) — see Chats::Message.before_message.
     add_index :chats_messages, [ :conversation_id, :created_at, :id ], name: "index_chats_messages_on_conversation_and_created_at"
     add_index :chats_messages, [ :sender_type, :sender_id ], name: "index_chats_messages_on_sender"
+    add_index :chats_messages, [ :author_type, :author_id ], name: "index_chats_messages_on_author"
     add_index :chats_messages, :reply_to_id, name: "index_chats_messages_on_reply_to_id"
 
     # ---------------------------------------------------------------------------
@@ -142,8 +149,12 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
     [primary_key_type, foreign_key_type]
   end
 
+  # jsonb on every PostgreSQL adapter — matched by prefix because PostGIS
+  # (activerecord-postgis-adapter) answers "PostGIS", not "PostgreSQL", and
+  # an `include?("postgresql")` check silently sent such hosts down the plain
+  # json path.
   def json_column_type
-    return :jsonb if connection.adapter_name.downcase.include?("postgresql")
+    return :jsonb if connection.adapter_name.match?(/\Apostg/i)
 
     :json
   end
@@ -151,8 +162,13 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
   # MySQL 8+ doesn't allow default values on JSON columns.
   # Returns an empty-hash default for SQLite/PostgreSQL, nil for MySQL.
   # The model handles nil metadata gracefully (attribute default {}).
+  #
+  # Trilogy is MySQL under a different ADAPTER_NAME (Rails reports "Trilogy"),
+  # so match both — a /mysql/ pattern alone hands a Trilogy host a default
+  # MySQL rejects. api_keys hit this first; see its create_api_keys_table
+  # template, which matches /mysql|trilogy/.
   def json_column_default
-    return nil if connection.adapter_name.downcase.include?("mysql")
+    return nil if connection.adapter_name.match?(/mysql|trilogy/i)
 
     {}
   end

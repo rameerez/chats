@@ -19,6 +19,13 @@ group :development do
 end
 
 group :test do
+  # json 3.0 dropped `JSON.parse(source, options_hash)`, which is exactly how
+  # ActiveSupport::JSON.decode calls it — so every JSON column in the dummy
+  # app raises ArgumentError on read, on every adapter. CI resolves fresh and
+  # hit this; a local bundle holding an older json did not. Pin until Rails
+  # ships a json 3 compatible decoder.
+  gem "json", "~> 2.7"
+
   gem "minitest", "~> 6.0"
   # Minitest 6 extracted minitest/mock into its own gem.
   gem "minitest-mock"
