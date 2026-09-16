@@ -200,4 +200,52 @@ class EngineHelperTest < ActionView::TestCase
     assert_equal "— Alice Wonder", chats_message_signature(desk.message!(conversation, "hi", author: @alice))
     assert_nil chats_message_signature(@alice.message!(conversation, "hi"))
   end
+
+  # --- the official-account badge ---------------------------------------------
+
+  test "chats_verified_badge renders nothing for anyone who hasn't declared it" do
+    assert_nil chats_verified_badge(@bob)
+    assert_nil chats_verified_badge(nil)
+    assert_nil chats_verified_badge(create_listing), "a non-messager is never official"
+  end
+
+  test "chats_verified_badge renders the labelled rosette for a verified messager" do
+    html = chats_verified_badge(create_shop(name: "Tienda Oficial"))
+
+    assert_includes html, %(class="chats-verified")
+    assert_includes html, %(role="img")
+    assert_includes html, %(aria-label="Official account")
+    assert_includes html, %(title="Official account")
+    assert_includes html, "<svg"
+    assert_includes html, %(aria-hidden="true")
+  end
+
+  test "the badge label follows the locale" do
+    shop = create_shop(name: "Tienda Oficial")
+
+    I18n.with_locale(:es) { assert_includes chats_verified_badge(shop), %(aria-label="Cuenta oficial") }
+    I18n.with_locale(:en) { assert_includes chats_verified_badge(shop), %(aria-label="Official account") }
+  end
+
+  test "config.verified_badge hands the messager to the host and uses what comes back" do
+    seen = []
+    Chats.config.verified_badge = lambda do |messager|
+      seen << messager
+      ActionController::Base.helpers.tag.i(class: "host-mark")
+    end
+    shop = create_shop(name: "Tienda Oficial")
+
+    assert_equal %(<i class="host-mark"></i>), chats_verified_badge(shop)
+    assert_equal [shop], seen
+    assert_nil chats_verified_badge(@bob), "the override never verifies anyone new"
+  end
+
+  test "verified_badge must be callable, and nil restores the default" do
+    assert_raises(Chats::ConfigurationError) { Chats.config.verified_badge = "<b>si</b>" }
+
+    Chats.config.verified_badge = ->(_messager) { "x" }
+    Chats.config.verified_badge = nil
+
+    assert_includes chats_verified_badge(create_shop), "chats-verified"
+  end
 end

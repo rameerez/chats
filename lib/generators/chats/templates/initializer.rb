@@ -19,8 +19,10 @@ Chats.configure do |config|
   #   class SupportDesk < ApplicationRecord
   #     acts_as_messager notifications: false,   # never notifiable
   #                      blockable:     false,   # no block/report affordances
-  #                      inbox:         :grouped # every thread with it is ONE
-  #                                              # inbox row (a "stack")
+  #                      inbox:         :grouped, # every thread with it is ONE
+  #                                               # inbox row (a "stack")
+  #                      verified:      true     # an OFFICIAL account: the
+  #                                              # views badge its name
   #   end
   #
   # `group_path:` says where that stacked row goes when it holds more than
@@ -200,6 +202,15 @@ Chats.configure do |config|
   # localized "— Agent Name":
   #
   # config.message_signature = ->(message) { "answered by #{message.author.first_name}" }
+  #
+  # The "official account" badge next to a `verified: true` messager's name.
+  # nil (the default) renders chats' own rosette, recoloured by the
+  # `--chats-verified` CSS variable. Set this to hand back your design
+  # system's mark instead — return html_safe markup, or nil for no badge:
+  #
+  # config.verified_badge = lambda do |messager|
+  #   ApplicationController.helpers.image_tag("official.svg", class: "badge", alt: "Official account")
+  # end
 
   # ==========================================================================
   # SLOTS — add one row or one button without ejecting a screen

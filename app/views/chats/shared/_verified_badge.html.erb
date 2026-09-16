@@ -1,0 +1,26 @@
+<%# The "official account" mark. Rendered next to a verified messager's name
+    (`acts_as_messager verified: true`) in every bundled view that shows one:
+    the inbox row, the stacked row and the thread header.
+
+    It is an IMAGE with a name, not decoration: the wrapper carries
+    role="img" plus the localized label, so a screen reader announces
+    "Cuenta oficial" / "Official account" where a sighted person sees the
+    rosette, and the glyph itself is aria-hidden so it is never read twice.
+
+    The rosette is CarHey's `:verified_badge` path, copied verbatim so both
+    render the same mark. Colour comes from the --chats-verified CSS
+    variable (see chats.css) via `fill: currentColor` — override that
+    variable, or swap this whole partial with `config.verified_badge`. %>
+<span class="chats-verified"
+      role="img"
+      title="<%= t("chats.verified.label") %>"
+      aria-label="<%= t("chats.verified.label") %>">
+  <svg xmlns="http://www.w3.org/2000/svg"
+       viewBox="0 0 24 24"
+       fill="currentColor"
+       class="chats-verified__glyph"
+       aria-hidden="true"
+       focusable="false">
+    <path d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l.834 2.006a2.25 2.25 0 0 0 1.401 1.276l2.129.54c1.13.286 1.562 1.682.827 2.6l-1.335 1.67a2.25 2.25 0 0 0-.474 1.485l.154 2.199c.084 1.2-1.108 2.06-2.225 1.603l-2.05-.834a2.25 2.25 0 0 0-1.676 0l-2.05.834c-1.117.457-2.309-.403-2.225-1.603l.154-2.2a2.25 2.25 0 0 0-.474-1.484L4.996 9.632c-.735-.918-.303-2.314.827-2.6l2.13-.54a2.25 2.25 0 0 0 1.4-1.276l.835-2.006Z" />
+  </svg>
+</span>

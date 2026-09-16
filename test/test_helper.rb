@@ -37,6 +37,7 @@ module ActiveSupport
       Chats.configure { |config| config.messager_class = "User" }
       Chats.register_messager(User)
       Chats.register_messager(Desk)
+      Chats.register_messager(Shop)
       Chats.register_chat_subject(Listing)
       # The gem's own deprecator would otherwise print on every test that
       # exercises the deprecated `config.notifier`. `assert_deprecated`
@@ -61,6 +62,12 @@ module ActiveSupport
     # The headless messager (no notifications, not blockable, stacked inbox).
     def create_desk(name: "Support", **attributes)
       Desk.create!(name: name, **attributes)
+    end
+
+    # An OFFICIAL account that is otherwise an ordinary messager: verified,
+    # but notifiable, blockable and one inbox row per thread.
+    def create_shop(name: "Tienda Oficial", **attributes)
+      Shop.create!(name: name, **attributes)
     end
 
     # Collect every subscriber payload fired for +event+ while the block runs.

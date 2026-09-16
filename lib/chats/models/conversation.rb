@@ -222,13 +222,30 @@ module Chats
       )
     end
 
+    # The OTHER messager in a direct thread, from +viewer+'s seat — nil for a
+    # group, and nil for a direct thread whose other seat has left. The one
+    # place the counterpart is resolved, so the title, the avatar and the
+    # verified badge on an inbox row always name the same person.
+    #
+    # Memoized per viewer: an inbox row asks for it two or three times, and a
+    # row that cost one query in 0.2.0 must not start costing three.
+    def counterpart_for(viewer)
+      return nil unless direct?
+
+      @counterparts ||= {}
+      key = viewer && Chats.messager_key(viewer)
+      return @counterparts[key] if @counterparts.key?(key)
+
+      @counterparts[key] = other_participants(viewer).includes(:messager).first&.messager
+    end
+
     # What this conversation is called from +viewer+'s seat: a direct thread
     # is named after the counterpart; a group after its title (or its
     # members, when untitled).
     def title_for(viewer)
       if direct?
-        other = other_participants(viewer).includes(:messager).first
-        other ? Chats.display_name_for(other.messager) : I18n.t("chats.conversation.empty_title")
+        other = counterpart_for(viewer)
+        other ? Chats.display_name_for(other) : I18n.t("chats.conversation.empty_title")
       else
         title.presence || participants.active.includes(:messager).limit(4).map do |p|
           Chats.display_name_for(p.messager)

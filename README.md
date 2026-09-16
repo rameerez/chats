@@ -97,7 +97,7 @@ Five concepts, namespaced and polymorphic from day one (no hard `User` coupling 
 - **`Chats::Participant`** — a messager's seat in a conversation. Holds role, read horizon, mute, soft-leave, and notification bookkeeping.
 - **`Chats::Message`** — `text` (human) or `system` (posted by your app). Soft-deletes to a tombstone. Attachments via ActiveStorage.
 - **`Chats::Reaction`** — one row per (message, reactor, emoji); tap-to-toggle, race-safe.
-- **Any model with `acts_as_messager`** — users, organizations, support desks, bots: participants and senders are polymorphic. A messager that is not a person declares it (`notifications: false, blockable: false, inbox: :grouped`) and the gem stops treating it like one. See [`support_desk`](https://github.com/rameerez/support_desk) for the worked example.
+- **Any model with `acts_as_messager`** — users, organizations, support desks, bots: participants and senders are polymorphic. A messager that is not a person declares it (`notifications: false, blockable: false, inbox: :grouped`) and the gem stops treating it like one; an official one (`verified: true`) gets the badge everywhere its name appears. See [`support_desk`](https://github.com/rameerez/support_desk) for the worked example.
 
 Two deliberate design decisions worth knowing:
 
@@ -269,6 +269,51 @@ end
 
 That's the whole point of the option: **your notifiers and views stop asking `is_a?(User)`**. The predicates are on the class (`SupportDesk.chat_notifications?`, `.chat_blockable?`, `.chat_inbox_mode`) and duck-typed everywhere the gem reads them, so an ordinary `acts_as_messager` model behaves exactly as it always did.
 
+## ✅ Official accounts: the verified badge
+
+A support desk, an organization, a shop or a brand is an **official** counterpart, and the person talking to it should see that at a glance — the blue tick everyone already reads. Say it once, on the model, next to the other `acts_as_messager` options:
+
+```ruby
+class SupportDesk < ApplicationRecord
+  acts_as_messager verified: true
+end
+```
+
+Every bundled view that shows a messager's name now marks it: the inbox row, the stacked inbox row, and the thread header. The mark is an image with a name, not decoration — `role="img"` plus a localized label (`chats.verified.label`: "Official account" / "Cuenta oficial"), with the glyph itself `aria-hidden` so nothing is announced twice.
+
+`verified:` is **independent of everything else**. A desk is usually headless *and* official; a shop is usually official and completely ordinary otherwise. Combine what you need:
+
+```ruby
+acts_as_messager verified: true                                   # official, notifiable, blockable
+acts_as_messager notifications: false, inbox: :grouped, verified: true  # an official desk
+```
+
+It is the one boolean option that **refuses to coerce**: `verified: "false"` raises at boot instead of quietly verifying an account, because a badge is a trust claim and not a display preference.
+
+Read it anywhere you render your own screens — duck-typed, never a class check:
+
+```ruby
+SupportDesk.chat_verified?       # the class predicate
+Chats.verified?(messager)        # false for a plain model, a nil, a non-messager
+chats_verified_badge(messager)   # the view helper: markup, or nil for everyone else
+```
+
+**Change the colour** with one CSS variable (the badge inherits it through `currentColor`):
+
+```css
+:root { --chats-verified: #1d9bf0; }
+```
+
+**Change the glyph** — to your design system's icon, a per-messager mark, or nothing — with a callable that gets the messager and returns html_safe markup (or `nil` for no badge):
+
+```ruby
+config.verified_badge = lambda do |messager|
+  ApplicationController.helpers.image_tag("official.svg", class: "badge", alt: "Official account")
+end
+```
+
+Or eject `app/views/chats/shared/_verified_badge.html.erb` with `rails generate chats:views` and rewrite it.
+
 ## 🗂️ Grouped inbox rows
 
 With `inbox: :grouped`, every direct conversation a viewer has with that messager folds into a single inbox row — a stack:
@@ -368,6 +413,7 @@ The bundled UI is intentionally framework-free (semantic `chats-*` classes + one
 :root {
   --chats-accent: #facc15;           /* own bubbles, send button, badges */
   --chats-accent-contrast: #111827;
+  --chats-verified: #1d9bf0;         /* the "official account" badge */
 }
 ```
 
@@ -429,6 +475,7 @@ Chats.configure do |config|
   config.messager_avatar = ->(messager) { messager.avatar }  # URL/attachment/variant or nil
   config.messager_url = ->(messager) { nil }                 # nil ⇒ names render as plain text
   config.message_signature = nil                             # ->(message) { } for signed bubbles
+  config.verified_badge = nil                                # ->(messager) { markup } for verified: true
 end
 ```
 
@@ -445,10 +492,12 @@ alice.chats                                   # inbox relation, newest first
 alice.unread_chats_count                      # conversations with unread messages
 alice.message!(bob, "hi", author: lucia)      # written by lucia, sent from alice's seat
 Chats::Inbox.for(alice)                       # [Conversation | InboxGroup] + #unread_count
+Chats.verified?(desk)                         # official account? (acts_as_messager verified: true)
 
 # Conversations
 conversation.participant?(user)               # active membership
 conversation.other_participants(user)
+conversation.counterpart_for(viewer)          # the other messager (nil for groups)
 conversation.title_for(viewer)                # counterpart name / group title
 conversation.subject_label                    # "Madrid → Barcelona"
 conversation.unread_count_for(user)

@@ -29,18 +29,27 @@ module Chats
     #                          stacks into ONE inbox row (see Chats::Inbox).
     #   group_path: ->(viewer) { }  where that stacked row links to; defaults
     #                          to the filtered inbox (`?with=<sgid>`).
+    #   verified: true         this messager is an OFFICIAL account — a support
+    #                          desk, an organization, a brand. The bundled views
+    #                          mark its name with the rosette everyone already
+    #                          reads as "verified". Strictly true/false: a badge
+    #                          is a trust claim, so a stray "false" string must
+    #                          raise rather than quietly verify.
     #
     #   class Desk < ApplicationRecord
-    #     acts_as_messager notifications: false, blockable: false, inbox: :grouped
+    #     acts_as_messager notifications: false, blockable: false, inbox: :grouped,
+    #                      verified: true
     #   end
-    def acts_as_messager(notifications: true, blockable: true, inbox: :default, group_path: nil)
+    def acts_as_messager(notifications: true, blockable: true, inbox: :default, group_path: nil,
+                         verified: false)
       include Chats::Messager
 
       self.chat_options = Chats::Messager.normalize_options(
         notifications: notifications,
         blockable: blockable,
         inbox: inbox,
-        group_path: group_path
+        group_path: group_path,
+        verified: verified
       )
     end
 

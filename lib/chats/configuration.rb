@@ -153,6 +153,17 @@ module Chats
     # "— Author Name".
     attr_reader :message_signature
 
+    # ->(messager) { markup } — the badge shown next to an OFFICIAL
+    # account's name (`acts_as_messager verified: true`). nil (the default)
+    # renders the gem's own rosette, `chats/shared/_verified_badge`, coloured
+    # by the `--chats-verified` CSS variable.
+    #
+    # Return an html_safe value (anything `render`, `tag` or `image_tag`
+    # gives you) — a bare String is escaped, exactly as it would be anywhere
+    # else in a Rails view. Returning nil renders nothing, so a host can
+    # suppress the badge on some messagers without touching the models.
+    attr_reader :verified_badge
+
     def initialize
       @messager_class = "User"
       @parent_controller = "::ApplicationController"
@@ -187,6 +198,7 @@ module Chats
       @notifier = ->(_event, **_payload) {}
       @messager_url = ->(_messager) { nil }
       @message_signature = nil
+      @verified_badge = nil
 
       @messager_display_name = lambda do |messager|
         messager.try(:display_name) || messager.try(:name) ||
@@ -294,6 +306,10 @@ module Chats
 
     def message_signature=(value)
       @message_signature = value.nil? ? nil : ensure_callable(value, "message_signature")
+    end
+
+    def verified_badge=(value)
+      @verified_badge = value.nil? ? nil : ensure_callable(value, "verified_badge")
     end
 
     def messager_display_name=(value)

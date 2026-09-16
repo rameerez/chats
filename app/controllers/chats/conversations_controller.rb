@@ -189,10 +189,7 @@ module Chats
     def chats_counterpart
       return @chats_counterpart if defined?(@chats_counterpart)
 
-      @chats_counterpart =
-        if @conversation&.direct?
-          @conversation.other_participants(chats_current_messager).includes(:messager).first&.messager
-        end
+      @chats_counterpart = @conversation&.counterpart_for(chats_current_messager)
     end
   end
 end

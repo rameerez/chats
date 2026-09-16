@@ -128,8 +128,7 @@ module Chats
     # initials disc from the group name.
     def chats_conversation_avatar(conversation, viewer)
       if conversation.direct?
-        other = conversation.other_participants(viewer).first
-        chats_messager_avatar(other&.messager)
+        chats_messager_avatar(conversation.counterpart_for(viewer))
       else
         initials = conversation.title_for(viewer).split.first(2).map { |word| word[0] }.join.upcase
         tag.span(initials.presence || "👥", class: "chats-avatar chats-avatar--initials chats-avatar--group",
@@ -193,6 +192,24 @@ module Chats
       url = chats_messager_url(messager)
 
       url.present? ? link_to(name, url, class: css_class) : tag.span(name, class: css_class)
+    end
+
+    # The "official account" mark for a messager declared `acts_as_messager
+    # verified: true`, and NIL for everyone else — so any view, bundled or
+    # host, can drop it next to a name unconditionally:
+    #
+    #   <%= chats_messager_name(author) %><%= chats_verified_badge(author) %>
+    #
+    # `config.verified_badge` swaps the glyph for the host's own design
+    # system; the default renders `chats/shared/_verified_badge`, whose
+    # colour is the `--chats-verified` CSS variable.
+    def chats_verified_badge(messager)
+      return unless Chats.verified?(messager)
+
+      custom = Chats.config.verified_badge
+      return custom.call(messager) if custom
+
+      render(partial: "chats/shared/verified_badge", locals: { messager: messager })
     end
 
     # The signature line under a signed message ("— Lucía G."), or nil.

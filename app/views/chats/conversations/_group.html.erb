@@ -13,7 +13,10 @@
 
     <span class="chats-row__body">
       <span class="chats-row__top">
-        <span class="chats-row__title"><%= group.title_for(viewer) %></span>
+        <span class="chats-row__name">
+          <span class="chats-row__title"><%= group.title_for(viewer) %></span>
+          <%= chats_verified_badge(group.messager) %>
+        </span>
         <time class="chats-row__time" datetime="<%= group.last_message_at&.iso8601 %>">
           <%= chats_timestamp(group.last_message_at) %>
         </time>
