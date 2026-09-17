@@ -77,19 +77,22 @@ module Chats
       assert_nil Chats.config.message_signature
     end
 
-    test "an author must be a messager — a subject would render as its label" do
-      listing = create_listing(title: "Madrid → Barcelona")
+    test "a persisted author needs no messaging capabilities" do
+      author = create_listing(title: "Operator identity")
+      message = @desk.message!(@conversation, "On it!", author: author)
+      assert_equal author, message.reload.author
+      assert_not @conversation.participant?(author)
+    end
 
-      error = assert_raises(Chats::NotAllowedError) { @desk.message!(@conversation, "On it!", author: listing) }
-      assert_match(/author must be a messager/, error.message)
-
-      # And the model refuses it too, so create! is covered, not just the verb.
-      message = @conversation.messages.new(sender: @desk, body: "On it!", author: listing)
+    test "sending does not implicitly create the author's identity" do
+      author = User.new(name: "Not yet registered")
+      message = @conversation.messages.new(sender: @desk, body: "On it!", author: author)
       assert_not message.valid?
-      assert message.errors.of_kind?(:author, :not_a_messager)
+      assert message.errors.of_kind?(:author, :invalid)
       assert_raises(ActiveRecord::RecordInvalid) do
-        @conversation.messages.create!(sender: @desk, body: "On it!", author: listing)
+        @desk.message!(@conversation, "On it!", author: author)
       end
+      assert_not author.persisted?
     end
 
     test "an author who is not the sender does not have to be a participant" do
