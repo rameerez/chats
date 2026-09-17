@@ -14,6 +14,22 @@
     and on return-to-visible. It needs to wrap the <turbo-cable-stream-source>
     that `turbo_stream_from` renders so it can observe its `connected`
     attribute as the heartbeat. %>
+
+<%# The OTHER inbox-staleness case, distinct from a missed broadcast: a Turbo
+    RESTORATION visit (browser back / Hotwire Native stack pop) serves the
+    inbox's cached snapshot with no GET. Open a chat from a profile, send a
+    message, tap back — the snapshot cached before the chat existed comes back
+    and the new conversation is missing until you navigate away and return.
+    The reconciler above can't help (it only fires on reconnect / visibility,
+    not on a restore visit). `turbo-cache-control: no-cache` makes the inbox
+    uncacheable, so a restore visit re-fetches from the network and is always
+    fresh — on the web AND in Hotwire Native, whose back-pop issues a Turbo
+    `.restore` visit that honors this. Requires the host layout to
+    `yield :head` (the Rails convention); harmless no-op otherwise.
+    https://turbo.hotwired.dev/handbook/building#opting-out-of-caching %>
+<% content_for :head do %>
+  <meta name="turbo-cache-control" content="no-cache">
+<% end %>
 <%= chats_styles %>
 <div data-controller="chats--refresh-inbox">
   <%= turbo_stream_from chats_current_messager, :chats_inbox %>
