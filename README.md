@@ -11,6 +11,8 @@ It's **Hotwire-native**: messages stream live over Turbo Streams + Action Cable,
 
 Every consumer app eventually needs DMs, and everyone rebuilds the same conversation/participant/message schema, the same Action Cable plumbing, and the same "report this message, block this user" story. `chats` is that whole rebuild, done once, done right.
 
+**Contents:** [Example](#-example) · [Quickstart](#quickstart) · [Data model](#-the-data-model) · [The macros](#-the-macros) · [Real-time](#-real-time-the-hotwire-way) · [Trust & Safety](#%EF%B8%8F-trust--safety-snaps-onto-the-moderate-gem) · [Events](#-events-subscribe-to-the-domain-moments) · [Headless messagers](#-headless-messagers-desks-bots-storefronts) · [Official accounts](#-official-accounts-the-verified-badge) · [Grouped inbox](#%EF%B8%8F-grouped-inbox-rows) · [Locked conversations](#-locked-conversations) · [Signed messages](#%EF%B8%8F-signed-messages) · [View slots](#-view-slots) · [Profile links](#-profile-links) · [Theming](#-make-it-yours) · [Configuration reference](#configuration-reference) · [The full Ruby API](#-the-full-ruby-api) · [View helpers](#-view-helpers) · [Errors](#errors) · [Locales](#locales) · [Upgrading](#upgrading) · [Testing](#testing)
+
 ## 👨‍💻 Example
 
 `chats` reads like plain English:
@@ -103,6 +105,43 @@ Two deliberate design decisions worth knowing:
 
 1. **Read state is a horizon, not per-message receipts.** A participant has ONE `last_read_at`; a message is unread iff it's newer. That's unread counts, badges, and "Seen" indicators with zero extra writes per message (a receipts table writes N rows per message — the classic chat-schema scaling trap), and it's exactly how Basecamp's Campfire models it.
 2. **Direct conversations have a deterministic identity** (`direct_key`, unique-indexed): two people DMing each other in the same instant race into the SAME conversation, guaranteed by the database, not by hope.
+
+## 🧩 The macros
+
+### `acts_as_messager(notifications: true, blockable: true, inbox: :default, group_path: nil, verified: false)`
+
+Anyone (or anything) that can hold a seat in a conversation. Every option is a
+class-level fact the gem reads duck-typed, so an ordinary model behaves exactly
+as before and nothing asks `is_a?(User)`:
+
+| option | default | what it means |
+|---|---|---|
+| `notifications:` | `true` | `false` for a headless seat: `Participant#notifiable_for?` is never true for it, and `Chats.notifications_for?(messager)` says so |
+| `blockable:` | `true` | `false` hides block/report affordances against it and makes `Chats.blockable?(messager)` false |
+| `inbox:` | `:default` | `:grouped` folds every direct thread with this messager into ONE inbox row (`Chats::InboxGroup`) |
+| `group_path:` | `nil` | `->(viewer) { path }` — where a deep stack opens; default is chats' own filtered inbox |
+| `verified:` | `false` | the official-account badge wherever the name renders; refuses to coerce (`"false"` raises at boot) |
+
+Class predicates: `Klass.chat_notifications?`, `.chat_blockable?`, `.chat_inbox_mode`,
+`.chat_group_path`, `.chat_verified?`. Instance API below.
+
+### `acts_as_chat_subject`
+
+A domain record conversations can be *about*. Adds `chat_conversations` (`has_many`)
+and three overridable readers — the contract a product built on chats (a ticket, an
+order) implements:
+
+```ruby
+class Ticket < ApplicationRecord
+  acts_as_chat_subject
+
+  def chat_subject_label = "Ticket #{reference}"        # the context line in inbox rows and the thread header
+  def chat_locked?       = closed?                       # whether the conversation still takes messages
+  def chat_locked_notice = "This ticket is closed."      # what replaces the composer when it doesn't
+end
+```
+
+All three are inert by default (the label falls back to the record's `to_s`, nothing is locked).
 
 ## ⚡ Real-time, the Hotwire way
 
@@ -215,6 +254,14 @@ Chats.on(:conversation_created) { |conversation| Analytics.track("chat_started",
 Chats.on(:participant_left)     { |participant| AuditLog.log("chat_left", participant) }
 Chats.on(:conversation_read)    { |conversation:, participant:| Bell.mark_read(participant.messager, conversation) }
 ```
+
+| event | block arguments | when |
+|---|---|---|
+| `:message_created` | `message` | after a **text** message commits (system messages never notify) |
+| `:conversation_created` | `conversation` | once per conversation, never when an existing one is resumed |
+| `:participant_left` | `participant` | someone left a group |
+| `:conversation_read` | `conversation:, participant:` | a read advanced the horizon past unread content |
+
 
 Four properties, all of which matter the first time something goes wrong at 3am:
 
@@ -356,6 +403,13 @@ end
 - The thread **stays readable**. Only the composer changes: it's replaced by the notice (the `locked_composer` slot overrides the body). Gate the action, never hide the explanation.
 - A send that lands on a conversation locked since the page loaded gets a **422 that swaps the composer for the notice** — no raise, no lying screen.
 
+Every other write refuses too: `Message#edit!`, `#soft_delete!` and
+`Chats::Reaction.toggle!` raise `Chats::LockedError` (a `NotAllowedError`
+subclass), the edit/delete/react endpoints answer 422 with the notice, and the
+bundled bubble stops offering them. Moderation is the one exception —
+`remove_reported_field!` removes reported content from a locked conversation,
+because a product lock must never shield it.
+
 ## ✍️ Signed messages
 
 `sender` is the seat a message came from; `author` is who **wrote** it on that seat's behalf. That's how a shared desk answers as itself while the human stays visible:
@@ -377,6 +431,28 @@ Existing installs get the columns with one command:
 ```bash
 rails generate chats:upgrade && rails db:migrate
 ```
+
+
+## ⏱️ One send budget for every composer
+
+`config.send_rate_limit` (60 per minute per sender by default) is enforced by
+the gem's own message controller. A product with its **own** composer that
+still ends in a chats message — a support form, an order note — shares the
+same budget by including one concern, so nobody gets two allowances:
+
+```ruby
+class Support::TicketsController < ApplicationController
+  include Chats::SendRateLimited
+  before_action :enforce_chat_send_rate_limit, only: :create
+
+  private
+
+  def chat_rate_limit_messager = current_user   # whose budget; defaults to the configured current messager
+end
+```
+
+It counts in the host's cache store (atomic increment, so it works on Rails 7.1
+too) and answers `429` with `chats.flashes.rate_limited` when the budget is spent.
 
 ## 🔌 View slots
 
@@ -531,9 +607,92 @@ participant.reseat!(new_messager)             # hand the seat over, read horizon
 # Events
 Chats.on(:message_created) { |message| }      # also :conversation_created,
                                               # :participant_left, :conversation_read
+
+# Conversations — finding and creating
+Chats::Conversation.direct_between(alice, bob, about: ride)    # nil when none exists
+Chats::Conversation.direct_between!(alice, bob, about: ride)   # find-or-create; checks blocks and can_message(alice, bob)
+Chats::Conversation.group!(alice, [bob, carol], title: "Trip")
+Chats::Conversation.direct .groups .about(ride) .recent_first
+Chats::Conversation.inbox_for(alice) .excluding_blocked_for(alice) .unread_by(alice)
+Chats::Conversation.unread_counts_for(alice, conversations)    # { id => count } in one query
+conversation.direct? / conversation.group?
+conversation.participant_for(alice)                            # the seat, or nil
+ride.chat_conversations                                        # every conversation about a subject
+
+# Messages — reading
+message.system? / message.text? / message.deleted? / message.edited?
+message.visible_body                                           # body, or the tombstone text
+message.attachments?
+message.sent_by?(alice)  message.sender_key
+Chats::Message.visible .oldest_first .recent_first .before_message(message)   # keyset pagination
+Chats::Message.created_since(time) .updated_since(time)                       # what the stale-thread catch-up reads
+
+# Participants — reading
+participant.active? / participant.left? / participant.muted? / participant.owner?
+participant.unread? / participant.unread_count / participant.unread_messages
+participant.display_name
+Chats::Participant.active .muted
+
+# The inbox
+inbox = Chats::Inbox.for(alice, query: "trip", with: sgid)   # search, or filtered to one counterpart's stack
+inbox.rows  inbox.each  inbox.to_a  inbox.size  inbox.any?  inbox.empty?  inbox.filtered?
+inbox.conversations                                          # the flat, unstacked list
+inbox.unread_counts  inbox.unread_count_for(conversation)  inbox.unread_count
+group = inbox.rows.first                                     # a Chats::InboxGroup when the counterpart is inbox: :grouped
+group.messager  group.conversations  group.conversation  group.single?
+group.unread_count  group.unread?  group.open_count  group.last_message  group.last_message_at
+group.title_for(viewer)  group.dom_id  group.with_sgid        # the signed token GET /conversations?with= takes
+
+# Module-level
+Chats.display_name_for(messager)  Chats.avatar_for(messager)  Chats.messager_url_for(messager)
+Chats.message_signature_for(message)                         # "— Lucía G." or nil
+Chats.verified?(m)  Chats.notifications_for?(m)  Chats.blockable?(m)  Chats.grouped_inbox?(m)
+Chats.blocked_ids_for(messager)  Chats.blocked_between?(a, b)  Chats.can_message?(sender, recipient)
+Chats.inbox_with_sgid(messager)                              # the token behind a stack's "see all"
+Chats.messager_key(messager)                                 # "User:42" — what bubbles carry to align own-vs-other
+Chats.messager_class?(klass)  Chats.chat_subject_class?(klass)
+Chats.on(event, key: nil) { … }  Chats.reset_subscribers!  Chats.reset!  Chats.deprecator
 ```
 
-Errors are namespaced and meaningful: `Chats::BlockedError`, `Chats::NotAllowedError`, `Chats::ConfigurationError` — all under `Chats::Error`.
+Errors are namespaced and meaningful, all under `Chats::Error`:
+`Chats::BlockedError` (a blocked pair opening or sending), `Chats::NotAllowedError`
+(`can_message` / `can_create_group` said no, groups disabled, a reseat that would
+collide) and its subclass `Chats::LockedError` (any non-system write into a
+locked conversation), `Chats::ConfigurationError` (boot).
+
+## 🧰 View helpers
+
+All available in the bundled views **and** in your own templates:
+
+| helper | renders |
+|---|---|
+| `chat_button_to(other, about:, label:, **html)` | a "Message" button, only when the viewer may message them |
+| `chats_unread_badge(messager = viewer)` | the live unread badge with its own stream |
+| `chats_messager_name(messager, css_class:)` | the name, linked through `messager_url`, badged when verified |
+| `chats_messager_avatar(messager)` / `chats_conversation_avatar(conversation, viewer)` | avatar (URL, attachment, variant or initials) |
+| `chats_verified_badge(messager)` | the official-account mark, or nil |
+| `chats_message_signature(message)` | the "— Lucía G." line for a signed message |
+| `chats_preview_for(conversation, viewer)` | the inbox row's last-message preview with its speaker |
+| `chats_timestamp(time)` | "12:04" · "Yesterday" · "12 Sep" |
+| `chats_slot(name, **locals)` / `chats_slot?(name)` | render a host slot partial when it exists |
+| `chats_blockable?(messager)` / `chats_messager_url(messager)` | the duck-typed reads, for your own screens |
+| `chats_group_path(group)` / `chats_group_path_for(messager)` | where a stack opens |
+| `chats_styles` | the bundled stylesheet tag for your `<head>` |
+| `chats_viewer` | the current messager, as the engine resolved it |
+
+## Errors
+
+See the end of [the full Ruby API](#-the-full-ruby-api): `Chats::Error` → `BlockedError`, `NotAllowedError` → `LockedError`, `ConfigurationError`.
+
+## Locales
+
+`en` and `es` ship with the gem under `chats.*` (`inbox`, `thread`, `conversation`, `verified`, `message`, `composer`, `buttons`, `flashes`). Your own locale
+files **outrank** the gem's — Rails loads every engine's locales first and the
+app's last (a 0.2.0 fix; the gem used to re-append its files after yours and
+silently win) — so override any key in your `es.yml` and the gem's copy loses.
+Bubbles, flashes, the empty inbox, the locked composer and the verified label
+(`chats.verified.label`) are all there.
+
 
 ## Upgrading
 
@@ -544,7 +703,7 @@ rails generate chats:upgrade   # 0.2.0: message authorship columns
 rails db:migrate
 ```
 
-Nothing in 0.2.0 changes behaviour until you set an option — see the [CHANGELOG](CHANGELOG.md).
+0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option — see the [CHANGELOG](CHANGELOG.md).
 
 ## Database support
 
