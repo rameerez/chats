@@ -106,6 +106,24 @@ Two deliberate design decisions worth knowing:
 1. **Read state is a horizon, not per-message receipts.** A participant has ONE `last_read_at`; a message is unread iff it's newer. That's unread counts, badges, and "Seen" indicators with zero extra writes per message (a receipts table writes N rows per message — the classic chat-schema scaling trap), and it's exactly how Basecamp's Campfire models it.
 2. **Direct conversations have a deterministic identity** (`direct_key`, unique-indexed): two people DMing each other in the same instant race into the SAME conversation, guaranteed by the database, not by hope.
 
+### Real conversations vs system-only threads
+
+A system message is a message: `post_system_message!` bumps `messages_count`, moves `last_message` and re-sorts the inbox exactly like a human one. That is on purpose. "Your ride was cancelled" matters to a passenger, so the inbox keeps showing a thread that only your app has spoken in, with the system line as its preview.
+
+Other readers want the opposite question answered — *did anyone actually say anything here?* An ops wall, a moderation list or a "conversations started this week" chart should not count a thread that holds only "Alice joined" and "Bob left". `chats` answers it without touching the inbox:
+
+```ruby
+Chats::Message.conversational                          # kind "text", not deleted (a captionless photo counts)
+Chats::Conversation.with_conversation                  # at least one conversational message
+Chats::Conversation.without_conversation               # system lines, tombstones or nothing at all
+conversation.last_conversational_message               # newest of them, or nil (a query, not the pointer)
+Chats::Message.last_conversational_in(conversations)   # the same for a page of rows, in one query
+               .select(:id, :conversation_id, :body)   # narrow the columns if you like
+               .index_by(&:conversation_id)            # { id => message }; no key = nobody wrote
+```
+
+Both conversation scopes are a single correlated `EXISTS`, so they compose with anything (`inbox_for(alice).with_conversation`, `.about(ride)`, `.unread_by(alice)`) and never multiply rows. Counting what people wrote per conversation is the plain `Chats::Message.conversational.where(conversation_id: ids).group(:conversation_id).count`. Nothing here changes by default: the inbox, unread counts and `last_message` behave exactly as before.
+
 ## 🧩 The macros
 
 ### `acts_as_messager(notifications: true, blockable: true, inbox: :default, group_path: nil, verified: false)`
@@ -615,6 +633,8 @@ Chats::Conversation.group!(alice, [bob, carol], title: "Trip")
 Chats::Conversation.direct .groups .about(ride) .recent_first
 Chats::Conversation.inbox_for(alice) .excluding_blocked_for(alice) .unread_by(alice)
 Chats::Conversation.unread_counts_for(alice, conversations)    # { id => count } in one query
+Chats::Conversation.with_conversation .without_conversation    # someone wrote / only system lines (0.3.3)
+conversation.last_conversational_message                       # newest text, non-deleted message, or nil
 conversation.direct? / conversation.group?
 conversation.participant_for(alice)                            # the seat, or nil
 ride.chat_conversations                                        # every conversation about a subject
@@ -626,6 +646,8 @@ message.attachments?
 message.sent_by?(alice)  message.sender_key
 Chats::Message.visible .oldest_first .recent_first .before_message(message)   # keyset pagination
 Chats::Message.created_since(time) .updated_since(time)                       # what the stale-thread catch-up reads
+Chats::Message.conversational                                                 # text and not deleted: what people said
+Chats::Message.last_conversational_in(conversations)                          # newest conversational message per conversation, one query
 
 # Participants — reading
 participant.active? / participant.left? / participant.muted? / participant.owner?
@@ -703,7 +725,7 @@ rails generate chats:upgrade   # 0.2.0: message authorship columns
 rails db:migrate
 ```
 
-0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option — see the [CHANGELOG](CHANGELOG.md).
+0.3.x needs no migration and no new configuration: `verified: true` (0.3.0), `Chats::SendRateLimited` (0.3.2) and the conversational scopes (0.3.3) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option — see the [CHANGELOG](CHANGELOG.md).
 
 ## Database support
 

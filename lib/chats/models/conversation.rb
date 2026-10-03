@@ -104,6 +104,18 @@ module Chats
         )
     }
 
+    # Conversations where someone actually said something (at least one
+    # Chats::Message.conversational: a text message that is not deleted),
+    # and their complement, the threads holding only system lines or
+    # tombstones. `messages_count` and `last_message_id` cannot answer this:
+    # post_system_message! bumps them like any message, on purpose, because
+    # the inbox must keep showing "Your ride was cancelled". These scopes are
+    # for the other readers: ops walls, moderation lists, analytics.
+    # One correlated EXISTS, so both compose with any other scope:
+    #   Chats::Conversation.about(ride).with_conversation.count
+    scope :with_conversation, -> { where(conversational_messages_exist) }
+    scope :without_conversation, -> { where.not(conversational_messages_exist) }
+
     validates :kind, inclusion: { in: KINDS }
     validates :title, length: { maximum: TITLE_MAX_LENGTH }, allow_blank: true
     # direct_key uniqueness is enforced by the DB unique index ONLY — on
@@ -189,6 +201,19 @@ module Chats
         unread_by(messager).where(chats_conversations: { id: ids })
                            .group("chats_conversations.id")
                            .count("chats_messages.id")
+      end
+
+      # EXISTS (SELECT 1 FROM chats_messages WHERE conversation_id =
+      # chats_conversations.id AND kind = 'text' AND deleted_at IS NULL),
+      # built from Chats::Message.conversational so the two definitions can
+      # never drift. Public only because scope bodies run on the relation,
+      # which cannot reach a private class method.
+      def conversational_messages_exist # :nodoc:
+        messages = Chats::Message.arel_table
+        Chats::Message.conversational
+                      .where(messages[:conversation_id].eq(arel_table[:id]))
+                      .select(Arel.sql("1"))
+                      .arel.exists
       end
     end
 
@@ -322,6 +347,15 @@ module Chats
     # (e.g. a Noticed delivery method) should call.
     def post_system_message!(body)
       messages.create!(kind: "system", body: body)
+    end
+
+    # The newest thing a person actually said here (see `.with_conversation`),
+    # or nil for a system-only thread. Unlike +last_message+ it skips system
+    # lines and tombstones, and it is a query, not a denormalized pointer:
+    # one per call. For a list, batch it with
+    # Chats::Message.last_conversational_in(conversations).
+    def last_conversational_message
+      messages.conversational.recent_first.first
     end
 
     # --- Read state -----------------------------------------------------------

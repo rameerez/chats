@@ -59,6 +59,39 @@ module Chats
     scope :recent_first, -> { order(created_at: :desc, id: :desc) }
     scope :oldest_first, -> { order(created_at: :asc, id: :asc) }
     scope :visible, -> { where(deleted_at: nil) }
+    # What a person actually said: text messages that still stand. System
+    # lines ("Alice joined", "Your ride was cancelled") are the app talking,
+    # and a tombstone no longer says anything. A photo with no caption is
+    # still a text message and still counts. See README "Real conversations
+    # vs system-only threads"; the inbox does NOT use this on purpose.
+    scope :conversational, -> { where(kind: "text").visible }
+
+    # The newest conversational message of each given conversation, at most
+    # one row per conversation, in ONE query: the batch twin of
+    # Conversation#last_conversational_message for lists (admin walls,
+    # moderation queues). A relation, so a host can narrow the columns:
+    #
+    #   Chats::Message.last_conversational_in(conversations)
+    #                 .select(:id, :conversation_id, :created_at)
+    #                 .index_by(&:conversation_id)          # { id => message }
+    #
+    # A conversation with no conversational message has no row. ROW_NUMBER
+    # works on every supported adapter (PostgreSQL, SQLite and MySQL 8), the
+    # same ranking Chats::Inbox uses for its stacks. The ranked subquery is
+    # built unscoped so a `.select` chained onto the result never leaks into it.
+    scope :last_conversational_in, lambda { |conversations|
+      ids = Array(conversations).map { |c| c.is_a?(Chats::Conversation) ? c.id : c }
+      next none if ids.empty?
+
+      ranking = "ROW_NUMBER() OVER (PARTITION BY chats_messages.conversation_id " \
+                "ORDER BY chats_messages.created_at DESC, chats_messages.id DESC) AS conversational_rank"
+      ranked = Chats::Message.unscoped.conversational.where(conversation_id: ids)
+                             .select(Arel.sql("chats_messages.id"), Arel.sql(ranking))
+      newest = Chats::Message.unscoped.from(ranked, :ranked_messages)
+                             .where(Arel.sql("ranked_messages.conversational_rank = 1"))
+                             .select(Arel.sql("ranked_messages.id"))
+      where(id: newest)
+    }
 
     # Keyset (cursor) pagination for infinite scroll-up. OFFSET pagination
     # drifts when new messages arrive mid-scroll; anchoring on the oldest

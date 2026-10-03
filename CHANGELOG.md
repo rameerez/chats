@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - unreleased
+
+### Added
+
+- **Real conversations vs system-only threads.** `Chats::Message.conversational`
+  (text messages that are not deleted), `Chats::Conversation.with_conversation`
+  and `.without_conversation` (one correlated `EXISTS` each, portable across
+  PostgreSQL, MySQL and SQLite), `Conversation#last_conversational_message`, and
+  `Chats::Message.last_conversational_in(conversations)`, its one-query batch twin
+  for lists. For ops walls, moderation lists and analytics that must not count a
+  thread holding only "Alice joined". Nothing changes by default: system messages
+  still bump `messages_count` and `last_message`, and the inbox still shows
+  system-only threads, because "Your ride was cancelled" matters to the person
+  reading it.
+
 ## [0.3.2] - 2026-09-17
 
 ### Fixed
