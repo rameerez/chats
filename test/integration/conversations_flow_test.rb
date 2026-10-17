@@ -55,9 +55,29 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "avatar.png"
   end
 
+  test "a conversation nobody has written in is not listed, and still opens" do
+    # @conversation was opened in setup and nobody wrote: no "No messages
+    # yet" row, and no empty-state lie either — there is nothing to show.
+    login_as @alice
+
+    get "/messages"
+    assert_response :success
+    assert_empty css_select("li.chats-row")
+    assert_not_includes response.body, I18n.t("chats.inbox.no_messages")
+
+    get "/messages/#{@conversation.id}"
+    assert_response :success, "the thread you just opened must open: that is where the first message is written"
+    assert_select "##{dom_id(@conversation, :composer)} form"
+    assert_select "##{dom_id(@conversation, :messages)}"
+
+    post "/messages/#{@conversation.id}/messages", params: { message: { body: "first!" } }
+    get "/messages"
+    assert_equal 1, css_select("li.chats-row").size, "and the first message lists it"
+  end
+
   test "the inbox shows the subject context line" do
     listing = create_listing(title: "Madrid → Barcelona")
-    @alice.chat_with(@bob, about: listing)
+    @alice.message!(@bob, "Is the seat still free?", about: listing)
     login_as @alice
 
     get "/messages"
@@ -95,6 +115,7 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
   end
 
   test "the inbox hides blocked direct threads" do
+    @bob.message!(@conversation, "before the block")
     block_pair!(@alice, @bob)
     login_as @alice
 
@@ -122,6 +143,8 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     listing = create_listing(title: "Madrid → Barcelona")
     subject_conversation = conversation_between(@alice, @bob, about: listing)
     group = Chats::Conversation.group!(@alice, [@bob, @carol], title: "Aeropuerto temprano")
+    # Nothing in any body matches the queries below: these hits are metadata.
+    [@conversation, subject_conversation, group].each { |conversation| @alice.message!(conversation, "hola") }
     login_as @alice
 
     get "/messages", params: { q: "bo" }

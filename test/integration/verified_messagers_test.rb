@@ -20,7 +20,7 @@ class VerifiedMessagersTest < ActionDispatch::IntegrationTest
   # --- the three surfaces -----------------------------------------------------
 
   test "an ordinary inbox row badges an official counterpart" do
-    @alice.chat_with(@shop)
+    @alice.message!(@shop, "hola")
     login_as @alice
 
     get "/messages"
@@ -32,7 +32,7 @@ class VerifiedMessagersTest < ActionDispatch::IntegrationTest
   end
 
   test "a stacked inbox row badges an official counterpart" do
-    2.times { |i| @alice.chat_with(@desk, about: create_listing(title: "L#{i}")) }
+    2.times { |i| @alice.message!(@desk, "hola", about: create_listing(title: "L#{i}")) }
     login_as @alice
 
     get "/messages"
@@ -69,10 +69,11 @@ class VerifiedMessagersTest < ActionDispatch::IntegrationTest
   # --- and nowhere else -------------------------------------------------------
 
   test "an ordinary messager is never badged, in the inbox or in the thread" do
-    conversation = @alice.chat_with(@bob)
+    conversation = @alice.message!(@bob, "hola").conversation
     login_as @alice
 
     get "/messages"
+    assert_equal 1, css_select("li.chats-row").size
     assert_empty css_select(BADGE), "a plain acts_as_messager must render exactly what 0.2.0 rendered"
 
     get "/messages/#{conversation.id}"
@@ -82,7 +83,7 @@ class VerifiedMessagersTest < ActionDispatch::IntegrationTest
 
   test "a stacked counterpart that is NOT official gets no badge" do
     Desk.stubs(:chat_verified?).returns(false)
-    2.times { |i| @alice.chat_with(@desk, about: create_listing(title: "L#{i}")) }
+    2.times { |i| @alice.message!(@desk, "hola", about: create_listing(title: "L#{i}")) }
     login_as @alice
 
     get "/messages"
@@ -93,9 +94,11 @@ class VerifiedMessagersTest < ActionDispatch::IntegrationTest
 
   test "a group conversation is never badged by one official member" do
     group = @alice.chat_with(@bob, @shop, title: "Pedido 4221")
+    @shop.message!(group, "Your order shipped")
     login_as @alice
 
     get "/messages"
+    assert_equal 1, css_select("li.chats-row").size
     assert_empty css_select(BADGE), "a group is named after itself, not after any one member"
 
     get "/messages/#{group.id}"
@@ -105,7 +108,7 @@ class VerifiedMessagersTest < ActionDispatch::IntegrationTest
   # --- accessibility & i18n ---------------------------------------------------
 
   test "the badge is announced as an official account, not as decoration" do
-    @alice.chat_with(@shop)
+    @alice.message!(@shop, "hola")
     login_as @alice
 
     get "/messages"
@@ -129,7 +132,7 @@ class VerifiedMessagersTest < ActionDispatch::IntegrationTest
     Chats.config.verified_badge = lambda do |messager|
       ActionController::Base.helpers.tag.b("OFICIAL #{messager.name}", class: "my-badge")
     end
-    @alice.chat_with(@shop)
+    @alice.message!(@shop, "hola")
     login_as @alice
 
     get "/messages"
@@ -140,7 +143,7 @@ class VerifiedMessagersTest < ActionDispatch::IntegrationTest
 
   test "a host badge that returns nil renders nothing at all" do
     Chats.config.verified_badge = ->(_messager) { nil }
-    @alice.chat_with(@shop)
+    @alice.message!(@shop, "hola")
     login_as @alice
 
     get "/messages"

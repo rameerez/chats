@@ -184,6 +184,12 @@ module Chats
     # read it, so a conversation the scope hides is hidden everywhere. Until
     # 0.4.1 the badge counted through the raw `inbox_for` relation and could
     # light up for a conversation the inbox would never show.
+    #
+    # It is also the AUTHORIZATION relation (every engine lookup is
+    # `viewer.chats.find(id)`), which is why it includes conversations
+    # nobody has written in yet: the thread you just opened must open. The
+    # lists narrow it with `Chats::Conversation.with_messages` (see
+    # Chats::Inbox); `chats.with_messages` is what your own lists want too.
     def chats
       relation = Chats::Conversation.inbox_for(self)
       Chats.config.inbox_scope.call(relation, self) || relation
@@ -193,8 +199,10 @@ module Chats
     # badge counts conversations, not messages — 47 unread messages in one
     # thread is still "1 thing to deal with").
     def unread_chats_count
-      # reorder(nil): the inbox scope orders by a COALESCE expression, which
-      # PostgreSQL rejects inside a COUNT(DISTINCT …) aggregate.
+      # No `with_messages` needed to agree with the inbox: `unread_by` joins
+      # the messages, so a conversation nobody has written in can never be
+      # counted. reorder(nil): the inbox scope orders by a COALESCE
+      # expression, which PostgreSQL rejects inside a COUNT(DISTINCT …).
       chats.unread_by(self).reorder(nil).distinct.count
     end
 

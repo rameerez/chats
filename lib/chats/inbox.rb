@@ -10,7 +10,8 @@ module Chats
   #   Chats::Inbox.for(alice, with: support_desk)   # one stack's contents
   #
   # Rows are `Chats::Conversation | Chats::InboxGroup`, sorted by last
-  # activity descending. Grouping happens HERE and nowhere else.
+  # activity descending. Grouping happens HERE and nowhere else, and so does
+  # the rule that a conversation nobody has written in is never listed.
   #
   # == Why `inbox_limit` bounds ROWS, not conversations
   #
@@ -119,8 +120,19 @@ module Chats
     # `config.inbox_scope` applied, and whatever the host's model adds on
     # top), memoized so it is built ONCE per inbox however many legs the
     # row query is split into (the stack aggregates build their own).
+    #
+    # Only conversations somebody wrote in (Conversation.with_messages): one
+    # that was opened and never used is not listed — not as a row, not in a
+    # stack, not in search, not in the `?with=` view. It still OPENS, because
+    # authorization reads `viewer.chats`, not this.
     def base_relation
-      @base_relation ||= viewer.chats.includes(:last_message, :subject, participants: :messager)
+      @base_relation ||= listed(viewer.chats).includes(:last_message, :subject, participants: :messager)
+    end
+
+    # What a list may show of +relation+. The one place the rule lives, so
+    # the rows and the stack totals can never disagree about it.
+    def listed(relation)
+      relation.with_messages
     end
 
     # The polymorphic types worth splitting out. Empty when nothing stacks
@@ -241,7 +253,7 @@ module Chats
     # aggregates — independent of how deep the stack is, and of how much of
     # it we loaded.
     def stack_totals(messager)
-      scope = viewer.chats.reorder(nil).direct.where(
+      scope = listed(viewer.chats).reorder(nil).direct.where(
         id: Chats::Participant.select(:conversation_id).where(
           messager_type: messager.class.polymorphic_name, messager_id: messager.id
         )
