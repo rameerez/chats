@@ -1,0 +1,7 @@
+<%# Slot fixture prepended only by the tests that assert a host's own buttons
+    sit by the composer — OUTSIDE its form, because a host button is
+    typically a button_to form — and leave with it when the thread locks. %>
+<div data-dummy-slot="composer_actions" data-conversation-id="<%= conversation.id %>">
+  <%= button_to "Create a game", "/games", params: { conversation_id: conversation.id }, class: "dummy-create-game" %>
+  <%= link_to "Send my location", "/locations/new", class: "dummy-send-location" %>
+</div>

@@ -146,7 +146,7 @@ class EngineHelperTest < ActionView::TestCase
   end
 
   test "only the documented slots exist — anything else renders nothing" do
-    assert_equal %w[inbox_top inbox_empty conversation_header_actions locked_composer message_meta],
+    assert_equal %w[inbox_top inbox_empty conversation_header_actions composer_actions locked_composer message_meta],
                  Chats::EngineHelper::SLOTS
 
     assert_not chats_slot?(:inbox_bottom)

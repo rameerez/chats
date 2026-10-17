@@ -1,8 +1,8 @@
 <%# What sits where the composer would be when the conversation's SUBJECT
     has locked it (Chats::ChatSubject#chat_locked?). It carries the same DOM
-    id as the composer form, so MessagesController#create can swap one for
+    id as the composer's dock, so MessagesController#create can swap one for
     the other with a single Turbo replace when a thread closes under an open
-    composer.
+    composer — the host's composer_actions leave with it.
 
     The `locked_composer` slot replaces the BODY (a reopen button, a link to
     the closed ticket…) while keeping the id contract intact. %>

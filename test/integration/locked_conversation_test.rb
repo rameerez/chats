@@ -21,7 +21,7 @@ class LockedConversationTest < ActionDispatch::IntegrationTest
     get "/messages/#{@conversation.id}"
 
     assert_response :success
-    assert_equal 1, css_select("form.chats-composer").size
+    assert_equal 1, css_select("form.chats-composer__form").size
     assert_empty css_select(".chats-composer--locked")
   end
 
@@ -32,7 +32,7 @@ class LockedConversationTest < ActionDispatch::IntegrationTest
     get "/messages/#{@conversation.id}"
 
     assert_response :success
-    assert_empty css_select("form.chats-composer"), "no composer where sending would fail"
+    assert_empty css_select("form.chats-composer__form"), "no composer where sending would fail"
     assert_equal "This listing is closed.", css_select(".chats-composer__locked-notice").first.text
     assert_includes response.body, "said before the lock", "history stays readable"
   end
