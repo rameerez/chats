@@ -64,6 +64,21 @@ class BroadcastsTest < ActiveSupport::TestCase
     end
   end
 
+  test "the badge counts what the inbox shows: a conversation inbox_scope hides never lights it" do
+    hidden = conversation_between(@alice, @bob, about: create_listing(title: "Hidden"))
+    Chats.config.inbox_scope = ->(relation, _viewer) { relation.where(subject_id: nil) }
+
+    badge_streams = capture_turbo_stream_broadcasts([@bob, :chats_badge]) do
+      perform_enqueued_jobs do
+        hidden.messages.create!(sender: @alice, body: "out of scope")
+      end
+    end
+
+    update = badge_streams.find { |stream| stream["action"] == "replace" }
+    assert update, "the badge is still re-rendered"
+    assert_not_includes update.to_html, ">1<", "the hidden conversation must not be counted"
+  end
+
   test "editing and soft-deleting replace the bubble in place" do
     message = perform_enqueued_jobs { @conversation.messages.create!(sender: @alice, body: "v1") }
 

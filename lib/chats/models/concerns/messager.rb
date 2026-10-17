@@ -176,9 +176,17 @@ module Chats
     end
 
     # The inbox: every active conversation, blocked counterparts hidden,
-    # newest activity first. A relation — chain `.limit`, `.includes`, etc.
+    # `config.inbox_scope` applied, newest activity first. A relation —
+    # chain `.limit`, `.includes`, etc.
+    #
+    # THE one definition of "what is in this messager's inbox": the inbox
+    # screen, the unread count, the live badge and a host's own queries all
+    # read it, so a conversation the scope hides is hidden everywhere. Until
+    # 0.4.1 the badge counted through the raw `inbox_for` relation and could
+    # light up for a conversation the inbox would never show.
     def chats
-      Chats::Conversation.inbox_for(self)
+      relation = Chats::Conversation.inbox_for(self)
+      Chats.config.inbox_scope.call(relation, self) || relation
     end
 
     # Number of conversations with unread messages (the WhatsApp-style nav

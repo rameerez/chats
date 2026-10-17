@@ -67,6 +67,17 @@ class MessageActionsTest < ActionDispatch::IntegrationTest
     assert_equal "/pay?a=1&b=<2>", link["href"]
   end
 
+  test "a label handed over as html_safe still renders as text" do
+    @bob.message!(@conversation, "careful", action: { label: "<b>Pay</b>".html_safe, url: "/pay" })
+    login_as @alice
+
+    get "/messages/#{@conversation.id}"
+
+    link = css_select("a.chats-message__action").first
+    assert_equal "<b>Pay</b>", link.text
+    assert_not_includes response.body, "<b>Pay</b>", "an html_safe mark on the way in must not survive into the bubble"
+  end
+
   test "a system message carries its button inside the note" do
     message = @conversation.post_system_message!("Your ride was cancelled",
                                                  action: { label: "Book another", url: "/rides/new" })

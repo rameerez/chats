@@ -4,6 +4,32 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-10-17
+
+### Fixed
+- **An action's strings are frozen copies.** `Data` freezes the action but
+  not the strings it was handed, so `action.url.replace("javascript:…")`,
+  or the caller mutating the string they passed in, could rewrite a
+  validated action in memory before the bubble rendered it. `Chats::Action`
+  now keeps a frozen copy of both members: what the validator saw is what
+  renders.
+- **An empty port suffix is refused.** `https://host:/x` parses as the
+  default port and slipped past the 1..65535 rule; a named port must have
+  digits.
+- **An action's label is a plain String.** A label handed over as an
+  html_safe string (a host's `t("…_html")`) kept the mark through the copy
+  and rendered unescaped in the button. The copy is now a plain `String`,
+  so the bubble escapes it like any other content.
+- **`config.inbox_scope` is one rule, applied once.** `Messager#chats` now
+  applies it, so the inbox relation, `unread_chats_count`, the inbox screen
+  and the live badge all agree. The badge broadcast used to count through
+  the raw `inbox_for` relation and could light up for a conversation the
+  inbox would never show (a host scoping game records out of the inbox saw
+  the badge count them). `Chats::Inbox` builds on `viewer.chats`, so a
+  host's own override of `chats` reaches the inbox screen too.
+- The README said the inbox preview still shows a soft-deleted message's
+  body; it reads "Message deleted", as for any tombstone.
+
 ## [0.4.0] - 2026-10-17
 
 Action buttons. A support desk writes "Your invoice is ready" and wants a

@@ -115,15 +115,12 @@ module Chats
       Chats.config.inbox_limit
     end
 
-    # Memoized so `config.inbox_scope` is consulted ONCE per inbox for the
-    # row query, however many legs it is split into (the stack aggregates
-    # apply it separately, to their own relation).
+    # The viewer's own inbox relation (`Messager#chats`: `inbox_for` with
+    # `config.inbox_scope` applied, and whatever the host's model adds on
+    # top), memoized so it is built ONCE per inbox however many legs the
+    # row query is split into (the stack aggregates build their own).
     def base_relation
-      @base_relation ||= begin
-        relation = Chats::Conversation.inbox_for(viewer)
-                                      .includes(:last_message, :subject, participants: :messager)
-        Chats.config.inbox_scope.call(relation, viewer) || relation
-      end
+      @base_relation ||= viewer.chats.includes(:last_message, :subject, participants: :messager)
     end
 
     # The polymorphic types worth splitting out. Empty when nothing stacks
@@ -244,12 +241,11 @@ module Chats
     # aggregates — independent of how deep the stack is, and of how much of
     # it we loaded.
     def stack_totals(messager)
-      scope = Chats::Conversation.inbox_for(viewer).reorder(nil).direct.where(
+      scope = viewer.chats.reorder(nil).direct.where(
         id: Chats::Participant.select(:conversation_id).where(
           messager_type: messager.class.polymorphic_name, messager_id: messager.id
         )
       )
-      scope = Chats.config.inbox_scope.call(scope, viewer) || scope
 
       {
         open: scope.distinct.count,

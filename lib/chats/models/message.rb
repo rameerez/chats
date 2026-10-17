@@ -40,6 +40,8 @@ module Chats
     ACTION_LABEL_LIMIT = 80
     ACTION_URL_LIMIT = 2048
     ACTION_URL_SCHEMES = %w[http https].freeze
+    # An authority ending in ":" with nothing after it ("https://host:/x").
+    EMPTY_PORT = %r{\A[a-z][a-z0-9+.-]*://[^/?#]*:(?:[/?#]|\z)}i
     ACTION_URL_PORTS = (1..65_535)
 
     belongs_to :conversation,
@@ -382,6 +384,9 @@ module Chats
       url = action.url
       return false if url.blank? || url.length > ACTION_URL_LIMIT
       return false if url.start_with?("//", "/\\")
+      # `https://host:` parses as the default port, so an empty port suffix
+      # would pass the range check below; a named port must have digits.
+      return false if url.match?(EMPTY_PORT)
 
       uri = URI.parse(url)
       if uri.scheme

@@ -40,8 +40,23 @@ module Chats
     # URI, a symbol label — all read back as the String the column holds.
     # nil stays nil so a missing one is a validation error, not a "" that
     # looks present.
+    #
+    # Each is a frozen, PLAIN String copy. `Data` freezes the action, not the
+    # strings it was handed, so without the copy `action.url.replace(
+    # "javascript:…")` would rewrite a validated action in place — and so
+    # would the caller mutating the string they passed in. Plain, because
+    # `String.new` drops an html_safe mark: a label that arrived as a
+    # SafeBuffer (a host's `t("…_html")`) would otherwise render unescaped
+    # in the button. An action is a value: what the validator saw is what
+    # the bubble renders, and the bubble escapes it like any other content.
     def initialize(label:, url:)
-      super(label: label&.to_s, url: url&.to_s)
+      super(label: plain(label), url: plain(url))
+    end
+
+    private
+
+    def plain(value)
+      String.new(value.to_s).freeze unless value.nil?
     end
   end
 

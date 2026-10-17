@@ -28,6 +28,27 @@ module Chats
       assert_not_equal action, Chats::Action.new(label: "Pay later", url: "/pay")
     end
 
+    test "its strings are frozen copies: neither the caller nor a reader can rewrite a validated action" do
+      url = +"/pay"
+      action = Chats::Action.new(label: +"Pay now", url: url)
+
+      assert_predicate action.label, :frozen?
+      assert_predicate action.url, :frozen?
+      assert_raises(FrozenError) { action.url.replace("javascript:alert(1)") }
+      assert_raises(FrozenError) { action.label << "!" }
+
+      url.replace("javascript:alert(1)")
+      assert_equal "/pay", action.url, "mutating the string the caller passed must not reach the action"
+    end
+
+    test "its strings are plain: an html_safe label loses the mark, so the bubble escapes it" do
+      action = Chats::Action.new(label: "<b>Pay</b>".html_safe, url: "/pay".html_safe)
+
+      assert_instance_of String, action.label
+      assert_not_predicate action.label, :html_safe?
+      assert_not_predicate action.url, :html_safe?
+    end
+
     test "both members are required" do
       assert_raises(ArgumentError) { Chats::Action.new(label: "Pay now") }
       assert_raises(ArgumentError) { Chats::Action.new(url: "/pay") }
