@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-10-17
+
+### Fixed
+- **`can_message` holds on every direct send.** A block placed
+  mid-conversation already stopped the next message; the host's policy
+  turning false did not, so a pair allowed when the thread was opened kept
+  talking after an account was banned or a membership ended. Every text
+  message into a direct conversation now re-runs `Chats.can_message?`
+  exactly like the block check: `:blocked` when either side blocked the
+  other, `:not_allowed` (new, in `en` and `es`) when the policy says no.
+  The composer answers with its errors stream as before. Group
+  conversations are unchanged.
+
 ## [0.4.1] - 2026-10-17
 
 ### Fixed

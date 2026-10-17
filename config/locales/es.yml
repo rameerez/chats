@@ -82,6 +82,7 @@ es:
             base:
               locked: "Esta conversación está cerrada."
               blocked: "No puedes enviar mensajes a esta persona."
+              not_allowed: "Ahora mismo no puedes enviar mensajes a esta persona."
             action:
               invalid: "necesita un texto de hasta %{count} caracteres y un enlace a una dirección http(s) o a una ruta de este sitio que empiece por /"
             author:

@@ -70,6 +70,19 @@ module Chats
       assert message.errors[:base].any?
     end
 
+    test "the can_message policy turning false mid-conversation stops the next send too" do
+      @conversation.messages.create!(sender: @alice, body: "while it was allowed")
+      Chats.config.can_message = ->(sender, _recipient) { sender != @alice }
+
+      refused = @conversation.messages.new(sender: @alice, body: "after the policy changed")
+      assert_not refused.valid?
+      assert refused.errors.of_kind?(:base, :not_allowed)
+      assert_not refused.errors.of_kind?(:base, :blocked), "a policy refusal reads differently from a block"
+
+      assert @conversation.messages.new(sender: @bob, body: "the other way is still open").valid?
+      assert @conversation.post_system_message!("system messages are the host's own").persisted?
+    end
+
     test "blocks do not gag group conversations" do
       carol = create_user
       group = Conversation.group!(@alice, [@bob, carol])
