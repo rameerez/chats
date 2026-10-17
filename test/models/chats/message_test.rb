@@ -99,6 +99,22 @@ module Chats
       assert_equal 1, asked
     end
 
+    test "a locked thread refuses the send before the policy is consulted" do
+      listing = create_listing(title: "Closed", locked: true)
+      locked = @alice.chat_with(@bob, about: listing)
+      # Counted only from here: opening the thread above is allowed to ask.
+      asked = 0
+      Chats.config.can_message = lambda { |_sender, _recipient|
+        asked += 1
+        true
+      }
+
+      refused = locked.messages.new(sender: @alice, body: "too late")
+      assert_not refused.valid?
+      assert refused.errors.of_kind?(:base, :locked)
+      assert_equal 0, asked
+    end
+
     test "a direct thread whose counterpart is gone takes no messages, and never asks the policy" do
       asked = 0
       Chats.config.can_message = lambda { |_sender, _recipient|

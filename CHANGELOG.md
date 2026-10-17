@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.2] - 2026-10-17
 
+### Changed
 **Upgrade note: your `can_message` policy now runs on every direct send,
 not only when a thread is opened.** Read yours before upgrading. If it
 means "who may OPEN a conversation" (a listing must be live, a ride must be
@@ -16,7 +17,6 @@ on every direct message; make it cheap or cache what it reads. It must not
 raise: an exception escapes the send like any other host error. Group
 conversations and system messages are unchanged.
 
-### Changed
 - **`can_message` holds on every direct send.** A block placed
   mid-conversation already stopped the next message; the host's policy
   turning false did not, so a pair allowed when the thread was opened kept
