@@ -182,6 +182,27 @@ module Chats
       assert_equal [kept], Chats::Inbox.for(@alice).rows
     end
 
+    test "inbox_scope and a host's own chats override reach the stacks, the filtered view and search" do
+      threads = Array.new(3) do |index|
+        conversation = @alice.chat_with(@desk, about: create_listing(title: "Madrid #{index}"))
+        @desk.message!(conversation, "ticket #{index}")
+        conversation
+      end
+      scoped_out, overridden_out, kept = threads
+      Chats.config.inbox_scope = ->(relation, _viewer) { relation.where.not(id: scoped_out.id) }
+      # A host narrowing its own inbox further, the way an app does in its model.
+      @alice.define_singleton_method(:chats) { super().where.not(id: overridden_out.id) }
+
+      group = Chats::Inbox.for(@alice).rows.sole
+      assert_equal 1, group.open_count, "the stack counts only what the inbox shows"
+      assert_equal 1, group.unread_count
+      assert_equal [kept], group.conversations
+
+      assert_equal [kept], Chats::Inbox.for(@alice, with: @desk).rows
+      assert_equal [kept], Chats::Inbox.for(@alice, query: "madrid").rows.sole.conversations
+      assert_equal 1, @alice.unread_chats_count
+    end
+
     test "inbox_scope must be callable" do
       assert_raises(Chats::ConfigurationError) { Chats.config.inbox_scope = :not_callable }
     end
