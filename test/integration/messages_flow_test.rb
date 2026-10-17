@@ -72,6 +72,35 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
     assert_response :not_found # the thread itself is hidden once blocked
   end
 
+  test "the policy turning false mid-conversation answers 422 with the reason, and writes nothing" do
+    login_as @alice
+    post "/messages/#{@conversation.id}/messages", params: { message: { body: "while allowed" } }
+    assert_response :redirect
+    Chats.config.can_message = ->(sender, _recipient) { sender != @alice }
+
+    assert_no_difference("Chats::Message.count") do
+      post "/messages/#{@conversation.id}/messages", params: { message: { body: "after" } }, as: :turbo_stream
+    end
+    assert_response :unprocessable_entity
+    assert_includes response.body, "right now"
+
+    get "/messages/#{@conversation.id}"
+    assert_response :success, "the thread stays readable"
+  end
+
+  test "a thread whose counterpart's account is gone stays readable but takes no messages" do
+    login_as @alice
+    @bob.destroy!
+
+    get "/messages/#{@conversation.id}"
+    assert_response :success
+
+    assert_no_difference("Chats::Message.count") do
+      post "/messages/#{@conversation.id}/messages", params: { message: { body: "hello?" } }, as: :turbo_stream
+    end
+    assert_response :unprocessable_entity
+  end
+
   test "sending with an image attachment" do
     login_as @alice
 

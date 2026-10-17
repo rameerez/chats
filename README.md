@@ -171,7 +171,7 @@ That single hook makes moderate's bidirectional block table the law everywhere c
 - **can't send** into an existing one (a block placed mid-conversation stops the very next message),
 - and **stop seeing** each other's direct threads in the inbox and unread counts — *hidden, never deleted*: lift the block and the history reappears.
 
-Two semantics worth knowing: blocking is enforced **beneath** your `can_message` policy (a permissive or buggy policy can never let a blocked pair talk), and **group conversations are exempt from pair blocks** — the industry standard: blocking someone removes your private line, not your seat in shared spaces. If your domain should eject blocked members from groups, do it in moderate's `on_block` hook by tearing down whatever domain relationship feeds the group membership.
+Two semantics worth knowing: blocking is enforced **beneath** your `can_message` policy (a permissive or buggy policy can never let a blocked pair talk), both are checked on **every direct send**, not only when the thread is opened (a block placed, or a policy turning false, mid-conversation stops the very next message with `:blocked` / `:not_allowed`), and **group conversations are exempt from pair blocks** — the industry standard: blocking someone removes your private line, not your seat in shared spaces. If your domain should eject blocked members from groups, do it in moderate's `on_block` hook by tearing down whatever domain relationship feeds the group membership.
 
 ### 2. Reportable + filtered messages
 

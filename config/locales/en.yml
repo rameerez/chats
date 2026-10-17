@@ -82,6 +82,7 @@ en:
             base:
               locked: "This conversation is closed."
               blocked: "You can't message this person."
+              not_allowed: "You can't message this person right now."
             action:
               invalid: "needs a label of up to %{count} characters and a link to an http(s) address or to a path on this site that starts with /"
             author:

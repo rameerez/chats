@@ -115,13 +115,15 @@ module Chats
     validate :body_or_files_required
     validate :body_must_fit_length_limit
     validate :sender_must_be_active_participant, on: :create
-    validate :sender_must_not_be_blocked, on: :create
     validate :conversation_must_not_be_locked, on: :create
     validate :author_must_be_persisted
     # Checked at the write that SETS it, not on every save: an edit must
     # never fail over an action nobody touched.
     validate :action_must_be_well_formed, if: :will_save_change_to_action?
     validate :files_must_be_allowed
+    # Last on purpose: the host's policy is asked only of a send that is
+    # otherwise valid (see the method).
+    validate :sender_must_still_be_allowed, on: :create
 
     after_create :register_on_conversation
     after_create_commit :broadcast_created
@@ -337,15 +339,37 @@ module Chats
       errors.add(:sender, :not_a_participant) unless conversation.participant?(sender)
     end
 
-    # Block enforcement at the WRITE, not just at conversation creation: a
-    # block placed mid-conversation must stop the very next send. Direct
-    # threads only — see Conversation.excluding_blocked_for for the group
-    # rationale.
-    def sender_must_not_be_blocked
-      return if system? || sender.nil? || conversation.nil? || !conversation.direct?
+    # Who may talk to whom is decided at the WRITE, not just when the
+    # conversation was opened: a block placed mid-conversation stops the very
+    # next send, and so does the host's `can_message` policy turning false —
+    # an account banned, a listing closed, a membership ended. The pair was
+    # allowed when the thread began; what matters is whether it still is.
+    # Direct threads only — see Conversation.excluding_blocked_for for the
+    # group rationale. Two errors, because they read differently to the
+    # sender: `:blocked` (either side blocked the other) and `:not_allowed`
+    # (the policy said no).
+    #
+    # Asked last, and only of a send that is otherwise valid: a stranger to
+    # the conversation, a locked thread or an empty body is refused before
+    # the host's policy runs, so the policy is never consulted about a
+    # message that could not be sent anyway (it may be expensive, and it
+    # runs on every direct send now). A policy must not raise: an
+    # exception escapes the send like any other host error.
+    #
+    # A direct thread with nobody on the other side — the counterpart's
+    # account was destroyed and its seat went with it — takes no messages:
+    # there is no one the policy could allow.
+    def sender_must_still_be_allowed
+      return if system? || sender.nil? || conversation.nil? || !conversation.direct? || errors.any?
 
       other = conversation.other_participants(sender).first&.messager
-      errors.add(:base, :blocked) if other && Chats.blocked_between?(sender, other)
+      if other.nil?
+        errors.add(:base, :not_allowed)
+      elsif Chats.blocked_between?(sender, other)
+        errors.add(:base, :blocked)
+      elsif !Chats.config.can_message.call(sender, other)
+        errors.add(:base, :not_allowed)
+      end
     end
 
     # Authorship is a signature, not a conversation seat. A host may keep
