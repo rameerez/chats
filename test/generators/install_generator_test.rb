@@ -38,6 +38,9 @@ class InstallGeneratorTest < Rails::Generators::TestCase
       # `chats:upgrade` has nothing to do there.
       assert_match(/t\.references :author, polymorphic: true, null: true, type: foreign_key_type/, migration)
       assert_match(/add_index :chats_messages, \[ :author_type, :author_id \]/, migration)
+      # 0.4.0: and the action column — adapter-aware JSON, nullable, no
+      # default (MySQL refuses one, and most messages have no action).
+      assert_match(/t\.send\(json_column_type, :action\)$/, migration)
 
       # The race-safety backbone: unique indexes. (Omakase array spacing —
       # `[ :a, :b ]` — so installs are rubocop-clean in stock Rails apps.)

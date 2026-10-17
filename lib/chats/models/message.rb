@@ -17,6 +17,12 @@ module Chats
   # content AT REPORT TIME, so removing the body later never destroys the
   # evidence a moderator needs.
   #
+  # == Actions
+  #
+  # A message may carry ONE featured button — a label and a url, set by the
+  # host from Ruby ("Your invoice is ready" → *Pay now*). See Chats::Action
+  # for the value and #action_must_be_well_formed for what a safe one is.
+  #
   # == Real-time
   #
   # All Turbo Stream fan-out lives in Chats::Broadcasts (one place to read
@@ -27,6 +33,13 @@ module Chats
     self.table_name = "chats_messages"
 
     KINDS = %w[text system].freeze
+
+    # The shape of a renderable action (see #action_must_be_well_formed): a
+    # label short enough to be a button, a url short enough to be a link,
+    # and only the schemes a browser navigates to safely.
+    ACTION_LABEL_LIMIT = 80
+    ACTION_URL_LIMIT = 2048
+    ACTION_URL_SCHEMES = %w[http https].freeze
 
     belongs_to :conversation,
                class_name: "Chats::Conversation",
@@ -55,6 +68,11 @@ module Chats
     # migration can't give JSON columns a DB default (MySQL 8+ limitation —
     # see the migration template's json_column_default).
     attribute :metadata, default: -> { {} }
+
+    # The featured button (Chats::Action), or nil. Its own column rather than
+    # a key in `metadata`, which stays the host's bag: an action is a
+    # contract the bundled bubble renders, so the gem must own where it lives.
+    attribute :action, Chats::Action::Type.new
 
     scope :recent_first, -> { order(created_at: :desc, id: :desc) }
     scope :oldest_first, -> { order(created_at: :asc, id: :asc) }
@@ -97,6 +115,9 @@ module Chats
     validate :sender_must_not_be_blocked, on: :create
     validate :conversation_must_not_be_locked, on: :create
     validate :author_must_be_persisted
+    # Checked at the write that SETS it, not on every save: an edit must
+    # never fail over an action nobody touched.
+    validate :action_must_be_well_formed, if: :will_save_change_to_action?
     validate :files_must_be_allowed
 
     after_create :register_on_conversation
@@ -110,6 +131,14 @@ module Chats
     def text? = kind == "text"
     def deleted? = deleted_at.present?
     def edited? = edited_at.present?
+    def action? = !action.nil?
+
+    # Wraps on the way in, not lazily on first read (ActiveModel casts user
+    # input when it is read): `message.action = "/pay"` raises right here,
+    # at the line that made the mistake.
+    def action=(value)
+      super(Chats::Action.wrap(value))
+    end
 
     def sender_key
       sender && Chats.messager_key(sender)
@@ -160,6 +189,10 @@ module Chats
     # Delete according to `config.deletion` (see class comment). Returns
     # false when deletion is disabled.
     #
+    # A tombstone shows neither the words nor the button that came with
+    # them, so the soft path clears the action too — and moderation, which
+    # removes content through here, takes the link down with the body.
+    #
     # `enforce_lock: false` is for MODERATION only (see
     # #remove_reported_field!): a product lock must never shield reported
     # content from removal.
@@ -170,7 +203,7 @@ module Chats
       when :soft
         transaction do
           files.purge_later if respond_to?(:files) && files.attached?
-          update!(body: nil, deleted_at: Time.current)
+          update!(body: nil, action: nil, deleted_at: Time.current)
         end
         true
       when :hard
@@ -319,6 +352,38 @@ module Chats
       return if author.nil? || author.persisted?
 
       errors.add(:author, :invalid)
+    end
+
+    # What a button the bubble renders may be: a short label, and a link to
+    # an http(s) URL or a path on this site. The host is trusted, but a bad
+    # action has to fail HERE, loudly, rather than render a dead link or a
+    # `javascript:` one. URI.parse does the heavy lifting: it rejects
+    # whitespace, control characters and backslashes outright, which is
+    # what closes `/\evil.example` and `/<tab>/evil.example` — paths a
+    # browser quietly normalises into the protocol-relative `//evil.example`.
+    def action_must_be_well_formed
+      return if action.nil?
+
+      errors.add(:action, :invalid, count: ACTION_LABEL_LIMIT) unless action_label_fits? && action_url_safe?
+    end
+
+    def action_label_fits?
+      action.label.present? && action.label.length <= ACTION_LABEL_LIMIT
+    end
+
+    def action_url_safe?
+      url = action.url
+      return false if url.blank? || url.length > ACTION_URL_LIMIT
+
+      uri = URI.parse(url)
+      if uri.scheme
+        ACTION_URL_SCHEMES.include?(uri.scheme.downcase) && uri.host.present?
+      else
+        # A path on this site: "/rides/new", never "//elsewhere.example".
+        url.start_with?("/") && uri.host.nil?
+      end
+    rescue URI::InvalidURIError
+      false
     end
 
     # The subject owns the conversation's openness (Chats::ChatSubject#
