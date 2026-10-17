@@ -1,0 +1,15 @@
+<%# A message's featured button (Chats::Action): the one place it takes you,
+    under the words it came with. Rendered inside the bubble, so it is part
+    of the single viewer-agnostic broadcast render AND of the clone the
+    long-press popup lifts — which is why it is a plain link and never a
+    form: a form would need a per-viewer CSRF token baked into a render
+    every subscriber shares. An action is a destination, not a mutation.
+
+    data-turbo-frame="_top": older pages of a thread arrive inside lazy
+    `chats_page_…` turbo-frames, and a link inside a frame navigates the
+    FRAME. _top makes it navigate the page, wherever the bubble landed.
+
+    The url was validated at the write (Chats::Message#
+    action_must_be_well_formed): http(s) or a path on this site, never
+    `javascript:` or protocol-relative. %>
+<%= link_to action.label, action.url, class: "chats-message__action", data: { turbo_frame: "_top" } %>

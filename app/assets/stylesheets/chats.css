@@ -417,6 +417,64 @@ turbo-frame[id^="chats_page_"] {
 .chats-message--deleted .chats-message__bubble { background: transparent; border: 1px dashed var(--chats-border); }
 .chats-message__tombstone { color: var(--chats-text-muted); font-size: 0.85rem; }
 
+/* --- Actions (Chats::Action) ------------------------------------------------------- */
+/*
+   A message's one featured button, under its words: full width, so it reads
+   as something to tap rather than a link in the text. It is a sibling of
+   .chats-message__text, never inside it, so the text's pre-wrap stays off it.
+
+   Contrast comes from the pair a host already tunes together: the accent and
+   the text that sits on it. A foreign bubble (and a system note) gets an
+   accent button; an own bubble IS the accent, so its button swaps the pair.
+   Same two colours either way, so whatever passes for the send button and
+   own bubbles passes here — default theme or host theme alike.
+
+   Scoped to the bubble with `>`: 0.1.0's inline actions row used this class
+   name, and views ejected back then may still carry it on other elements.
+   The long-press popup clones .chats-message__bubble, so this applies there
+   too.
+*/
+.chats-message__bubble > .chats-message__action,
+.chats-message__system > .chats-message__action {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: calc(var(--chats-radius) * 0.7);
+  background: var(--chats-accent);
+  color: var(--chats-accent-contrast);
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.chats-message--own .chats-message__bubble > .chats-message__action {
+  background: var(--chats-accent-contrast);
+  color: var(--chats-accent);
+}
+.chats-message__bubble > .chats-message__action:hover,
+.chats-message__system > .chats-message__action:hover { filter: brightness(0.92); }
+/* The focus ring sits on the BUBBLE, just outside the button, so it takes
+   the colour of the bubble's own text — which is what contrasts there. */
+.chats-message__bubble > .chats-message__action:focus-visible,
+.chats-message__system > .chats-message__action:focus-visible {
+  outline: 2px solid var(--chats-bubble-text);
+  outline-offset: 2px;
+}
+.chats-message--own .chats-message__bubble > .chats-message__action:focus-visible {
+  outline-color: var(--chats-accent-contrast);
+}
+.chats-message__system > .chats-message__action:focus-visible { outline-color: var(--chats-text); }
+/* A system note is a pill; one holding a button becomes a card, or the
+   button's corners would poke through the pill's rounded ends. */
+.chats-message__system--with-action {
+  border-radius: var(--chats-radius);
+  padding: 0.6rem 0.9rem;
+}
+.chats-message__system > .chats-message__action { margin-top: 0.45rem; }
+
 /* --- Attachments -------------------------------------------------------------------- */
 
 .chats-message__attachments {
@@ -659,12 +717,43 @@ turbo-frame[id^="chats_page_"] {
 
 /* --- Composer ----------------------------------------------------------------------------- */
 
+/* The dock (since 0.4.0 a div holding the host's composer_actions and the
+   form; a composer ejected before that is the form itself, and this box
+   styles it just the same). */
 .chats-composer {
   flex: 0 0 auto;
   background: var(--chats-bg);
   border-top: 1px solid var(--chats-border);
   padding: 0.6rem 0.9rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
 }
+.chats-composer__form { margin: 0; }
+
+/* The composer_actions slot: a row of the host's own buttons above the
+   input. `display: contents` lets button_to's wrapping <form> step aside so
+   its button sits in the row like a link does. Every default here is
+   wrapped in :where() — zero specificity — so ANY class the host puts on
+   its buttons or forms wins, and an unstyled button still looks like it
+   belongs. */
+.chats-composer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.55rem;
+}
+:where(.chats-composer__actions) :where(form) { display: contents; }
+:where(.chats-composer__actions) :where(a, button) {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--chats-border);
+  border-radius: 999px;
+  background: var(--chats-surface);
+  color: var(--chats-text);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+:where(.chats-composer__actions) :where(a, button):hover { filter: brightness(0.96); }
 .chats-composer__bar { display: flex; align-items: flex-end; gap: 0.55rem; }
 .chats-composer__input {
   flex: 1;
@@ -760,7 +849,12 @@ turbo-frame[id^="chats_page_"] {
   padding: 0.2rem 0.4rem;
 }
 
-.chats-composer__previews[hidden] { display: none; }
+/* `hidden` loses to any author `display`, so every element here that sets
+   one and starts hidden says so explicitly — the edit cue and the file
+   count used to show in hosts with no CSS reset of their own. */
+.chats-composer__previews[hidden],
+.chats-composer__edit[hidden],
+.chats-composer__file-count[hidden] { display: none; }
 .chats-composer__preview {
   position: relative;
   flex-shrink: 0;

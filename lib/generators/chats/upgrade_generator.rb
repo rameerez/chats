@@ -9,14 +9,17 @@ module Chats
     # needs into an EXISTING install. Nothing else: the initializer, the
     # views and the routes you already own stay untouched.
     #
-    # Currently writes the 0.2.0 migration (message authorship). It is
-    # written guarded, so running it against an install that already has the
-    # columns (a fresh 0.2.0 install) is a no-op rather than an error.
+    # Writes every migration since 0.1.x — 0.2.0's message authorship and
+    # 0.4.0's message action — in that order. Each is written guarded, so
+    # running this against an install that already has some of the columns
+    # (a fresh 0.2.0 install has the author ones) is a no-op for those
+    # rather than an error, and re-running it skips files already copied.
+    # The action migration is not written at all where the column exists.
     class UpgradeGenerator < Rails::Generators::Base
       include ActiveRecord::Generators::Migration
 
       source_root File.expand_path("templates", __dir__)
-      desc "Add the migrations a chats version bump needs (0.2.0: message authorship)"
+      desc "Add the migrations a chats version bump needs (0.2.0: message authorship; 0.4.0: message actions)"
 
       def self.next_migration_number(dir)
         ActiveRecord::Generators::Base.next_migration_number(dir)
@@ -27,18 +30,46 @@ module Chats
                            File.join(db_migrate_path, "add_author_to_chats_messages.rb")
       end
 
+      # Not written when the schema already HAS the column — a fresh 0.4.0
+      # install, whose create migration owns it. A second migration for a
+      # column it didn't add is one nobody can safely roll back. Without a
+      # database to ask, it is written anyway; its `up` is guarded, and its
+      # `down` never drops the column.
+      def create_action_migration
+        if action_column_present?
+          say_status :skip, "chats_messages.action already exists — no migration needed", :yellow
+          return
+        end
+
+        migration_template "add_action_to_chats_messages.rb.erb",
+                           File.join(db_migrate_path, "add_action_to_chats_messages.rb")
+      end
+
       def display_post_upgrade_message
         say "\n💬 chats upgrade migrations copied.", :green
         say "\n  1. Run 'rails db:migrate'."
-        say "  2. New in 0.2.0 — all opt-in, nothing changes until you ask:"
+        say "  2. New in 0.4.0 — a message can carry one button (the `action` column):"
+        say "       alice.message!(bob, \"Let's play!\", action: { label: \"Join my room\", url: room_path(room) })"
+        say "       app/views/chats/slots/_composer_actions.html.erb   # your own buttons by the composer"
+        say "  3. New in 0.2.0 — all opt-in, nothing changes until you ask:"
         say "       acts_as_messager notifications: false, blockable: false, inbox: :grouped"
         say "       Chats.on(:message_created) { |message| … }   # replaces config.notifier"
         say "       config.messager_url / config.message_signature / config.inbox_scope"
         say "       chat_locked? / chat_locked_notice on your chat subjects"
-        say "  3. See the CHANGELOG for the full list.\n", :green
+        say "  4. See the CHANGELOG for the full list.\n", :green
       end
 
       private
+
+      def action_column_present?
+        ActiveRecord::Base.connection_pool.with_connection do |connection|
+          connection.column_exists?(:chats_messages, :action)
+        end
+      rescue ActiveRecord::ActiveRecordError
+        # No database configured, not created yet, or no chats tables: there
+        # is nothing to ask, so write the (guarded) migration.
+        false
+      end
 
       def migration_version
         "[#{ActiveRecord::VERSION::STRING.to_f}]"

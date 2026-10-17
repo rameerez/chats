@@ -23,7 +23,10 @@
      data-updated-at-ms="<%= (message.updated_at.to_f * 1000).ceil %>">
 
   <% if message.system? %>
-    <div class="chats-message__system"><%= message.body %></div>
+    <div class="chats-message__system<%= " chats-message__system--with-action" if message.action? %>">
+      <%= message.body %>
+      <%= render "chats/messages/action", action: message.action if message.action? %>
+    </div>
   <% else %>
     <div class="chats-message__content">
       <% if message.conversation.group? && message.sender %>
@@ -74,6 +77,8 @@
                 <% end %>
               </div>
             <% end %>
+
+            <%= render "chats/messages/action", action: message.action if message.action? %>
           <% end %>
 
           <%# Signature: who WROTE this, when that isn't who it was sent

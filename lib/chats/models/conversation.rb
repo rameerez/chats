@@ -320,8 +320,13 @@ module Chats
     # cancelled", "Payment received" — rendered as a centered system note,
     # not a bubble. This is the stable entry point notification systems
     # (e.g. a Noticed delivery method) should call.
-    def post_system_message!(body)
-      messages.create!(kind: "system", body: body)
+    #
+    # `action:` puts a button under the note (see Chats::Action):
+    #
+    #   conversation.post_system_message!("Your ride was cancelled",
+    #                                     action: { label: "Book another", url: "/rides/new" })
+    def post_system_message!(body, action: nil)
+      messages.create!(kind: "system", body: body, action: action)
     end
 
     # --- Read state -----------------------------------------------------------

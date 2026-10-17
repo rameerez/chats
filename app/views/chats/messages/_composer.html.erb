@@ -1,71 +1,85 @@
 <%# The composer. Submits as a Turbo Stream (the sender's bubble appends from
     the response — instant, no cable round-trip needed); the chats--composer
     controller adds autosize, desktop Enter-to-send, throttled typing pings,
-    and reset-on-success. Plain form POST still works with JS disabled. %>
-<%# id: the swap target — a conversation that locks while this form is open
-    gets the locked notice rendered straight over it (see
-    chats/messages/locked.turbo_stream.erb). %>
-<%= form_with model: Chats::Message.new,
-      url: conversation_messages_path(conversation),
-      id: dom_id(conversation, :composer),
-      class: "chats-composer",
-      data: {
-        controller: "chats--composer",
-        "chats--composer-typing-url-value": (typing_conversation_path(conversation) if Chats.config.typing_indicators),
-        action: "turbo:submit-end->chats--composer#submitted chats:edit-message@window->chats--composer#beginEdit"
-      } do |form| %>
+    and reset-on-success. Plain form POST still works with JS disabled.
 
-<div id="<%= dom_id(conversation, :composer_errors) %>" class="chats-composer__errors"></div>
-
-<%# The edit cue (Telegram's flow): long-press → Editar loads the message
-    into this same form; this quote-style bar (left border, bold label,
-    the original trimmed to one line) is the signal that send = save.
-    The ✕ cancels back to compose mode. %>
-<div class="chats-composer__edit" data-chats--composer-target="editBar" hidden>
-  <div class="chats-composer__edit-quote">
-    <span class="chats-composer__edit-label"><%= t("chats.composer.editing") %></span>
-    <span class="chats-composer__edit-preview" data-chats--composer-target="editPreview"></span>
-  </div>
-  <button type="button"
-          class="chats-composer__edit-cancel"
-          aria-label="<%= t("chats.composer.cancel_edit") %>"
-          data-action="chats--composer#cancelEdit">×</button>
-</div>
-
-  <%# Selected-attachment previews: thumbnails with per-file remove, rendered
-      client-side from the picker selection (object URLs — nothing uploads
-      until send). This is THE feedback that files are about to go out; a
-      counter chip alone reads as noise. %>
-  <% if Chats.config.attachments %>
-    <div class="chats-composer__previews" data-chats--composer-target="previews" hidden></div>
+    The outer div is the DOCK — the form plus the host's composer_actions.
+    It carries the swap id: a conversation that locks while the composer is
+    open gets the locked notice rendered straight over the whole dock
+    (chats/messages/locked.turbo_stream.erb), so the host's buttons go with
+    it. `.chats-composer` styles the dock; the form is `.chats-composer__form`. %>
+<div id="<%= dom_id(conversation, :composer) %>" class="chats-composer">
+  <%# Slot: the host's own buttons by the composer ("Create a game", "Send my
+      location"). OUTSIDE the form on purpose: host buttons are usually
+      button_to forms, and a form inside a form is invalid HTML — the browser
+      drops the inner one and its button submits THIS form instead. %>
+  <% if chats_slot?(:composer_actions) %>
+    <div class="chats-composer__actions">
+      <%= chats_slot :composer_actions, conversation: conversation %>
+    </div>
   <% end %>
 
-  <div class="chats-composer__bar">
+  <%= form_with model: Chats::Message.new,
+        url: conversation_messages_path(conversation),
+        class: "chats-composer__form",
+        data: {
+          controller: "chats--composer",
+          "chats--composer-typing-url-value": (typing_conversation_path(conversation) if Chats.config.typing_indicators),
+          action: "turbo:submit-end->chats--composer#submitted chats:edit-message@window->chats--composer#beginEdit"
+        } do |form| %>
+
+    <div id="<%= dom_id(conversation, :composer_errors) %>" class="chats-composer__errors"></div>
+
+    <%# The edit cue (Telegram's flow): long-press → Editar loads the message
+        into this same form; this quote-style bar (left border, bold label,
+        the original trimmed to one line) is the signal that send = save.
+        The ✕ cancels back to compose mode. %>
+    <div class="chats-composer__edit" data-chats--composer-target="editBar" hidden>
+      <div class="chats-composer__edit-quote">
+        <span class="chats-composer__edit-label"><%= t("chats.composer.editing") %></span>
+        <span class="chats-composer__edit-preview" data-chats--composer-target="editPreview"></span>
+      </div>
+      <button type="button"
+              class="chats-composer__edit-cancel"
+              aria-label="<%= t("chats.composer.cancel_edit") %>"
+              data-action="chats--composer#cancelEdit">×</button>
+    </div>
+
+    <%# Selected-attachment previews: thumbnails with per-file remove, rendered
+        client-side from the picker selection (object URLs — nothing uploads
+        until send). This is THE feedback that files are about to go out; a
+        counter chip alone reads as noise. %>
     <% if Chats.config.attachments %>
-      <label class="chats-composer__attach" aria-label="<%= t("chats.composer.attach") %>">
-        <%= form.file_field :files, multiple: true, hidden: true,
-              accept: (Chats.config.attachments == :images ? "image/*" : nil),
-              data: { "chats--composer-target": "files", action: "change->chats--composer#filesChanged" } %>
-        <span aria-hidden="true">📎</span>
-        <span class="chats-composer__file-count" data-chats--composer-target="fileCount" hidden></span>
-      </label>
+      <div class="chats-composer__previews" data-chats--composer-target="previews" hidden></div>
     <% end %>
 
-    <%= form.text_area :body,
-          rows: 1,
-          placeholder: t("chats.composer.placeholder"),
-          class: "chats-composer__input",
-          autocomplete: "off",
-          data: {
-            "chats--composer-target": "input",
-            action: "input->chats--composer#typed keydown.enter->chats--composer#enterSend"
-          } %>
+    <div class="chats-composer__bar">
+      <% if Chats.config.attachments %>
+        <label class="chats-composer__attach" aria-label="<%= t("chats.composer.attach") %>">
+          <%= form.file_field :files, multiple: true, hidden: true,
+                accept: (Chats.config.attachments == :images ? "image/*" : nil),
+                data: { "chats--composer-target": "files", action: "change->chats--composer#filesChanged" } %>
+          <span aria-hidden="true">📎</span>
+          <span class="chats-composer__file-count" data-chats--composer-target="fileCount" hidden></span>
+        </label>
+      <% end %>
 
-    <%# pointerdown/mousedown keepFocus: keeps the textarea focused (and the
-        mobile keyboard up) through the send tap — see composer controller. %>
-    <%= form.button type: :submit, class: "chats-composer__send", "aria-label": t("chats.composer.send"),
-          data: { action: "pointerdown->chats--composer#keepFocus mousedown->chats--composer#keepFocus" } do %>
-      <span aria-hidden="true">➤</span>
-    <% end %>
-  </div>
-<% end %>
+      <%= form.text_area :body,
+            rows: 1,
+            placeholder: t("chats.composer.placeholder"),
+            class: "chats-composer__input",
+            autocomplete: "off",
+            data: {
+              "chats--composer-target": "input",
+              action: "input->chats--composer#typed keydown.enter->chats--composer#enterSend"
+            } %>
+
+      <%# pointerdown/mousedown keepFocus: keeps the textarea focused (and the
+          mobile keyboard up) through the send tap — see composer controller. %>
+      <%= form.button type: :submit, class: "chats-composer__send", "aria-label": t("chats.composer.send"),
+            data: { action: "pointerdown->chats--composer#keepFocus mousedown->chats--composer#keepFocus" } do %>
+        <span aria-hidden="true">➤</span>
+      <% end %>
+    </div>
+  <% end %>
+</div>

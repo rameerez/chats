@@ -64,6 +64,9 @@ es:
       unmuted: "Notificaciones activadas."
 
   activerecord:
+    attributes:
+      chats/message:
+        action: "Acción"
     errors:
       models:
         chats/conversation:
@@ -79,6 +82,8 @@ es:
             base:
               locked: "Esta conversación está cerrada."
               blocked: "No puedes enviar mensajes a esta persona."
+            action:
+              invalid: "necesita un texto de hasta %{count} caracteres y un enlace a una dirección http(s) o a una ruta de este sitio que empiece por /"
             author:
               not_a_messager: "debe ser un mensajero (acts_as_messager)"
             sender:

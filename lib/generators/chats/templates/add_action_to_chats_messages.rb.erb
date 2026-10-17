@@ -1,0 +1,37 @@
+# frozen_string_literal: true
+
+# chats 0.4.0 — message ACTIONS.
+#
+# A message may carry one featured button: a label and the url it opens
+# ("Your invoice is ready" → Pay now). Stored as {"label":…,"url":…} in its
+# own JSON column — `metadata` stays yours. Nullable, no default: most
+# messages have no action, and MySQL refuses defaults on JSON columns.
+# See Chats::Action.
+#
+# Safe to run on an install that already has the column (a 0.4.0 fresh
+# install does): every step is guarded, so this migration is a no-op there.
+class AddActionToChatsMessages < ActiveRecord::Migration<%= migration_version %>
+  def up
+    return if column_exists?(:chats_messages, :action)
+
+    add_column :chats_messages, :action, json_column_type
+  end
+
+  # Rolling back KEEPS the column, on purpose: this migration never removes
+  # a column it may not have added. On a fresh 0.4.0 install the create
+  # migration owns `action` and `up` above did nothing, so dropping it here
+  # would destroy every message's button with it — and nothing a migration
+  # can see records which of the two added it. A leftover nullable column
+  # is harmless to older versions of chats; drop it by hand if you mean to.
+  def down; end
+
+  private
+
+  # jsonb on every PostgreSQL adapter, like the install migration — matched
+  # by prefix because PostGIS answers "PostGIS", not "PostgreSQL".
+  def json_column_type
+    return :jsonb if connection.adapter_name.match?(/\Apostg/i)
+
+    :json
+  end
+end

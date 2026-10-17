@@ -223,6 +223,7 @@ Chats.configure do |config|
   #   app/views/chats/slots/_inbox_top.html.erb                 above the first inbox row
   #   app/views/chats/slots/_inbox_empty.html.erb               inside the empty state
   #   app/views/chats/slots/_conversation_header_actions.html.erb  thread menu
+  #   app/views/chats/slots/_composer_actions.html.erb          your own buttons above the composer
   #   app/views/chats/slots/_locked_composer.html.erb           the locked composer's body
   #   app/views/chats/slots/_message_meta.html.erb              after each bubble's timestamp
   #

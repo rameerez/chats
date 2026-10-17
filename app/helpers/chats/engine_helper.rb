@@ -12,6 +12,7 @@ module Chats
       inbox_top
       inbox_empty
       conversation_header_actions
+      composer_actions
       locked_composer
       message_meta
     ].freeze
@@ -147,7 +148,7 @@ module Chats
     #   app/views/chats/slots/_inbox_top.html.erb
     #
     # The slots: inbox_top, inbox_empty, conversation_header_actions,
-    # locked_composer, message_meta.
+    # composer_actions, locked_composer, message_meta.
     def chats_slot(name, **locals)
       return unless chats_slot?(name)
 

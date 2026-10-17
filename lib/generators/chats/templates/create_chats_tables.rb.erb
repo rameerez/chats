@@ -101,6 +101,10 @@ class CreateChatsTables < ActiveRecord::Migration<%= migration_version %>
       t.datetime :edited_at
       t.datetime :deleted_at
       t.send(json_column_type, :metadata, default: json_column_default)
+      # The one featured button a message may carry ({"label":…,"url":…}),
+      # set by the host from Ruby — see Chats::Action. Nullable with no
+      # default: most messages have none, and MySQL refuses JSON defaults.
+      t.send(json_column_type, :action)
 
       t.timestamps
     end

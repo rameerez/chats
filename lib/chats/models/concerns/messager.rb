@@ -10,6 +10,8 @@ module Chats
   #
   #   alice.message!(bob, "hola!")               # DM in one line
   #   alice.message!(conversation, "hola!")      # or into a conversation
+  #   alice.message!(bob, "Let's play!",         # with a button under it
+  #                  action: { label: "Join my room", url: "/play/abcd" })
   #
   #   alice.chats                                # her inbox, newest first
   #   alice.unread_chats_count                   # for the nav badge
@@ -155,14 +157,20 @@ module Chats
     # sender stays the conversation identity. See Chats::Message#signed?.
     #
     #   desk.message!(alice, "On it!", author: lucia)
-    def message!(target, body = nil, about: nil, files: [], reply_to: nil, author: nil)
+    #
+    # `action:` is the one featured button under the words — a label and a
+    # url (see Chats::Action). It rides on a message the body rules already
+    # accept; an action alone is not a message.
+    #
+    #   alice.message!(bob, "Let's play!", action: { label: "Join my room", url: room_path(room) })
+    def message!(target, body = nil, about: nil, files: [], reply_to: nil, author: nil, action: nil)
       conversation =
         case target
         when Chats::Conversation then target
         else chat_with(target, about: about)
         end
 
-      attributes = { sender: self, body: body, reply_to: reply_to, author: author }
+      attributes = { sender: self, body: body, reply_to: reply_to, author: author, action: action }
       attributes[:files] = files if files.present?
       conversation.messages.create!(**attributes)
     end
