@@ -849,7 +849,12 @@ turbo-frame[id^="chats_page_"] {
   padding: 0.2rem 0.4rem;
 }
 
-.chats-composer__previews[hidden] { display: none; }
+/* `hidden` loses to any author `display`, so every element here that sets
+   one and starts hidden says so explicitly — the edit cue and the file
+   count used to show in hosts with no CSS reset of their own. */
+.chats-composer__previews[hidden],
+.chats-composer__edit[hidden],
+.chats-composer__file-count[hidden] { display: none; }
 .chats-composer__preview {
   position: relative;
   flex-shrink: 0;
