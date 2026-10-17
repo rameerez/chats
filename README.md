@@ -11,7 +11,7 @@ It's **Hotwire-native**: messages stream live over Turbo Streams + Action Cable,
 
 Every consumer app eventually needs DMs, and everyone rebuilds the same conversation/participant/message schema, the same Action Cable plumbing, and the same "report this message, block this user" story. `chats` is that whole rebuild, done once, done right.
 
-**Contents:** [Example](#-example) · [Quickstart](#quickstart) · [Data model](#-the-data-model) · [The macros](#-the-macros) · [Real-time](#-real-time-the-hotwire-way) · [Trust & Safety](#%EF%B8%8F-trust--safety-snaps-onto-the-moderate-gem) · [Events](#-events-subscribe-to-the-domain-moments) · [Headless messagers](#-headless-messagers-desks-bots-storefronts) · [Official accounts](#-official-accounts-the-verified-badge) · [Grouped inbox](#%EF%B8%8F-grouped-inbox-rows) · [Locked conversations](#-locked-conversations) · [Signed messages](#%EF%B8%8F-signed-messages) · [View slots](#-view-slots) · [Profile links](#-profile-links) · [Theming](#-make-it-yours) · [Configuration reference](#configuration-reference) · [The full Ruby API](#-the-full-ruby-api) · [View helpers](#-view-helpers) · [Errors](#errors) · [Locales](#locales) · [Upgrading](#upgrading) · [Testing](#testing)
+**Contents:** [Example](#-example) · [Quickstart](#quickstart) · [Data model](#-the-data-model) · [The macros](#-the-macros) · [Real-time](#-real-time-the-hotwire-way) · [Trust & Safety](#%EF%B8%8F-trust--safety-snaps-onto-the-moderate-gem) · [Events](#-events-subscribe-to-the-domain-moments) · [Headless messagers](#-headless-messagers-desks-bots-storefronts) · [Official accounts](#-official-accounts-the-verified-badge) · [Grouped inbox](#%EF%B8%8F-grouped-inbox-rows) · [Locked conversations](#-locked-conversations) · [Signed messages](#%EF%B8%8F-signed-messages) · [Action buttons](#-action-buttons) · [View slots](#-view-slots) · [Profile links](#-profile-links) · [Theming](#-make-it-yours) · [Configuration reference](#configuration-reference) · [The full Ruby API](#-the-full-ruby-api) · [View helpers](#-view-helpers) · [Errors](#errors) · [Locales](#locales) · [Upgrading](#upgrading) · [Testing](#testing)
 
 ## 👨‍💻 Example
 
@@ -84,7 +84,7 @@ And a live unread badge in your nav:
 
 ## What `chats` does (and doesn't) do
 
-**Does:** direct 1:1 threads, group conversations, image (or any) attachments via ActiveStorage, emoji reactions, read receipts ("Seen"), unread counts and live badges, typing indicators, message editing, soft deletion (WhatsApp-style tombstones), system messages your app posts into threads, per-sender rate limiting, inbox search, infinite scroll-up pagination, optional encryption at rest, and small adapter seams for moderation + notifications.
+**Does:** direct 1:1 threads, group conversations, image (or any) attachments via ActiveStorage, emoji reactions, read receipts ("Seen"), unread counts and live badges, typing indicators, message editing, soft deletion (WhatsApp-style tombstones), system messages your app posts into threads, action buttons under messages ("Pay now", "Join my room"), per-sender rate limiting, inbox search, infinite scroll-up pagination, optional encryption at rest, and small adapter seams for moderation + notifications.
 
 **Doesn't:** chatbots/LLM agents, workspaces/tenancy, voice/video, public channels, federation. It's peer-to-peer (and group) human messaging — not a Slack clone, not a support-ticketing tool.
 
@@ -205,16 +205,19 @@ Use **`:flag`, never `:block`** for chat: you don't gag someone mid-conversation
 Put a report link on every bubble **someone else** sent. One nuance matters: `chats` renders each bubble **once per broadcast, viewer-agnostically** (that's what makes real-time fan-out cheap), so anything depending on `current_user` at render time — like moderate's `report_link` helper, which checks `report_visible_to?(viewer)` — would silently vanish from live-appended bubbles. Use the **signed-target URL** instead (viewer-independent), and hide it on own bubbles with the same client-side mechanism the gem uses for edit/delete:
 
 ```erb
-<%# in your ejected chats/messages/_message.html.erb, inside the actions row %>
+<%# in your ejected chats/messages/_message.html.erb, inside .chats-popup__menu
+    in the <template data-chats-message-menu> (the long-press menu) %>
 <% if message.sender %>
   <%= link_to "Report",
         main_app.new_abuse_report_path(
           target: message.to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE),
           field: "body"
         ),
-        class: "chats-message__action in-own-hidden" %>
-        <%# hide on .chats-message--own via your CSS; moderate's controller
-            re-checks report_visible_to? server-side, so hiding is cosmetic %>
+        class: "chats-popup__item", role: "menuitem",
+        data: { chats_other_only: true } %>
+        <%# data-chats-other-only: the popup drops it from your own bubbles;
+            moderate's controller re-checks report_visible_to? server-side,
+            so hiding is cosmetic %>
 <% end %>
 ```
 
@@ -433,6 +436,51 @@ rails generate chats:upgrade && rails db:migrate
 ```
 
 
+## 🎯 Action buttons
+
+A support desk writes "Your invoice is ready" and wants a **Pay now** button under it. A game writes "Let's play!" and wants **Join my room**. A marketplace posts "Your ride was cancelled" with **Book another**. Pasting a URL into the body is the wrong answer: one message can carry **one action**, a label and a url, and the bundled bubble renders it as a button.
+
+```ruby
+alice.message!(bob, "Let's play!", action: { label: "Join my room", url: play_room_path(room) })
+desk.message!(user, "Your invoice is ready", author: lucia, action: { label: "Pay now", url: invoice.payment_url })
+conversation.post_system_message!("Your ride was cancelled", action: { label: "Book another", url: new_ride_path })
+```
+
+```ruby
+message.action          # => #<data Chats::Action label="Join my room", url="/play/abcd">, or nil
+message.action?         # => true
+message.action.label    # => "Join my room"
+message.action.to_h     # => { label: "Join my room", url: "/play/abcd" }
+
+Chats::Action.new(label: "Pay now", url: "/pay")   # accepted anywhere a Hash is
+```
+
+`Chats::Action` is an immutable value (`Data`), compared by value. Assign a Hash (string or symbol keys), an Action, or `nil`; anything else raises `ArgumentError` where you assigned it. A key an action doesn't have raises too: `{ label:, url:, method: :post }` would otherwise turn into a plain link without telling you.
+
+**An action is a place to go, not something that happens.** It renders as a link (`data-turbo-frame="_top"`, so it opens the page even from an older page of the thread, which loads inside a frame). It is never a form, and that is on purpose: every bubble is rendered **once** and broadcast to everyone in the thread, and the long-press popup clones it, so nothing that belongs to one viewer can live inside it. A form would need that viewer's CSRF token. If the button should *do* something (accept an offer, pay), point it at a page that asks first and does the work there.
+
+**It is validated when it is written**, so a bad one fails loudly in your code and never renders as a broken or dangerous link:
+
+- `label`: present, at most 80 characters.
+- `url`: at most 2048 characters, and EITHER an absolute `http://` / `https://` URL with a host, OR a path on your site that starts with `/`. Everything else is refused: `javascript:`, `data:`, `mailto:`, relative paths, and protocol-relative `//elsewhere.example`, plus the `/\elsewhere.example` and `/<tab>/…` tricks that browsers turn into it. URLs must be escaped, as Rails' url helpers already produce them.
+- The error is `errors.of_kind?(:action, :invalid)`, with a readable message in `en` and `es`.
+
+Body rules don't change: an action goes with a message, it is never a message by itself. Both text and system messages can carry one. `edit!` keeps the action. **A tombstone shows neither the body nor the button**: soft deletion clears the action, and so does a moderator's `remove_reported_field!`, because it goes through the same tombstone. The inbox preview still shows the body.
+
+**Only your Ruby code sets an action.** The composer can't: `Chats::MessagesController` permits `body` and `files` only, the same as with `author:`. Restyle the button with `.chats-message__action` (eject `chats/messages/_action.html.erb` to change its markup). It uses your `--chats-accent` / `--chats-accent-contrast` colours: accent-filled under someone else's message or a system note, reversed inside your own accent-coloured bubble.
+
+### Buttons next to the composer: the `composer_actions` slot
+
+Actions are the buttons your app puts under a message. The `composer_actions` [slot](#-view-slots) is for buttons *you* put next to the composer, such as "Create a game" or "Send my location", without ejecting it:
+
+```erb
+<%# app/views/chats/slots/_composer_actions.html.erb %>
+<%= button_to "🎮 Create a game", games_path, params: { conversation_id: conversation.id } %>
+<%= link_to "📍 Send my location", new_location_path(conversation_id: conversation.id) %>
+```
+
+The row appears above the input, **outside** the composer's `<form>`, so `button_to` forms are fine there: a form inside a form is invalid HTML. If the conversation locks, the row goes away together with the composer. Unstyled buttons and links get a small chip look by default. It is applied with zero specificity, so any class you add overrides it.
+
 ## ⏱️ One send budget for every composer
 
 `config.send_rate_limit` (60 per minute per sender by default) is enforced by
@@ -463,6 +511,7 @@ Ejecting a whole screen to add one row or one button is too coarse. The bundled 
 | `inbox_top` | above the first inbox row |
 | `inbox_empty` | inside the empty state |
 | `conversation_header_actions` | the thread's menu (gets `blockable:`) |
+| `composer_actions` | a row of your own buttons above the composer's input, outside its form (gets `conversation:`; gone when the thread locks) |
 | `locked_composer` | the locked composer's body |
 | `message_meta` | after each bubble's timestamp |
 
@@ -573,6 +622,8 @@ alice.message!(conversation, "hi", files: []) # send into a conversation
 alice.chats                                   # inbox relation, newest first
 alice.unread_chats_count                      # conversations with unread messages
 alice.message!(bob, "hi", author: lucia)      # written by lucia, sent from alice's seat
+alice.message!(bob, "Let's play!",            # with one button under it
+               action: { label: "Join my room", url: "/play/abcd" })
 Chats::Inbox.for(alice)                       # [Conversation | InboxGroup] + #unread_count
 Chats.verified?(desk)                         # official account? (acts_as_messager verified: true)
 
@@ -585,6 +636,7 @@ conversation.subject_label                    # "Madrid → Barcelona"
 conversation.unread_count_for(user)
 conversation.mark_read_by!(user)
 conversation.post_system_message!("Ride cancelled")
+conversation.post_system_message!("Ride cancelled", action: { label: "Book another", url: "/rides/new" })
 conversation.add_participant!(user)           # idempotent, race-safe
 conversation.locked?                          # the SUBJECT decides (chat_locked?)
 conversation.locked_notice                    # why, in words
@@ -594,6 +646,8 @@ message.edit!("fixed")                        # stamps edited_at
 message.soft_delete!                          # tombstone (or destroy, per config)
 message.read_by?(user)
 message.signed? / message.authored_by?(lucia) # authorship
+message.action / message.action?              # the button: a Chats::Action, or nil
+Chats::Action.new(label: "Pay now", url: "/pay")  # .label .url .to_h; Chats::Action.wrap(hash_or_action_or_nil)
 Chats::Reaction.toggle!(message:, reactor:, emoji: "👍")
 
 # Participants (the per-member state)
@@ -691,7 +745,8 @@ files **outrank** the gem's — Rails loads every engine's locales first and the
 app's last (a 0.2.0 fix; the gem used to re-append its files after yours and
 silently win) — so override any key in your `es.yml` and the gem's copy loses.
 Bubbles, flashes, the empty inbox, the locked composer and the verified label
-(`chats.verified.label`) are all there.
+(`chats.verified.label`) are all there, and so are the model errors
+(`activerecord.errors.models.chats/message.…`, the action's included).
 
 
 ## Upgrading
@@ -699,11 +754,11 @@ Bubbles, flashes, the empty inbox, the locked composer and the verified label
 `chats` ships the migrations a version bump needs; your initializer and views stay yours:
 
 ```bash
-rails generate chats:upgrade   # 0.2.0: message authorship columns
+rails generate chats:upgrade   # 0.2.0: message authorship columns · 0.4.0: the message action column
 rails db:migrate
 ```
 
-0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option — see the [CHANGELOG](CHANGELOG.md).
+0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded, so re-running it on an install that already has some of the columns is harmless. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
 
 ## Database support
 

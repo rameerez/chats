@@ -56,6 +56,29 @@ class DocsTest < ActiveSupport::TestCase
     assert_includes File.read(File.expand_path("../CHANGELOG.md", __dir__)), "Chats.deprecator.silence do"
   end
 
+  test "every slot is documented in the README's table and in the generated initializer" do
+    readme = File.read(README)
+    initializer = File.read(INITIALIZER)
+
+    Chats::EngineHelper::SLOTS.each do |slot|
+      assert_includes readme, "| `#{slot}` |", "the README's slot table is missing #{slot}"
+      assert_includes initializer, "app/views/chats/slots/_#{slot}.html.erb", "the initializer is missing #{slot}"
+    end
+  end
+
+  test "the README's action examples are valid actions" do
+    alice = create_user(name: "Alice")
+    bob = create_user(name: "Bob")
+
+    message = alice.message!(bob, "Let's play!", action: { label: "Join my room", url: "/play/abcd" })
+    assert_equal({ label: "Join my room", url: "/play/abcd" }, message.action.to_h)
+
+    note = message.conversation.post_system_message!("Ride cancelled",
+                                                     action: { label: "Book another", url: "/rides/new" })
+    assert note.action?
+    assert_includes File.read(README), "## 🎯 Action buttons"
+  end
+
   test "the docs name exactly the events config.notifier still receives" do
     legacy = Chats::Subscribers::LEGACY_NOTIFIER_EVENTS
 

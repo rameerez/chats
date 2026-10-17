@@ -4,6 +4,88 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-17
+
+Action buttons. A support desk writes "Your invoice is ready" and wants a
+*Pay now* button under it; a game writes "Let's play!" and wants *Join my
+room*. Until now a host pasted a URL into the body. **0.4.0 needs one
+migration** (`rails generate chats:upgrade && rails db:migrate`, one
+nullable JSON column) and otherwise changes nothing until you pass
+`action:`.
+
+### Added
+- **One action per message.** `alice.message!(bob, "Let's play!", action:
+  { label: "Join my room", url: "/play/abcd" })`, and the same `action:` on
+  `Conversation#post_system_message!`. `message.action` is a
+  `Chats::Action` (an immutable `Data` value: `#label`, `#url`, `#to_h`) or
+  nil, and `message.action?` says which. `Chats::Action.wrap` accepts a
+  Hash with string or symbol keys, an Action, or nil, and raises
+  `ArgumentError` for anything else, including a key an action doesn't have
+  (`method: :post` would otherwise have turned into a GET link silently).
+  Assigning goes through `wrap` immediately, so a mistake raises on the line
+  that made it.
+- **Validated at the write.** The label is present and at most 80
+  characters. The url is at most 2048 characters and is either an absolute
+  http(s) URL with a host or a path on this site starting with `/`.
+  `javascript:`, `data:`, other schemes, relative paths and
+  protocol-relative `//host` are refused, and so are `/\host` and
+  `/<tab>/host`, which browsers normalise into `//host`. The error is
+  `:action, :invalid`, in `en` and `es`. It is checked only when the action
+  changes, so editing an old message never fails because of an action
+  nobody touched.
+- **The bubble renders it** as `a.chats-message__action` under the text and
+  attachments, and inside the note for system messages
+  (`.chats-message__system--with-action`). The link has
+  `data-turbo-frame="_top"`: older pages of a thread load inside lazy
+  turbo-frames, and without it a link there would navigate only the frame.
+  It is a link and never a form because the bubble is rendered once for
+  every viewer and cloned into the long-press popup, so it cannot hold a
+  per-viewer CSRF token. An action is a destination; a host that needs a
+  POST points it at a page that asks first. The markup lives in its own
+  partial, `chats/messages/_action`. The button uses the accent pair: filled
+  with the accent on foreign bubbles and system notes, reversed on your own
+  accent bubble.
+- **Tombstones drop it.** Soft deletion clears the action along with the
+  body, and so does moderation's `remove_reported_field!`, which goes
+  through the same path. `edit!` keeps it.
+- **The composer can never set one.** `Chats::MessagesController` still
+  permits only `body` and `files`, the same as with `author:`, and a test
+  checks that a posted `message[action]` is ignored.
+- **`chats_messages.action`** (jsonb on PostgreSQL, json elsewhere, nullable,
+  no default), created by the install migration and added to existing
+  installs by `rails generate chats:upgrade`. The upgrade migration is
+  guarded, so it does nothing where the column already exists.
+- **The `composer_actions` slot.** `app/views/chats/slots/_composer_actions.
+  html.erb` (receives `conversation:`) renders a row of your own buttons
+  above the composer's input ("Create a game", "Send my location") without
+  ejecting it. The row is outside the composer's `<form>`, so `button_to`
+  works there. It goes away with the composer when the thread locks, whether
+  on page load or through the live 422 swap. Unstyled links and buttons get
+  a chip look applied with zero specificity, so any class you add wins.
+
+### Changed
+- **The composer partial's DOM.** `chats/messages/_composer` is now a dock
+  wrapping the form:
+  `div#<dom_id(conversation, :composer)>.chats-composer` contains the
+  `.chats-composer__actions` row (only when the slot exists) and then
+  `form.chats-composer__form`, which keeps the `chats--composer` controller,
+  its data-actions and everything inside it. In 0.3.x the form itself was
+  `form#…composer.chats-composer`. The swap id moved to the dock so the live
+  lock replaces the host's buttons along with the form. **If you ejected the
+  composer** (CarHey did), your copy keeps working unchanged:
+  `.chats-composer` still styles whatever element carries it, and the
+  locked-composer swap still targets your form's id. You only need to
+  re-eject to use `composer_actions`. If your own CSS or JS selects
+  `form.chats-composer`, change it to `form.chats-composer__form` (or
+  `.chats-composer form`) once you're on the bundled partial.
+- The Trust & Safety report-link recipe in the README referred to the
+  inline actions row that 0.1.1 removed, and to its `chats-message__action`
+  class, which now names the action button. It now puts the link in the
+  long-press menu as a `chats-popup__item` with `data-chats-other-only`. The
+  bundled CSS styles `.chats-message__action` only as a direct child of a
+  bubble, so links in views ejected from 0.1.0 that still use the class are
+  left alone.
+
 ## [0.3.2] - 2026-09-17
 
 ### Fixed
