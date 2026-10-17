@@ -446,6 +446,10 @@ desk.message!(user, "Your invoice is ready", author: lucia, action: { label: "Pa
 conversation.post_system_message!("Your ride was cancelled", action: { label: "Book another", url: new_ride_path })
 ```
 
+<img src="docs/screenshots/thread-actions-phone.png" alt="A thread on a phone: a received message with a dark Join my room button, and your own dark bubble with a white Open my lobby button" width="320">
+
+*One action per message: accent-filled under someone else's message, reversed in your own bubble.*
+
 ```ruby
 message.action          # => #<data Chats::Action label="Join my room", url="/play/abcd">, or nil
 message.action?         # => true
