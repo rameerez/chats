@@ -83,6 +83,31 @@ module Chats
       assert @conversation.post_system_message!("system messages are the host's own").persisted?
     end
 
+    test "the policy is asked last, only of a send that is otherwise valid" do
+      asked = 0
+      Chats.config.can_message = ->(_sender, _recipient) { asked += 1; true }
+      stranger = create_user
+
+      assert_not @conversation.messages.new(sender: stranger, body: "not in it").valid?
+      assert_not @conversation.messages.new(sender: @alice, body: "").valid?
+      assert_equal 0, asked, "a stranger or an empty body is refused before the host is consulted"
+
+      assert @conversation.messages.new(sender: @alice, body: "fine").valid?
+      assert_equal 1, asked
+    end
+
+    test "a direct thread whose counterpart is gone takes no messages, and never asks the policy" do
+      asked = 0
+      Chats.config.can_message = ->(_sender, _recipient) { asked += 1; true }
+      @bob.destroy!
+
+      refused = @conversation.reload.messages.new(sender: @alice, body: "anyone there?")
+      assert_not refused.valid?
+      assert refused.errors.of_kind?(:base, :not_allowed)
+      assert_equal 0, asked
+      assert @conversation.post_system_message!("the host can still annotate it").persisted?
+    end
+
     test "blocks do not gag group conversations" do
       carol = create_user
       group = Conversation.group!(@alice, [@bob, carol])

@@ -115,13 +115,15 @@ module Chats
     validate :body_or_files_required
     validate :body_must_fit_length_limit
     validate :sender_must_be_active_participant, on: :create
-    validate :sender_must_still_be_allowed, on: :create
     validate :conversation_must_not_be_locked, on: :create
     validate :author_must_be_persisted
     # Checked at the write that SETS it, not on every save: an edit must
     # never fail over an action nobody touched.
     validate :action_must_be_well_formed, if: :will_save_change_to_action?
     validate :files_must_be_allowed
+    # Last on purpose: the host's policy is asked only of a send that is
+    # otherwise valid (see the method).
+    validate :sender_must_still_be_allowed, on: :create
 
     after_create :register_on_conversation
     after_create_commit :broadcast_created
@@ -346,13 +348,24 @@ module Chats
     # group rationale. Two errors, because they read differently to the
     # sender: `:blocked` (either side blocked the other) and `:not_allowed`
     # (the policy said no).
+    #
+    # Asked last, and only of a send that is otherwise valid: a stranger to
+    # the conversation, a locked thread or an empty body is refused before
+    # the host's policy runs, so the policy is never consulted about a
+    # message that could not be sent anyway (it may be expensive, and it
+    # runs on every direct send now). A policy must not raise: an
+    # exception escapes the send like any other host error.
+    #
+    # A direct thread with nobody on the other side — the counterpart's
+    # account was destroyed and its seat went with it — takes no messages:
+    # there is no one the policy could allow.
     def sender_must_still_be_allowed
-      return if system? || sender.nil? || conversation.nil? || !conversation.direct?
+      return if system? || sender.nil? || conversation.nil? || !conversation.direct? || errors.any?
 
       other = conversation.other_participants(sender).first&.messager
-      return if other.nil?
-
-      if Chats.blocked_between?(sender, other)
+      if other.nil?
+        errors.add(:base, :not_allowed)
+      elsif Chats.blocked_between?(sender, other)
         errors.add(:base, :blocked)
       elsif !Chats.config.can_message.call(sender, other)
         errors.add(:base, :not_allowed)

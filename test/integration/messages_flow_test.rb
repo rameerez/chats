@@ -88,6 +88,19 @@ class MessagesFlowTest < ActionDispatch::IntegrationTest
     assert_response :success, "the thread stays readable"
   end
 
+  test "a thread whose counterpart's account is gone stays readable but takes no messages" do
+    login_as @alice
+    @bob.destroy!
+
+    get "/messages/#{@conversation.id}"
+    assert_response :success
+
+    assert_no_difference("Chats::Message.count") do
+      post "/messages/#{@conversation.id}/messages", params: { message: { body: "hello?" } }, as: :turbo_stream
+    end
+    assert_response :unprocessable_entity
+  end
+
   test "sending with an image attachment" do
     login_as @alice
 

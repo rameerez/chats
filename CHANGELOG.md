@@ -6,7 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.2] - 2026-10-17
 
-### Fixed
+**Upgrade note: your `can_message` policy now runs on every direct send,
+not only when a thread is opened.** Read yours before upgrading. If it
+means "who may OPEN a conversation" (a listing must be live, a ride must be
+accepted), existing threads will stop taking messages the moment it turns
+false for the pair — which is usually what you want (a block already
+behaves this way), but is a change. If it is expensive, it now costs that
+on every direct message; make it cheap or cache what it reads. It must not
+raise: an exception escapes the send like any other host error. Group
+conversations and system messages are unchanged.
+
+### Changed
 - **`can_message` holds on every direct send.** A block placed
   mid-conversation already stopped the next message; the host's policy
   turning false did not, so a pair allowed when the thread was opened kept
@@ -14,8 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message into a direct conversation now re-runs `Chats.can_message?`
   exactly like the block check: `:blocked` when either side blocked the
   other, `:not_allowed` (new, in `en` and `es`) when the policy says no.
-  The composer answers with its errors stream as before. Group
-  conversations are unchanged.
+  The policy is asked last, only of a send that is otherwise valid (a
+  stranger, a locked thread or an empty body is refused before it runs).
+  The composer answers with its errors stream as before.
+- **A direct thread with nobody on the other side takes no messages.** When
+  the counterpart's account was destroyed, its seat went with it (the
+  gem's `dependent: :destroy` on participations); a text message into that
+  thread is refused with `:not_allowed` instead of slipping past both the
+  block and the policy checks. The thread stays readable.
 
 ## [0.4.1] - 2026-10-17
 
