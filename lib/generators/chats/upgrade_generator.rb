@@ -14,6 +14,7 @@ module Chats
     # running this against an install that already has some of the columns
     # (a fresh 0.2.0 install has the author ones) is a no-op for those
     # rather than an error, and re-running it skips files already copied.
+    # The action migration is not written at all where the column exists.
     class UpgradeGenerator < Rails::Generators::Base
       include ActiveRecord::Generators::Migration
 
@@ -29,7 +30,17 @@ module Chats
                            File.join(db_migrate_path, "add_author_to_chats_messages.rb")
       end
 
+      # Not written when the schema already HAS the column — a fresh 0.4.0
+      # install, whose create migration owns it. A second migration for a
+      # column it didn't add is one nobody can safely roll back. Without a
+      # database to ask, it is written anyway; its `up` is guarded, and its
+      # `down` never drops the column.
       def create_action_migration
+        if action_column_present?
+          say_status :skip, "chats_messages.action already exists — no migration needed", :yellow
+          return
+        end
+
         migration_template "add_action_to_chats_messages.rb.erb",
                            File.join(db_migrate_path, "add_action_to_chats_messages.rb")
       end
@@ -49,6 +60,16 @@ module Chats
       end
 
       private
+
+      def action_column_present?
+        ActiveRecord::Base.connection_pool.with_connection do |connection|
+          connection.column_exists?(:chats_messages, :action)
+        end
+      rescue ActiveRecord::ActiveRecordError
+        # No database configured, not created yet, or no chats tables: there
+        # is nothing to ask, so write the (guarded) migration.
+        false
+      end
 
       def migration_version
         "[#{ActiveRecord::VERSION::STRING.to_f}]"

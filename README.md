@@ -462,7 +462,7 @@ Chats::Action.new(label: "Pay now", url: "/pay")   # accepted anywhere a Hash is
 **It is validated when it is written**, so a bad one fails loudly in your code and never renders as a broken or dangerous link:
 
 - `label`: present, at most 80 characters.
-- `url`: at most 2048 characters, and EITHER an absolute `http://` / `https://` URL with a host, OR a path on your site that starts with `/`. Everything else is refused: `javascript:`, `data:`, `mailto:`, relative paths, and protocol-relative `//elsewhere.example`, plus the `/\elsewhere.example` and `/<tab>/…` tricks that browsers turn into it. URLs must be escaped, as Rails' url helpers already produce them.
+- `url`: at most 2048 characters, and EITHER an absolute `http://` / `https://` URL with a host (and, if it names one, a port from 1 to 65535), OR a path on your site that starts with a single `/`. Everything else is refused: `javascript:`, `data:`, `mailto:`, relative paths, and anything a browser would send to another site: `//elsewhere.example`, `///elsewhere.example`, `/\elsewhere.example`, `/<tab>/…`. URLs must be escaped, as Rails' url helpers already produce them.
 - The error is `errors.of_kind?(:action, :invalid)`, with a readable message in `en` and `es`.
 
 Body rules don't change: an action goes with a message, it is never a message by itself. Both text and system messages can carry one. `edit!` keeps the action. **A tombstone shows neither the body nor the button**: soft deletion clears the action, and so does a moderator's `remove_reported_field!`, because it goes through the same tombstone. The inbox preview still shows the body.
@@ -758,7 +758,7 @@ rails generate chats:upgrade   # 0.2.0: message authorship columns · 0.4.0: the
 rails db:migrate
 ```
 
-0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded, so re-running it on an install that already has some of the columns is harmless. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
+0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
 
 ## Database support
 

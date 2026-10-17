@@ -12,11 +12,13 @@ class AddActionToChatsMessages < ActiveRecord::Migration[7.1]
     add_column :chats_messages, :action, json_column_type
   end
 
-  def down
-    return unless column_exists?(:chats_messages, :action)
-
-    remove_column :chats_messages, :action
-  end
+  # Rolling back KEEPS the column, on purpose: this migration never removes
+  # a column it may not have added. On a fresh 0.4.0 install the create
+  # migration owns `action` and `up` above did nothing, so dropping it here
+  # would destroy every message's button with it — and nothing a migration
+  # can see records which of the two added it. A leftover nullable column
+  # is harmless to older versions of chats; drop it by hand if you mean to.
+  def down; end
 
   private
 

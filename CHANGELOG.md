@@ -26,10 +26,12 @@ nullable JSON column) and otherwise changes nothing until you pass
   that made it.
 - **Validated at the write.** The label is present and at most 80
   characters. The url is at most 2048 characters and is either an absolute
-  http(s) URL with a host or a path on this site starting with `/`.
-  `javascript:`, `data:`, other schemes, relative paths and
-  protocol-relative `//host` are refused, and so are `/\host` and
-  `/<tab>/host`, which browsers normalise into `//host`. The error is
+  http(s) URL with a host (and a port from 1 to 65535, if it names one) or
+  a path on this site starting with a single `/`. `javascript:`, `data:`,
+  other schemes and relative paths are refused, and so is everything a
+  browser would send off-site: `//host`, `///host` (which URI.parse reads
+  as a hostless path), `/\host` and `/<tab>/host`. Anything starting with
+  `//` or `/\` is refused before the url is even parsed. The error is
   `:action, :invalid`, in `en` and `es`. It is checked only when the action
   changes, so editing an old message never fails because of an action
   nobody touched.
@@ -53,8 +55,12 @@ nullable JSON column) and otherwise changes nothing until you pass
   checks that a posted `message[action]` is ignored.
 - **`chats_messages.action`** (jsonb on PostgreSQL, json elsewhere, nullable,
   no default), created by the install migration and added to existing
-  installs by `rails generate chats:upgrade`. The upgrade migration is
-  guarded, so it does nothing where the column already exists.
+  installs by `rails generate chats:upgrade`. The generator doesn't write
+  that migration where the column already exists (it asks the database; a
+  fresh 0.4.0 install has it), its `up` is guarded, and rolling it back
+  KEEPS the column: nothing a migration can see records whether it or the
+  create migration added it, and it must never drop a column, with every
+  message's button in it, that it did not add.
 - **The `composer_actions` slot.** `app/views/chats/slots/_composer_actions.
   html.erb` (receives `conversation:`) renders a row of your own buttons
   above the composer's input ("Create a game", "Send my location") without
