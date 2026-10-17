@@ -85,7 +85,10 @@ module Chats
 
     test "the policy is asked last, only of a send that is otherwise valid" do
       asked = 0
-      Chats.config.can_message = ->(_sender, _recipient) { asked += 1; true }
+      Chats.config.can_message = lambda { |_sender, _recipient|
+        asked += 1
+        true
+      }
       stranger = create_user
 
       assert_not @conversation.messages.new(sender: stranger, body: "not in it").valid?
@@ -98,7 +101,10 @@ module Chats
 
     test "a direct thread whose counterpart is gone takes no messages, and never asks the policy" do
       asked = 0
-      Chats.config.can_message = ->(_sender, _recipient) { asked += 1; true }
+      Chats.config.can_message = lambda { |_sender, _recipient|
+        asked += 1
+        true
+      }
       @bob.destroy!
 
       refused = @conversation.reload.messages.new(sender: @alice, body: "anyone there?")
