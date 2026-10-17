@@ -41,13 +41,22 @@ module Chats
     # nil stays nil so a missing one is a validation error, not a "" that
     # looks present.
     #
-    # Each is a frozen COPY. `Data` freezes the action, not the strings it
-    # was handed, so without this `action.url.replace("javascript:…")`
-    # would rewrite a validated action in place — and so would the caller
-    # mutating the string they passed in. An action is a value: what the
-    # validator saw is what the bubble renders.
+    # Each is a frozen, PLAIN String copy. `Data` freezes the action, not the
+    # strings it was handed, so without the copy `action.url.replace(
+    # "javascript:…")` would rewrite a validated action in place — and so
+    # would the caller mutating the string they passed in. Plain, because
+    # `String.new` drops an html_safe mark: a label that arrived as a
+    # SafeBuffer (a host's `t("…_html")`) would otherwise render unescaped
+    # in the button. An action is a value: what the validator saw is what
+    # the bubble renders, and the bubble escapes it like any other content.
     def initialize(label:, url:)
-      super(label: label&.to_s&.dup&.freeze, url: url&.to_s&.dup&.freeze)
+      super(label: plain(label), url: plain(url))
+    end
+
+    private
+
+    def plain(value)
+      String.new(value.to_s).freeze unless value.nil?
     end
   end
 

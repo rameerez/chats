@@ -169,6 +169,19 @@ module Chats
       assert_equal [@alice], seen
     end
 
+    test "inbox_scope is the one rule: the inbox relation, the unread count and the inbox agree" do
+      kept = @alice.chat_with(@bob, about: create_listing(title: "Kept"))
+      hidden = @alice.chat_with(@carol)
+      @bob.message!(kept, "in the inbox")
+      @carol.message!(hidden, "scoped out")
+
+      Chats.config.inbox_scope = ->(relation, _viewer) { relation.where.not(subject_id: nil) }
+
+      assert_equal [kept], @alice.chats.to_a
+      assert_equal 1, @alice.unread_chats_count, "a conversation the scope hides must not count as unread"
+      assert_equal [kept], Chats::Inbox.for(@alice).rows
+    end
+
     test "inbox_scope must be callable" do
       assert_raises(Chats::ConfigurationError) { Chats.config.inbox_scope = :not_callable }
     end

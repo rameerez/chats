@@ -120,10 +120,10 @@ module Chats
           target: "chats_unread_badge",
           partial: BADGE_PARTIAL,
           # Counted at broadcast-enqueue time: the badge is advisory UI; a
-          # count that's seconds stale self-heals on the next event.
-          # reorder(nil): COUNT(DISTINCT) + the inbox's COALESCE order would
-          # error on PostgreSQL.
-          locals: { count: Chats::Conversation.inbox_for(messager).unread_by(messager).reorder(nil).distinct.count }
+          # count that's seconds stale self-heals on the next event. The
+          # SAME count the page renders (`chats_unread_badge`), so what the
+          # inbox scope hides never lights the badge.
+          locals: { count: messager.unread_chats_count }
         )
       end
 
