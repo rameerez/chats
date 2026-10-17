@@ -169,6 +169,29 @@ module Chats
       end
     end
 
+    test "a site path never starts with a second slash or a backslash, however many follow" do
+      # URI.parse sees no host in "///evil.example", but a browser resolves
+      # it to https://evil.example — so these are refused before parsing.
+      ["//", "///", "///evil.example/path", "////evil", "/\\evil", "/\\\\evil", "/\\/evil"].each do |url|
+        message = action_message(url: url)
+
+        assert_not message.valid?, "#{url.inspect} must be refused: a browser may leave the site"
+        assert message.errors.of_kind?(:action, :invalid)
+      end
+
+      assert_predicate action_message(url: "/ok"), :valid?
+      assert_predicate action_message(url: "/ok//double/inside"), :valid?, "only the start decides"
+    end
+
+    test "an absolute url's port must be a real port" do
+      assert_predicate action_message(url: "https://pay.example:1/x"), :valid?
+      assert_predicate action_message(url: "https://pay.example:65535/x"), :valid?
+
+      %w[https://pay.example:0/x https://pay.example:65536/x https://pay.example:99999/x].each do |url|
+        assert_not action_message(url: url).valid?, "#{url} has no such port"
+      end
+    end
+
     test "the url has a length limit" do
       path = "/#{"a" * (Chats::Message::ACTION_URL_LIMIT - 1)}"
 

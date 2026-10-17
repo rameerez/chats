@@ -40,6 +40,7 @@ module Chats
     ACTION_LABEL_LIMIT = 80
     ACTION_URL_LIMIT = 2048
     ACTION_URL_SCHEMES = %w[http https].freeze
+    ACTION_URL_PORTS = (1..65_535)
 
     belongs_to :conversation,
                class_name: "Chats::Conversation",
@@ -357,10 +358,16 @@ module Chats
     # What a button the bubble renders may be: a short label, and a link to
     # an http(s) URL or a path on this site. The host is trusted, but a bad
     # action has to fail HERE, loudly, rather than render a dead link or a
-    # `javascript:` one. URI.parse does the heavy lifting: it rejects
-    # whitespace, control characters and backslashes outright, which is
-    # what closes `/\evil.example` and `/<tab>/evil.example` — paths a
-    # browser quietly normalises into the protocol-relative `//evil.example`.
+    # `javascript:` one.
+    #
+    # Two layers, because a browser and URI.parse disagree about where a url
+    # goes. First, a string check BEFORE parsing: nothing starting with `//`
+    # or `/\` is a path on this site. URI.parse reads `///evil.example/x`
+    # as a path with no host, yet a browser resolves it to
+    # https://evil.example/x, and treats `/\` like `//`. Then the parse,
+    # which rejects whitespace, control characters and backslashes anywhere
+    # (`/<tab>/evil.example` is stripped into `//evil.example` by browsers),
+    # and decides scheme, host and port.
     def action_must_be_well_formed
       return if action.nil?
 
@@ -374,10 +381,11 @@ module Chats
     def action_url_safe?
       url = action.url
       return false if url.blank? || url.length > ACTION_URL_LIMIT
+      return false if url.start_with?("//", "/\\")
 
       uri = URI.parse(url)
       if uri.scheme
-        ACTION_URL_SCHEMES.include?(uri.scheme.downcase) && uri.host.present?
+        ACTION_URL_SCHEMES.include?(uri.scheme.downcase) && uri.host.present? && ACTION_URL_PORTS.cover?(uri.port)
       else
         # A path on this site: "/rides/new", never "//elsewhere.example".
         url.start_with?("/") && uri.host.nil?
