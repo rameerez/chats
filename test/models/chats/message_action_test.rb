@@ -192,6 +192,13 @@ module Chats
       end
     end
 
+    test "an empty port suffix is refused, not read as the default port" do
+      %w[https://pay.example:/x https://pay.example: https://pay.example:?q=1 HTTPS://pay.example:#top].each do |url|
+        assert_not action_message(url: url).valid?, "#{url} names no port"
+      end
+      assert_predicate action_message(url: "https://pay.example/x:y"), :valid?, "a colon in the path is not a port"
+    end
+
     test "the url has a length limit" do
       path = "/#{"a" * (Chats::Message::ACTION_URL_LIMIT - 1)}"
 

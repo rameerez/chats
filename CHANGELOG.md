@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-10-17
+
+### Fixed
+- **An action's strings are frozen copies.** `Data` freezes the action but
+  not the strings it was handed, so `action.url.replace("javascript:…")`,
+  or the caller mutating the string they passed in, could rewrite a
+  validated action in memory before the bubble rendered it. `Chats::Action`
+  now keeps a frozen copy of both members: what the validator saw is what
+  renders.
+- **An empty port suffix is refused.** `https://host:/x` parses as the
+  default port and slipped past the 1..65535 rule; a named port must have
+  digits.
+- The README said the inbox preview still shows a soft-deleted message's
+  body; it reads "Message deleted", as for any tombstone.
+
 ## [0.4.0] - 2026-10-17
 
 Action buttons. A support desk writes "Your invoice is ready" and wants a

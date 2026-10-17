@@ -28,6 +28,19 @@ module Chats
       assert_not_equal action, Chats::Action.new(label: "Pay later", url: "/pay")
     end
 
+    test "its strings are frozen copies: neither the caller nor a reader can rewrite a validated action" do
+      url = +"/pay"
+      action = Chats::Action.new(label: +"Pay now", url: url)
+
+      assert_predicate action.label, :frozen?
+      assert_predicate action.url, :frozen?
+      assert_raises(FrozenError) { action.url.replace("javascript:alert(1)") }
+      assert_raises(FrozenError) { action.label << "!" }
+
+      url.replace("javascript:alert(1)")
+      assert_equal "/pay", action.url, "mutating the string the caller passed must not reach the action"
+    end
+
     test "both members are required" do
       assert_raises(ArgumentError) { Chats::Action.new(label: "Pay now") }
       assert_raises(ArgumentError) { Chats::Action.new(url: "/pay") }
