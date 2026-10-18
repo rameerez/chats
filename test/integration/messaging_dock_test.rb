@@ -80,6 +80,19 @@ class MessagingDockTest < ActionDispatch::IntegrationTest
     # rubocop:enable Style/FormatStringToken
   end
 
+  test "the dock renders the plural forms a host adds for its language" do
+    host_forms = { few: "%{count} mensajes (pocos)", many: "%{count} mensajes (muchos)" } # rubocop:disable Style/FormatStringToken
+    I18n.backend.store_translations(:es, chats: { dock: { window_unread: host_forms } })
+    login_as @alice
+
+    I18n.with_locale(:es) { get "/" }
+
+    forms = JSON.parse(css_select(".chats-dock").first["data-chats--dock-window-unread-value"])
+    assert_equal %w[few many one other], forms.keys.sort, "the controller picks among all of them"
+  ensure
+    I18n.reload!
+  end
+
   test "the dock's strings follow the viewer's locale" do
     login_as @alice
 

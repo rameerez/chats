@@ -1049,12 +1049,29 @@ export default class extends Controller {
     return content
   }
 
+  // "3 new messages", in the plural form the page's language uses for 3:
+  // Polish says 2, 3, 4, 22 differently from 5 and 1; Russian says 21 like 1.
+  // The dock renders every form its locale has (chats.dock.window_unread:
+  // zero, one, two, few, many, other); a form the locale lacks reads as
+  // `other`.
   unreadLabel(count) {
+    let forms
     try {
-      const forms = JSON.parse(this.windowUnreadValue || "{}")
-      return (count === 1 ? forms.one : forms.other)?.replace("%{count}", count) || ""
+      forms = JSON.parse(this.windowUnreadValue || "{}")
     } catch {
       return ""
+    }
+    return (forms[this.pluralCategory(count)] ?? forms.other)?.replace("%{count}", count) || ""
+  }
+
+  // CLDR's category for +count+ in the page's language (<html lang>, else
+  // the browser's). Without Intl, or with a language tag it can't read, the
+  // old two-form rule.
+  pluralCategory(count) {
+    try {
+      return new Intl.PluralRules(document.documentElement.lang || navigator.language || undefined).select(count)
+    } catch {
+      return count === 1 ? "one" : "other"
     }
   }
 

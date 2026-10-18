@@ -117,6 +117,19 @@ module Chats
       { chats_dock_toggle: true }
     end
 
+    # The CLDR plural categories JavaScript's Intl.PluralRules answers with.
+    PLURAL_CATEGORIES = %i[zero one two few many other].freeze
+
+    # Every plural form of +key+ the current locale provides, for client-side
+    # pluralization ({ one: "…", few: "…", other: "…" }). The gem ships
+    # one/other; a host adds the forms its languages need (Polish few/many,
+    # Arabic zero/two…) in its own locale files. Empty when the key is
+    # missing, never a "translation missing" string.
+    def chats_plural_forms(key)
+      forms = I18n.t(key, default: {})
+      forms.is_a?(Hash) ? forms.slice(*PLURAL_CATEGORIES) : {}
+    end
+
     # Whether +viewer+ muted +conversation+, read from the preloaded seats
     # (the inbox loads them), so a row costs no query for it.
     def chats_muted?(conversation, viewer)

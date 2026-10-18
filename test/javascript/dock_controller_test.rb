@@ -10,6 +10,8 @@ require "open3"
 # localStorage never breaks the dock. The layout itself is CSS, verified in
 # a browser.
 class DockControllerTest < ActiveSupport::TestCase
+  # The node script below holds I18n %{count} placeholders, not Ruby format strings.
+  # rubocop:disable Style/FormatStringToken
   test "the dock's fit, eviction, pop-up policy, signal handling and memory" do
     skip "node is not available" unless node_available?
 
@@ -461,6 +463,46 @@ class DockControllerTest < ActiveSupport::TestCase
         controller.removeWindow(windows[0])
         assert.deepStrictEqual(controller.opened, [], "a refused localStorage only means forgetting")
 
+        // --- the window's unread count, in the page's plural forms ------------
+
+        const forms = {
+          pl: { one: "%{count} nowa wiadomość", few: "%{count} nowe wiadomości",
+                many: "%{count} nowych wiadomości", other: "%{count} wiadomości" },
+          ru: { one: "%{count} новое сообщение", few: "%{count} новых сообщения",
+                many: "%{count} новых сообщений", other: "%{count} новых сообщения" },
+          en: { one: "%{count} new message", other: "%{count} new messages" }
+        }
+        function label(lang, localeForms, count) {
+          global.document.documentElement = { lang }
+          const labeled = dock()
+          labeled.windowUnreadValue = JSON.stringify(localeForms)
+          return labeled.unreadLabel(count)
+        }
+
+        assert.strictEqual(label("pl", forms.pl, 1), "1 nowa wiadomość", "pl 1: one")
+        assert.strictEqual(label("pl", forms.pl, 2), "2 nowe wiadomości", "pl 2: few")
+        assert.strictEqual(label("pl", forms.pl, 5), "5 nowych wiadomości", "pl 5: many")
+        assert.strictEqual(label("pl", forms.pl, 22), "22 nowe wiadomości", "pl 22: few, not many")
+
+        assert.strictEqual(label("ru", forms.ru, 1), "1 новое сообщение", "ru 1: one")
+        assert.strictEqual(label("ru", forms.ru, 2), "2 новых сообщения", "ru 2: few")
+        assert.strictEqual(label("ru", forms.ru, 5), "5 новых сообщений", "ru 5: many")
+        assert.strictEqual(label("ru", forms.ru, 21), "21 новое сообщение", "ru 21: one, like 1")
+
+        assert.strictEqual(label("en", forms.en, 1), "1 new message")
+        assert.strictEqual(label("en", forms.en, 2), "2 new messages")
+        assert.strictEqual(label("en", forms.en, 21), "21 new messages")
+
+        assert.strictEqual(label("pl", forms.en, 5), "5 new messages", "a form the locale lacks reads as other")
+        assert.strictEqual(label("", forms.en, 3), "3 new messages", "no <html lang>: the browser's language")
+        assert.strictEqual(label("not a language!", forms.pl, 2), "2 wiadomości", "an unreadable tag: the old rule")
+
+        const intl = global.Intl
+        global.Intl = undefined
+        assert.strictEqual(label("pl", forms.pl, 1), "1 nowa wiadomość", "no Intl: the old rule, one…")
+        assert.strictEqual(label("pl", forms.pl, 2), "2 wiadomości", "…and other")
+        global.Intl = intl
+
         console.log("ok")
       JAVASCRIPT
     )
@@ -468,6 +510,7 @@ class DockControllerTest < ActiveSupport::TestCase
     assert status.success?, "node test failed\nSTDOUT:\n#{stdout}\nSTDERR:\n#{stderr}"
     assert_equal "ok", stdout.strip
   end
+  # rubocop:enable Style/FormatStringToken
 
   private
 
