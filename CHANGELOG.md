@@ -104,17 +104,24 @@ to configure, no polling.**
   every write that commits before it runs (a short-lived marker in
   `Rails.cache`, removed by the job as it starts, before it broadcasts), so
   a burst is one job per recipient. A lost marker costs an extra job, never
-  a missed refresh, and the marker expires after two seconds. The refresh
+  a missed refresh, and the marker expires after two seconds. Since another
+  write may count on a refresh whose enqueue is still in flight, a failed
+  enqueue is retried once, then the refresh is broadcast on the spot (the
+  error goes to `Rails.error`, not up through the write that committed). The refresh
   tag carries `method="morph" scroll="preserve"`, so the inbox morphs
   whatever the host layout's refresh meta says, and no request id, since
   it may stand for several requests' writes.
 - **The thread's catch-up asks on two cursors.** It sent only the newest
   `updated_at` it had rendered and the server appended what was created
   after it, so a message created at 10:15 and missed, while a bubble on
-  screen was edited at 10:20, never came. Now `after=` (the newest
-  `created_at` rendered, to the microsecond) decides what is appended and
-  `since=` what is replaced, and the two scopes split on the same creation
-  cursor (`Message.updated_since(since, rendered_through: after)`). An empty
+  screen was edited at 10:20, never came. Now `after=` (the newest creation
+  on screen) decides what is appended and `changed=` (the newest change)
+  what is replaced, and both scopes split on the same creation cursor
+  (`created_after` / `created_through(…).updated_after(…)`). Each cursor is
+  a moment to the microsecond plus the ids on screen at it (`after_ids=`,
+  `changed_ids=`): a message missed in the very instant of one on screen,
+  or a change missed inside the same millisecond as one on screen (the old
+  cursor rounded up to the millisecond), is no longer lost. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also
@@ -154,8 +161,9 @@ to configure, no polling.**
   the same results instead of the unfiltered list. The dock's recent list
   frame has `refresh="morph"`, so a reload keeps its scroll and its search.
 - New: the `GET /badge` collection route, the `chats--unread-badge`
-  controller, `Chats::InboxRefreshJob`, and `data-created-at-us` on every
-  bubble.
+  controller, `Chats::InboxRefreshJob`, and `data-message-id`,
+  `data-created-at-us` and `data-updated-at-us` on every bubble, which no
+  longer carries `data-updated-at-ms`.
 - **If you wrapped the inbox in a reconciler of your own** (a
   stream-reconciler controller around `turbo_stream_from … :chats_inbox`),
   remove it: two on one page both fire, and the gem's covers what yours did.
@@ -164,8 +172,8 @@ to configure, no polling.**
   `turbo_stream_from chats_current_messager, :chats_inbox` (an inbox without
   it doesn't catch up), and add `turbo_action: "replace"` to the search
   form's `data` and `url: request.original_fullpath.split("?").first`. An
-  ejected message partial without `data-created-at-us` keeps the one cursor
-  it had (`since` alone), and a hard delete missed while offline stays on
+  ejected message partial (with only `data-updated-at-ms`) keeps the one
+  cursor it had (`since=`), and a hard delete missed while offline stays on
   screen until the next load.
 
 ## [0.5.0] - 2026-10-18
