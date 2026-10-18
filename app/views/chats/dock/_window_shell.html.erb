@@ -1,0 +1,17 @@
+<%# What a window shows before its thread arrives, and if it never does: the
+    header (so minimize and close work) and a status line. The dock renders
+    it once, as <template>s its controller clones; `chats/dock/_window`
+    renders the loading one inside the frame it sends.
+
+    Locals: state (:loading or :failed), title (the name when known). %>
+<section class="chats-window__card" role="region" aria-label="<%= local_assigns[:title] || t("chats.dock.title") %>">
+  <%= render "chats/dock/window_header", title: local_assigns[:title] || t("chats.thread.loading") %>
+  <% if local_assigns[:state] == :failed %>
+    <div class="chats-window__status" role="alert">
+      <p><%= t("chats.dock.load_error") %></p>
+      <button type="button" class="chats-window__retry" data-action="chats--dock#retry"><%= t("chats.dock.retry") %></button>
+    </div>
+  <% else %>
+    <div class="chats-window__status"><%= t("chats.thread.loading") %></div>
+  <% end %>
+</section>

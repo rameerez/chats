@@ -32,6 +32,101 @@ module Chats
       assert_equal 0, inbox.unread_count
     end
 
+    # --- a conversation with no messages is never listed ----------------------
+
+    test "an opened but unused conversation is not a row" do
+      @alice.chat_with(@bob) # the Message button, and then nothing
+      used = chatting(@carol)
+
+      assert_equal [used], Chats::Inbox.for(@alice).rows
+      assert_equal [used], Chats::Inbox.for(@alice).conversations.to_a
+    end
+
+    test "it is listed the moment somebody writes, from either seat" do
+      empty = @alice.chat_with(@bob)
+      assert_empty Chats::Inbox.for(@alice).rows
+      assert_empty Chats::Inbox.for(@bob).rows
+
+      @bob.message!(empty, "hola")
+
+      assert_equal [empty], Chats::Inbox.for(@alice).rows
+      assert_equal [empty], Chats::Inbox.for(@bob).rows
+    end
+
+    test "a message is a message: a system note alone lists the conversation" do
+      ride = @alice.chat_with(@bob, about: create_listing(title: "Ride"))
+      ride.post_system_message!("Your ride was cancelled")
+
+      assert_equal [ride], Chats::Inbox.for(@alice).rows, "with_messages is any message, not a person writing"
+      assert_includes Chats::Conversation.with_messages, ride
+    end
+
+    test "it still OPENS: the authorization relation keeps it" do
+      empty = @alice.chat_with(@bob)
+
+      assert_equal empty, @alice.chats.find(empty.id), "the thread you just opened must open"
+      assert_not_includes @alice.chats.with_messages, empty
+    end
+
+    test "an empty conversation never joins a stack, nor its totals" do
+      2.times { |index| @alice.chat_with(@desk, about: create_listing(title: "Empty #{index}")) }
+      written = @alice.chat_with(@desk, about: create_listing(title: "Written"))
+      @desk.message!(written, "ticket")
+
+      group = Chats::Inbox.for(@alice).rows.sole
+
+      assert_instance_of Chats::InboxGroup, group
+      assert_equal 1, group.open_count, "the stack counts only what it lists"
+      assert group.single?, "so a stack of one written thread links straight to it"
+      assert_equal [written], group.conversations
+      assert_equal 1, group.unread_count
+    end
+
+    test "a stack made only of empty conversations is no row at all" do
+      2.times { |index| @alice.chat_with(@desk, about: create_listing(title: "Empty #{index}")) }
+
+      assert_empty Chats::Inbox.for(@alice).rows
+    end
+
+    test "the ?with= view lists only the written threads of the stack" do
+      @alice.chat_with(@desk, about: create_listing(title: "Empty"))
+      written = chatting(@desk, about: create_listing(title: "Written"))
+
+      assert_equal [written], Chats::Inbox.for(@alice, with: @desk).rows
+    end
+
+    test "search never finds an empty conversation, even by its metadata" do
+      @alice.chat_with(@bob, about: create_listing(title: "Madrid → Barcelona"))
+      written = chatting(@carol, about: create_listing(title: "Madrid → Sevilla"))
+
+      assert_equal [written], Chats::Inbox.for(@alice, query: "madrid").rows
+      assert_empty Chats::Inbox.for(@alice, query: "bob").rows, "nor by the counterpart's name"
+    end
+
+    test "the unread numbers agree with the rows" do
+      @alice.chat_with(@bob)
+      dm = @alice.chat_with(@carol)
+      @carol.message!(dm, "unread")
+
+      inbox = Chats::Inbox.for(@alice)
+
+      assert_equal 1, inbox.unread_count
+      assert_equal 1, @alice.unread_chats_count, "an empty conversation has nothing unread to count"
+      assert_equal({ dm.id => 1 }, inbox.unread_counts)
+    end
+
+    test "a thread whose only message was deleted stays listed as a tombstone, or goes when the row is gone" do
+      conversation = chatting(@bob)
+      conversation.last_message.soft_delete!
+      assert_equal [conversation], Chats::Inbox.for(@alice).rows, "a tombstone is still a message"
+
+      Chats.config.deletion = :hard
+      other = chatting(@carol)
+      other.messages.sole.soft_delete!
+      assert_not_includes Chats::Inbox.for(@alice).rows, other.reload,
+                          "a hard delete heals the pointer, and an empty thread is not listed"
+    end
+
     # --- stacking -------------------------------------------------------------
 
     test "conversations with a grouped counterpart fold into one row" do
@@ -41,7 +136,7 @@ module Chats
         @desk.message!(conversation, "ticket #{index}")
         conversation
       end
-      ordinary = @alice.chat_with(@bob)
+      ordinary = chatting(@bob)
 
       rows = Chats::Inbox.for(@alice).rows
       group = rows.find { |row| row.is_a?(Chats::InboxGroup) }
@@ -84,7 +179,7 @@ module Chats
     end
 
     test "only DIRECT conversations stack" do
-      group_chat = @alice.chat_with(@bob, @desk, title: "Trip")
+      group_chat = chatting(@bob, @desk, title: "Trip")
 
       assert_equal [group_chat], Chats::Inbox.for(@alice).rows
     end
@@ -92,8 +187,8 @@ module Chats
     test "the viewer's own stacking never applies to their own inbox" do
       # The desk is grouped, but from the DESK's seat the counterparts are
       # ordinary users — so its own inbox is flat.
-      @alice.chat_with(@desk)
-      @bob.chat_with(@desk)
+      chatting(@desk, from: @alice)
+      chatting(@desk, from: @bob)
 
       assert_equal 2, Chats::Inbox.for(@desk).rows.size
       assert_empty Chats::Inbox.for(@desk).rows.grep(Chats::InboxGroup)
@@ -115,9 +210,9 @@ module Chats
 
     test "filtering by counterpart lists that stack's conversations individually" do
       stack = Array.new(2) do |index|
-        @alice.chat_with(@desk, about: create_listing(title: "L#{index}"))
+        chatting(@desk, about: create_listing(title: "L#{index}"))
       end
-      @alice.chat_with(@bob)
+      chatting(@bob)
 
       inbox = Chats::Inbox.for(@alice, with: @desk)
 
@@ -127,7 +222,7 @@ module Chats
     end
 
     test "filtering by a counterpart with nothing shared is empty, never everything" do
-      @alice.chat_with(@bob)
+      chatting(@bob)
 
       assert_empty Chats::Inbox.for(@alice, with: @desk).rows
     end
@@ -144,7 +239,7 @@ module Chats
     test "inbox_limit caps the window and defaults to 200" do
       assert_equal 200, Chats.config.inbox_limit
 
-      3.times { |index| @alice.chat_with(create_user(name: "P#{index}")) }
+      3.times { |index| chatting(create_user(name: "P#{index}")) }
       Chats.config.inbox_limit = 2
 
       assert_equal 2, Chats::Inbox.for(@alice).rows.size
@@ -156,8 +251,8 @@ module Chats
     end
 
     test "inbox_scope composes into the query" do
-      kept = @alice.chat_with(@bob, about: create_listing(title: "Kept"))
-      @alice.chat_with(@carol)
+      kept = chatting(@bob, about: create_listing(title: "Kept"))
+      chatting(@carol)
 
       seen = []
       Chats.config.inbox_scope = lambda { |relation, viewer|
@@ -208,7 +303,7 @@ module Chats
     end
 
     test "search still filters by body and metadata, and searches inside stacks" do
-      hit = @alice.chat_with(@desk, about: create_listing(title: "Madrid → Barcelona"))
+      hit = chatting(@desk, about: create_listing(title: "Madrid → Barcelona"))
       miss = @alice.chat_with(@bob)
       @bob.message!(miss, "unrelated")
 
@@ -219,7 +314,7 @@ module Chats
     end
 
     test "conversations stays a relation in the simple case, for ejected inboxes" do
-      @alice.chat_with(@bob)
+      chatting(@bob)
 
       conversations = Chats::Inbox.for(@alice).conversations
 
@@ -229,8 +324,8 @@ module Chats
     end
 
     test "conversations becomes an Array once rows are assembled in Ruby" do
-      @alice.chat_with(@desk)
-      @alice.chat_with(@bob)
+      chatting(@desk)
+      chatting(@bob)
 
       assert_kind_of Array, Chats::Inbox.for(@alice).conversations
       assert_kind_of Array, Chats::Inbox.for(@alice, query: "bob").conversations
@@ -238,8 +333,8 @@ module Chats
 
     test "rows are ordered at full precision and tie-break on id" do
       at = Time.current.change(usec: 500_000) # a clean microsecond, so the bump below survives the DB
-      first = @alice.chat_with(@bob)
-      second = @alice.chat_with(@carol)
+      first = chatting(@bob)
+      second = chatting(@carol)
       # Identical timestamps: the order must still be total and repeatable.
       [first, second].each { |c| c.update_columns(last_message_at: at, updated_at: at) }
 
@@ -286,19 +381,19 @@ module Chats
     end
 
     test "inbox_limit still bounds the rows themselves" do
-      4.times { |index| @alice.chat_with(create_user(name: "P#{index}")) }
+      4.times { |index| chatting(create_user(name: "P#{index}")) }
       Chats.config.inbox_limit = 2
 
       assert_equal 2, Chats::Inbox.for(@alice).rows.size
     end
 
     test "the inbox query count does not grow with the inbox, or with stack depth" do
-      3.times { |index| @alice.chat_with(create_user(name: "P#{index}")) }
-      3.times { |index| @alice.chat_with(@desk, about: create_listing(title: "L#{index}")) }
+      3.times { |index| chatting(create_user(name: "P#{index}")) }
+      3.times { |index| chatting(@desk, about: create_listing(title: "L#{index}")) }
       shallow = count_inbox_queries
 
-      7.times { |index| @alice.chat_with(create_user(name: "Q#{index}")) }
-      12.times { |index| @alice.chat_with(@desk, about: create_listing(title: "D#{index}")) }
+      7.times { |index| chatting(create_user(name: "Q#{index}")) }
+      12.times { |index| chatting(@desk, about: create_listing(title: "D#{index}")) }
       deep = count_inbox_queries
 
       assert_equal shallow, deep, "the inbox must not go N+1 as it grows"
@@ -307,7 +402,35 @@ module Chats
       assert_operator deep, :<=, 14, "and it must stay a small, fixed budget"
     end
 
+    test "several stacks cost the same queries as one, and each counts only itself" do
+      desks = Array.new(2) { |index| create_desk(name: "Desk #{index}") }
+      desks.each_with_index do |desk, index|
+        (index + 2).times { |n| desk.message!(@alice, "ticket #{n}", about: create_listing(title: "D#{index}-#{n}")) }
+      end
+      two_stacks = count_inbox_queries
+
+      more = Array.new(3) { |index| create_desk(name: "More #{index}") }
+      more.each { |desk| 4.times { |n| desk.message!(@alice, "ticket #{n}", about: create_listing(title: "M#{n}")) } }
+      five_stacks = count_inbox_queries
+
+      assert_equal two_stacks, five_stacks, "a stack's totals must not cost queries of its own"
+
+      groups = Chats::Inbox.for(@alice).rows.grep(Chats::InboxGroup).index_by(&:messager)
+      assert_equal([2, 3, 4, 4, 4], (desks + more).map { |desk| groups.fetch(desk).open_count })
+      assert_equal([2, 3, 4, 4, 4], (desks + more).map { |desk| groups.fetch(desk).unread_count })
+    end
+
     private
+
+    # Open a conversation AND write in it — lists show only conversations
+    # with a message
+    # (Chats::Conversation.with_messages). The opener writes, so nothing is
+    # unread for them.
+    def chatting(*others, from: @alice, **options)
+      conversation = from.chat_with(*others, **options)
+      from.message!(conversation, "hi")
+      conversation
+    end
 
     def count_inbox_queries
       queries = 0

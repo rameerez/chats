@@ -36,9 +36,17 @@ const TRIM_LEEWAY = 20
 //                               already near the bottom (never yank them up
 //                               mid-history-read)
 //   * mark-as-read              debounce a POST to #read when foreign messages
-//                               arrive while the tab is visible — that POST
-//                               advances our read horizon and broadcasts fresh
-//                               read-state to everyone
+//                               arrive while the thread is on screen — that
+//                               POST advances our read horizon and broadcasts
+//                               fresh read-state to everyone. Only while the
+//                               viewer can actually be reading: a visible tab,
+//                               a thread with room to show itself (a minimized
+//                               dock window has none), and — inside a dock
+//                               window — one the viewer is engaged with (the
+//                               dock's `data-chats-active` gate; a window that
+//                               popped open by itself waits for a focus, a
+//                               press or a scroll). A dock window is rendered
+//                               unread (`readPending`) and reads the same way.
 //   * sent / seen receipts      derive per-message ticks client-side from the
 //                               broadcast read-state payload
 //   * day separators            recalculate local-calendar markers after the
@@ -74,11 +82,16 @@ export default class extends Controller {
     daySeparatorClass: { type: String, default: "chats-day-separator" },
     typingSuffix: String,
     copiedLabel: String,
-    group: Boolean
+    group: Boolean,
+    readPending: Boolean
   }
 
   connect() {
     this.registerTypingStreamAction()
+    // The dock's engagement gate: the window frame around a dock thread.
+    // No gate (the thread page) means always engaged.
+    this.gate = this.element.closest("[data-chats-active]")
+    this.gate?.addEventListener("chats:activated", this.flushPendingRead)
 
     // targetConnected fires for every server-rendered bubble right after
     // connect; this flag keeps the initial flood from triggering N scrolls
@@ -90,6 +103,7 @@ export default class extends Controller {
       this.renderReceipts()
       this.renderDaySeparators()
       this.renderMessageGroups()
+      if (this.readPendingValue) this.queueRead()
     })
 
     if (this.hasTypingTarget) {
@@ -111,6 +125,7 @@ export default class extends Controller {
     }
     this.element.addEventListener("click", this.suppressClickCapture, true)
     this.watchStreamSource()
+    this.watchScreenPresence()
   }
 
   disconnect() {
@@ -120,6 +135,8 @@ export default class extends Controller {
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
     this.sourceObserver?.disconnect()
+    this.presenceObserver?.disconnect()
+    this.gate?.removeEventListener("chats:activated", this.flushPendingRead)
     this.element.removeEventListener("click", this.suppressClickCapture, true)
     clearTimeout(this.pressTimer)
     this.teardownPopup()
@@ -350,7 +367,7 @@ export default class extends Controller {
   // --- Mark-as-read ------------------------------------------------------------
 
   queueRead() {
-    if (document.visibilityState !== "visible") {
+    if (!this.canRead()) {
       this.pendingRead = true
       return
     }
@@ -375,8 +392,54 @@ export default class extends Controller {
     }
   }
 
+  // Whether the viewer can be reading this thread right now.
+  canRead() {
+    return document.visibilityState === "visible" && this.engaged() && this.onScreen()
+  }
+
+  // The thread has room to show itself. Geometry alone, for any host that
+  // collapses a thread its own way; the dock's own state is engaged()'s job.
+  onScreen() {
+    return !this.hasScrollerTarget || this.scrollerTarget.clientHeight > 0
+  }
+
+  // Inside a dock window, what the dock says, explicitly: the window is
+  // neither minimized (data-chats-minimized) nor waiting for the viewer to
+  // turn to it (data-chats-active="false"). Geometry can't be trusted for
+  // the first: a folded window's scroller keeps whatever padding a host
+  // gives it. No gate (the thread page): always engaged.
+  engaged() {
+    if (!this.gate) return true
+
+    return this.gate.dataset.chatsActive !== "false" && !this.gate.hasAttribute("data-chats-minimized")
+  }
+
+  // A read that waited for the thread to be seen happens the moment it is:
+  // a minimized window expanding gives its scroller a height, and the dock
+  // says when the viewer turns to a window. It lands on the newest message,
+  // which is what arrived.
+  flushPendingRead = () => {
+    if (!this.pendingRead || !this.canRead()) return
+    this.pendingRead = false
+    this.scrollToBottom()
+    this.queueRead()
+  }
+
+  watchScreenPresence() {
+    if (!this.hasScrollerTarget || typeof ResizeObserver === "undefined") return
+
+    this.presenceObserver = new ResizeObserver(this.flushPendingRead)
+    this.presenceObserver.observe(this.scrollerTarget)
+  }
+
   postRead() {
     if (!this.readUrlValue) return
+    // Asked again when the timer fires: the window may have been minimized
+    // (or the tab hidden) in the 700ms since the message arrived.
+    if (!this.canRead()) {
+      this.pendingRead = true
+      return
+    }
     fetch(this.readUrlValue, {
       method: "POST",
       headers: { "X-CSRF-Token": csrfToken(), Accept: "application/json" }
@@ -822,8 +885,11 @@ export default class extends Controller {
     const messageId = bubble.id.split("_").pop()
 
     this.closePopup()
+    // `thread`: a page can hold several threads (the page's and the dock's
+    // windows), each with its own composer listening on window — the
+    // composer inside THIS thread is the one that edits.
     window.dispatchEvent(new CustomEvent("chats:edit-message", {
-      detail: { id: messageId, body: body }
+      detail: { id: messageId, body: body, thread: this.element }
     }))
   }
 

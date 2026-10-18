@@ -41,6 +41,13 @@ jobs:
           ruby-version: ${{ matrix.ruby_version }}
           bundler-cache: true
 
+      # The dock's layout tests (test/system) run in headless Chrome and, with
+      # CI set (GitHub sets it), FAIL rather than skip when it can't start.
+      # The ubuntu runners ship Chrome; this makes its absence an early,
+      # obvious failure. Selenium Manager fetches the matching driver.
+      - name: Check Chrome
+        run: google-chrome --version
+
       - name: Prepare database and run tests
         run: bundle exec rake db:create db:migrate test
 
@@ -90,6 +97,13 @@ jobs:
           ruby-version: ${{ matrix.ruby_version }}
           bundler-cache: true
 
+      # The dock's layout tests (test/system) run in headless Chrome and, with
+      # CI set (GitHub sets it), FAIL rather than skip when it can't start.
+      # The ubuntu runners ship Chrome; this makes its absence an early,
+      # obvious failure. Selenium Manager fetches the matching driver.
+      - name: Check Chrome
+        run: google-chrome --version
+
       - name: Prepare database
         run: bundle exec rake db:migrate:reset
 
@@ -132,6 +146,13 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby_version }}
           bundler-cache: true
+
+      # The dock's layout tests (test/system) run in headless Chrome and, with
+      # CI set (GitHub sets it), FAIL rather than skip when it can't start.
+      # The ubuntu runners ship Chrome; this makes its absence an early,
+      # obvious failure. Selenium Manager fetches the matching driver.
+      - name: Check Chrome
+        run: google-chrome --version
 
       - name: Prepare database
         run: bundle exec rake db:migrate:reset

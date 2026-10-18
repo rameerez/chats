@@ -226,6 +226,7 @@ Chats.configure do |config|
   #   app/views/chats/slots/_composer_actions.html.erb          your own buttons above the composer
   #   app/views/chats/slots/_locked_composer.html.erb           the locked composer's body
   #   app/views/chats/slots/_message_meta.html.erb              after each bubble's timestamp
+  #   app/views/chats/slots/_dock_panel_footer.html.erb         beside "See all messages" in the dock
   #
   # `rails generate chats:views` is still there for wholesale restyling.
 end

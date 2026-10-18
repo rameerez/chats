@@ -15,6 +15,7 @@ module Chats
       composer_actions
       locked_composer
       message_meta
+      dock_panel_footer
     ].freeze
 
     # The "message this person" affordance for host pages — a listing, a
@@ -24,18 +25,24 @@ module Chats
     #
     #   <%= chat_button_to @driver, about: @ride, label: "Chat with driver" %>
     #
+    # `dock: true` opens the conversation in a floating window of the
+    # messaging dock (`chats_dock`) instead of navigating to it. It belongs
+    # with `chats_dock` on the same page: without the dock the button's Turbo
+    # Stream has nowhere to land and nothing happens.
+    #
     # The recipient/subject travel as SIGNED GlobalIDs (purpose-scoped,
     # minted here, verified in Chats::ConversationsController#create), so the
     # endpoint never trusts raw polymorphic params. `expires_in: nil` because
     # these buttons sit on long-lived pages — the default 1-month sgid expiry
     # would quietly break stale tabs.
-    def chat_button_to(other, about: nil, label: nil, **html_options)
+    def chat_button_to(other, about: nil, label: nil, dock: false, **html_options)
       viewer = chats_viewer
       return if viewer.nil? || other.nil? || viewer == other
       return unless Chats.can_message?(viewer, other)
 
       params = { recipient_sgid: other.to_sgid(expires_in: nil, for: :chats_recipient).to_s }
       params[:subject_sgid] = about.to_sgid(expires_in: nil, for: :chats_subject).to_s if about
+      params[:dock] = 1 if dock
 
       button_to(
         label || I18n.t("chats.buttons.chat"),
@@ -57,6 +64,67 @@ module Chats
                   turbo_stream_from(messager, :chats_badge),
                   render(partial: "chats/shared/unread_badge", locals: { count: messager.unread_chats_count })
                 ])
+    end
+
+    # The messaging dock, LinkedIn / Steam style: a bar in the bottom-right
+    # corner with the unread badge, a panel of recent conversations, and
+    # floating conversation windows. One line in the host's layout:
+    #
+    #   <%= chats_dock %>
+    #
+    # Renders nothing for a signed-out visitor, and nothing on the engine's
+    # own pages (the inbox, a thread): those already ARE the messaging UI,
+    # and a window there would duplicate the thread's DOM ids the live
+    # streams address. The dock is permanent across Turbo visits, so the
+    # server can't take it away on the next page: it also hides ITSELF on
+    # any page carrying `data-chats-dock-hide` (the engine's pages do; put
+    # it on your own messaging pages). `everywhere: true` renders it on the
+    # engine's pages and ignores data-chats-dock-hide (it still never opens
+    # a window for a conversation the page itself shows).
+    #
+    #   windows:   how many windows may be open at once (3, and never more
+    #              than fit beside the panel: 2 at 1280px, 1 at 768px)
+    #   recent:    how many conversations the panel lists (10)
+    #   launcher:  false drops the phone's floating button, for a host that
+    #              opens the sheet from its own nav (see chats_dock_toggle)
+    def chats_dock(windows: 3, recent: 10, launcher: true, everywhere: false)
+      viewer = chats_viewer
+      return if viewer.nil?
+      return if chats_engine_page? && !everywhere
+
+      render(partial: "chats/dock/dock",
+             locals: { viewer: viewer, windows: windows, recent: recent, launcher: launcher, everywhere: everywhere })
+    end
+
+    # The data that makes ANY link to a conversation — a recent-list row, a
+    # host's own link — open that conversation's dock window instead of
+    # navigating, when a dock is on the page. The link stays a real link: a
+    # modified click, a page without the dock, or no JavaScript navigates.
+    #
+    #   <%= link_to "Chat", chats.conversation_path(c), data: chats_dock_opener(c) %>
+    def chats_dock_opener(conversation)
+      { chats_dock_conversation_id: conversation.id }
+    end
+
+    # The data that makes a host's own Messages link open the dock's panel
+    # (the full-screen sheet on a phone) instead of navigating, when a dock
+    # is on the page. Pair it with `chats_dock(launcher: false)` to replace
+    # the phone's floating button with your nav's. Without the dock, or
+    # without JavaScript, the link goes where its href says.
+    #
+    #   <%= link_to "Messages", chats.conversations_path, data: chats_dock_toggle %>
+    def chats_dock_toggle
+      { chats_dock_toggle: true }
+    end
+
+    # Whether +viewer+ muted +conversation+, read from the preloaded seats
+    # (the inbox loads them), so a row costs no query for it.
+    def chats_muted?(conversation, viewer)
+      return false if viewer.nil?
+
+      conversation.participants.any? do |seat|
+        seat.muted? && seat.messager_type == viewer.class.polymorphic_name && seat.messager_id == viewer.id
+      end
     end
 
     # An avatar for any messager: whatever `config.messager_avatar` returns
@@ -148,7 +216,7 @@ module Chats
     #   app/views/chats/slots/_inbox_top.html.erb
     #
     # The slots: inbox_top, inbox_empty, conversation_header_actions,
-    # composer_actions, locked_composer, message_meta.
+    # composer_actions, locked_composer, message_meta, dock_panel_footer.
     def chats_slot(name, **locals)
       return unless chats_slot?(name)
 
@@ -273,6 +341,11 @@ module Chats
     def chats_viewer
       method_name = Chats.config.current_messager_method
       respond_to?(method_name) ? send(method_name) : nil
+    end
+
+    # Whether this view is one of the engine's own screens.
+    def chats_engine_page?
+      respond_to?(:controller) && controller.is_a?(Chats::ApplicationController)
     end
 
     # Active Storage routes are drawn on the host app, not on this isolated

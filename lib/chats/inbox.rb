@@ -8,9 +8,11 @@ module Chats
   #   Chats::Inbox.for(alice)                       # rows, newest activity first
   #   Chats::Inbox.for(alice, query: "madrid")      # the search box
   #   Chats::Inbox.for(alice, with: support_desk)   # one stack's contents
+  #   Chats::Inbox.for(alice, limit: 10)            # the messaging dock's recent list
   #
   # Rows are `Chats::Conversation | Chats::InboxGroup`, sorted by last
-  # activity descending. Grouping happens HERE and nowhere else.
+  # activity descending. Grouping happens HERE and nowhere else, and so does
+  # the rule that a conversation with no messages is never listed.
   #
   # == Why `inbox_limit` bounds ROWS, not conversations
   #
@@ -26,24 +28,30 @@ module Chats
   class Inbox
     include Enumerable
 
-    attr_reader :viewer, :query, :with
+    attr_reader :viewer, :query, :with, :limit
 
     class << self
       # The inbox for +viewer+. Returns a Chats::Inbox, which enumerates its
       # rows (`to_a` for a plain Array).
-      def for(viewer, query: nil, with: nil)
-        new(viewer, query: query, with: with)
+      def for(viewer, query: nil, with: nil, limit: nil)
+        new(viewer, query: query, with: with, limit: limit)
       end
     end
 
-    def initialize(viewer, query: nil, with: nil)
+    # +limit+ is how many ROWS come back (`config.inbox_limit` by default).
+    # A smaller one is a smaller query, not a slice of the big one — except
+    # while searching, which still looks through the whole `inbox_limit`
+    # window (a match is no less a match for being the eleventh most
+    # recent conversation) and then returns at most +limit+ hits.
+    def initialize(viewer, query: nil, with: nil, limit: nil)
       @viewer = viewer
       @query = query.to_s.strip.presence
       @with = with
+      @limit = Integer(limit || Chats.config.inbox_limit).clamp(1, Chats.config.inbox_limit)
     end
 
     # Conversation | InboxGroup rows, newest activity first, at most
-    # `config.inbox_limit` of them.
+    # +limit+ of them.
     def rows
       @rows ||= build_rows
     end
@@ -111,16 +119,30 @@ module Chats
 
     private
 
-    def limit
-      Chats.config.inbox_limit
+    # How many conversations each leg of the query loads: the row limit, or
+    # the whole inbox window while a search filters it in Ruby.
+    def window
+      query ? Chats.config.inbox_limit : limit
     end
 
     # The viewer's own inbox relation (`Messager#chats`: `inbox_for` with
     # `config.inbox_scope` applied, and whatever the host's model adds on
     # top), memoized so it is built ONCE per inbox however many legs the
     # row query is split into (the stack aggregates build their own).
+    #
+    # Only conversations with at least one message (Conversation.
+    # with_messages, system messages and tombstones included): one that was
+    # opened and never used is not listed — not as a row, not in a
+    # stack, not in search, not in the `?with=` view. It still OPENS, because
+    # authorization reads `viewer.chats`, not this.
     def base_relation
-      @base_relation ||= viewer.chats.includes(:last_message, :subject, participants: :messager)
+      @base_relation ||= listed(viewer.chats).includes(:last_message, :subject, participants: :messager)
+    end
+
+    # What a list may show of +relation+. The one place the rule lives, so
+    # the rows and the stack totals can never disagree about it.
+    def listed(relation)
+      relation.with_messages
     end
 
     # The polymorphic types worth splitting out. Empty when nothing stacks
@@ -140,15 +162,15 @@ module Chats
 
     def load_conversations
       if filtered?
-        @ungrouped_relation = filter_to_counterpart(base_relation).limit(limit)
+        @ungrouped_relation = filter_to_counterpart(base_relation).limit(window)
         @stacked = []
       elsif grouped_types.empty?
-        @ungrouped_relation = base_relation.limit(limit)
+        @ungrouped_relation = base_relation.limit(window)
         @stacked = []
       else
         stacked = Chats::Conversation.direct.where(id: stacked_seats)
-        @ungrouped_relation = base_relation.where.not(id: stacked).limit(limit)
-        recent = base_relation.direct.where(id: stacked_seats).except(:includes).select(:id).limit(limit)
+        @ungrouped_relation = base_relation.where.not(id: stacked).limit(window)
+        recent = base_relation.direct.where(id: stacked_seats).except(:includes).select(:id).limit(window)
         # Preserve the recent search window, plus the freshest conversation
         # of each counterpart. A busy stack cannot consume another stack's
         # row; at most twice the row limit is materialized.
@@ -183,7 +205,7 @@ module Chats
                                                       messager_id: viewer.id })
                             .select("chats_conversations.id, #{activity} AS activity_at", ranking)
       Chats::Conversation.from(ranked, :ranked_stacks).where("stack_rank = 1")
-                         .order(Arel.sql("activity_at DESC, id DESC")).limit(limit).select(:id)
+                         .order(Arel.sql("activity_at DESC, id DESC")).limit(window).select(:id)
     end
 
     # Only the direct threads shared with one counterpart. Direct only, by
@@ -210,7 +232,8 @@ module Chats
         (stacks[Chats.messager_key(counterpart)] ||= [counterpart, []]).last << conversation
       end
 
-      rows.concat(stacks.each_value.map { |messager, members| build_group(messager, members) })
+      totals = stack_totals(stacks.each_value.map(&:first))
+      rows.concat(stacks.each_value.map { |messager, members| build_group(messager, members, totals) })
       sort_rows(rows).first(limit)
     end
 
@@ -226,31 +249,46 @@ module Chats
       end
     end
 
-    def build_group(messager, members)
-      totals = stack_totals(messager)
+    def build_group(messager, members, totals)
+      key = stack_key(messager.class.polymorphic_name, messager.id)
 
       Chats::InboxGroup.new(
         messager: messager,
         conversations: sort_rows(members),
-        unread_count: totals[:unread],
-        open_count: totals[:open]
+        unread_count: totals[:unread].fetch(key, 0),
+        open_count: totals[:open].fetch(key, 0)
       )
     end
 
-    # What a stacked row says about the WHOLE stack, in two indexed
-    # aggregates — independent of how deep the stack is, and of how much of
-    # it we loaded.
-    def stack_totals(messager)
-      scope = viewer.chats.reorder(nil).direct.where(
-        id: Chats::Participant.select(:conversation_id).where(
-          messager_type: messager.class.polymorphic_name, messager_id: messager.id
-        )
-      )
+    # What each stacked row says about its WHOLE stack, for every stack at
+    # once: two grouped aggregates, however many stacks the inbox shows and
+    # however deep each one runs — never per stack, never by loading one.
+    # Grouped by the counterpart's seat; the type and id lists may pair up
+    # a few seats that aren't stacks here, and those rows are simply never
+    # read back.
+    def stack_totals(messagers)
+      return { open: {}, unread: {} } if messagers.empty?
+
+      types = messagers.map { |messager| messager.class.polymorphic_name }.uniq
+      seats = listed(viewer.chats).reorder(nil).direct
+                                  .joins("INNER JOIN chats_participants stack_seats " \
+                                         "ON stack_seats.conversation_id = chats_conversations.id")
+                                  .where(stack_seats: { messager_type: types, messager_id: messagers.map(&:id) })
+                                  .group("stack_seats.messager_type", "stack_seats.messager_id")
 
       {
-        open: scope.distinct.count,
-        unread: scope.unread_by(viewer).reorder(nil).count("chats_messages.id")
+        open: keyed(seats.distinct.count("chats_conversations.id")),
+        unread: keyed(seats.unread_by(viewer).count("chats_messages.id"))
       }
+    end
+
+    def keyed(counts)
+      counts.transform_keys { |(type, id)| stack_key(type, id) }
+    end
+
+    # uuid and bigint keys alike: the database may hand ids back as strings.
+    def stack_key(type, id)
+      [type, id.to_s]
     end
 
     # The other party of a DIRECT conversation, when their class asked to be

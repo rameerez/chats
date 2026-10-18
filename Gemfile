@@ -53,6 +53,12 @@ group :test do
   gem "pg"
   gem "sqlite3"
 
+  # Browser tests (test/system): the dock's layout is measured in a real,
+  # headless Chrome — some promises (nothing past the viewport) only a
+  # renderer can check.
+  gem "capybara", require: false
+  gem "selenium-webdriver", require: false
+
   # Dummy Rails app
   gem "bootsnap", require: false
   gem "importmap-rails"

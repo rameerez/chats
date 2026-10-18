@@ -5,10 +5,14 @@
 
     A stack of one links straight to that thread (and the thread offers a
     "see all" link back here); a deeper stack opens the stack list, which is
-    either the host's `group_path:` or chats' own filtered inbox. %>
+    either the host's `group_path:` or chats' own filtered inbox.
+
+    In the messaging dock (`dock: true`) a stack of one opens its thread's
+    floating window; a deeper stack still goes to the stack list. %>
 <li class="chats-row chats-row--group <%= "chats-row--unread" if group.unread? %>"
     id="<%= group.dom_id %>">
-  <%= link_to chats_group_path(group), class: "chats-row__link" do %>
+  <%= link_to chats_group_path(group), class: "chats-row__link",
+        data: (chats_dock_opener(group.conversation) if local_assigns[:dock] && group.single?) do %>
     <%= chats_messager_avatar(group.messager) %>
 
     <span class="chats-row__body">

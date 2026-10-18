@@ -1,0 +1,12 @@
+<%# The dock's unread badge: the same number as the nav badge
+    (`unread_chats_count`), replaced on the viewer's dock stream with every
+    other [data-chats-unread-badge] inside the dock. No id — a page may hold
+    the nav badge too, and ids must stay unique. Not a live region: it would
+    chatter on every read; new messages are announced by the dock instead.
+    Hidden at zero, number kept. %>
+<%= tag.span class: "chats-badge chats-dock__badge",
+      hidden: !count.positive?,
+      data: { chats_unread_badge: true, "chats--dock-target": "badge", count: count } do %>
+  <span aria-hidden="true"><%= count > 99 ? "99+" : count %></span>
+  <span class="chats-visually-hidden"><%= count %> <%= t("chats.dock.unread_suffix") %></span>
+<% end %>

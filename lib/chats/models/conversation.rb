@@ -59,6 +59,25 @@ module Chats
       order(Arel.sql("COALESCE(chats_conversations.last_message_at, chats_conversations.created_at) DESC"))
     }
 
+    # Conversations that have at least one message, system messages and
+    # tombstones included (`last_message_id` set). Not "a person wrote here":
+    # a conversation holding only a system note, or only a deleted message,
+    # has messages. A conversation exists from the moment it is OPENED
+    # (`chat_with`, the Message button), and nobody wants an inbox full of
+    # the threads they opened and never used — "No messages yet" rows. So
+    # every LIST the gem renders (the inbox, its stacks, search, the
+    # `?with=` view, the dock's recent list) reads through this scope, while
+    # the authorization relation (`Messager#chats`) does NOT: an empty
+    # conversation still opens when addressed directly, which is how its
+    # first message gets written.
+    #
+    # Free, because the denormalized pointer already says it: a conversation
+    # has a last message exactly when it has messages (the pointer is set on
+    # every create and healed on every hard delete; a soft-deleted tombstone
+    # is still a message, so a thread whose only message was deleted stays
+    # listed, like everywhere else).
+    scope :with_messages, -> { where.not(last_message_id: nil) }
+
     # A messager's inbox: every conversation they're an active participant of
     # (not left), minus direct threads with someone they're blocked with,
     # newest activity first. THE hot query — keep it composable and indexed.

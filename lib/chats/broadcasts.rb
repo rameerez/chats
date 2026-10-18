@@ -4,7 +4,7 @@ require "action_view/record_identifier"
 
 module Chats
   # ALL of the gem's real-time fan-out, in one file — read this and you know
-  # the entire live behavior. Three streams exist:
+  # the entire live behavior. Four streams exist:
   #
   #   1. The CONVERSATION stream (`turbo_stream_from @conversation` on the
   #      thread page): surgical message append/replace/remove, the read-state
@@ -30,6 +30,23 @@ module Chats
   #      Deliberately separate from the inbox stream — if badges rode on it,
   #      every page embedding a badge would full-refresh on every message.
   #
+  #   4. The per-messager DOCK stream (`[messager, :chats_dock]`, subscribed
+  #      by the messaging dock — `chats_dock`). One render per participant
+  #      per event (chats/dock/_update), carrying up to two things:
+  #        * the dock's BADGES, with the same count as stream 3, whenever the
+  #          badge moves (a message for them, a read of theirs);
+  #        * the SIGNAL (chats/dock/_signal), replaced so the dock's
+  #          controller sees it connect: reload the recent list, and — for a
+  #          new message the participant should hear about — which
+  #          conversation it was, from whom, how much is unread there, and
+  #          that its window may pop open. Senders and edits/deletes get the
+  #          signal too (their lists reorder), never the pop-up.
+  #      The hint names a conversation only to a participant who can SEE it
+  #      (`messager.chats`: blocks and `inbox_scope` applied) — the dock's
+  #      own list and window endpoints refuse anything else, and the stream
+  #      must not tell them what those hide. No polling, no Action Cable
+  #      channel of our own.
+  #
   # Everything uses the `_later` variants (rendering happens in background
   # jobs, never inline in the request) except `message_destroyed`, where the
   # record is gone and can't be serialized for a job.
@@ -38,6 +55,7 @@ module Chats
 
     MESSAGE_PARTIAL = "chats/messages/message"
     BADGE_PARTIAL = "chats/shared/unread_badge"
+    DOCK_UPDATE_PARTIAL = "chats/dock/update"
     READ_STATE_PARTIAL = "chats/conversations/read_state"
 
     class << self
@@ -51,7 +69,7 @@ module Chats
           locals: { message: message }
         )
 
-        fan_out_inboxes(conversation, skip_badge_for: message.sender)
+        fan_out_inboxes(conversation, skip_badge_for: message.sender, message: message)
       end
 
       def message_updated(message)
@@ -111,7 +129,17 @@ module Chats
         Turbo::StreamsChannel.broadcast_refresh_later_to(messager, :chats_inbox)
       end
 
-      def update_badge_of(messager)
+      # The unread badges of +messager+: the nav badge (stream 3) and the
+      # dock's (stream 4), with the signal that tells the dock what changed.
+      # +conversation+ and +message+ say what happened (both nil for a
+      # read); +participant+ is the messager's seat there.
+      def update_badge_of(messager, conversation: nil, message: nil, participant: nil)
+        # Counted at broadcast-enqueue time: the badge is advisory UI; a
+        # count that's seconds stale self-heals on the next event. The SAME
+        # count the page renders (`chats_unread_badge`), so what the inbox
+        # scope hides never lights the badge. Counted once for both.
+        count = messager.unread_chats_count
+
         # REPLACE, not update: the partial renders the whole badge element
         # (its id included) — an `update` would nest it inside the existing
         # element and duplicate the id. Replace keeps it idempotent.
@@ -119,11 +147,23 @@ module Chats
           messager, :chats_badge,
           target: "chats_unread_badge",
           partial: BADGE_PARTIAL,
-          # Counted at broadcast-enqueue time: the badge is advisory UI; a
-          # count that's seconds stale self-heals on the next event. The
-          # SAME count the page renders (`chats_unread_badge`), so what the
-          # inbox scope hides never lights the badge.
-          locals: { count: messager.unread_chats_count }
+          locals: { count: count }
+        )
+
+        update_dock_of(messager, count: count, conversation: conversation, message: message, participant: participant)
+      end
+
+      # The dock's update (stream 4): the badges when +count+ is given, and
+      # the signal. A conversation the messager cannot see is never named:
+      # its badge count is still truthful, the signal is simply not sent.
+      def update_dock_of(messager, count: nil, conversation: nil, message: nil, participant: nil)
+        signal = dock_signal(messager, conversation, message, participant)
+        return if count.nil? && signal.nil?
+
+        Turbo::StreamsChannel.broadcast_render_later_to(
+          messager, :chats_dock,
+          partial: DOCK_UPDATE_PARTIAL,
+          locals: { count: count, signal: signal }
         )
       end
 
@@ -133,14 +173,40 @@ module Chats
       # the sender's — their OTHER tabs/devices need the new ordering; the
       # originating tab skips its own refresh via Turbo's request-id dedup),
       # and every participant except the sender gets a fresh unread badge.
-      def fan_out_inboxes(conversation, skip_badge_for: nil, badges: true)
+      # Everyone else — the sender, and every seat on an edit or a delete —
+      # gets the dock's list refresh alone.
+      def fan_out_inboxes(conversation, skip_badge_for: nil, badges: true, message: nil)
         conversation.participants.active.includes(:messager).each do |participant|
           messager = participant.messager
           next if messager.nil?
 
           refresh_inbox_of(messager)
-          update_badge_of(messager) if badges && messager != skip_badge_for
+          if badges && messager != skip_badge_for
+            update_badge_of(messager, conversation: conversation, message: message, participant: participant)
+          else
+            update_dock_of(messager, conversation: conversation)
+          end
         end
+      end
+
+      # What the dock is told, or nil for nothing at all. A read (no
+      # conversation) only reloads the list. A conversation the messager
+      # can't see (blocked, scoped out) is never named. A new message the
+      # participant would be notified about (Participant#notifiable_for?:
+      # not theirs, not muted, not a headless seat) may pop its window and
+      # be announced, with who it is from and how much is unread there.
+      def dock_signal(messager, conversation, message, participant)
+        return {} if conversation.nil?
+        return nil unless messager.chats.exists?(conversation.id)
+
+        signal = { conversation_id: conversation.id }
+        return signal unless message && participant&.notifiable_for?(message)
+
+        signal.merge(
+          notify: true,
+          sender_name: message.sender ? Chats.display_name_for(message.sender) : conversation.title_for(messager),
+          unread_count: participant.unread_count
+        )
       end
     end
   end

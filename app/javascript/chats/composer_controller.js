@@ -76,8 +76,11 @@ export default class extends Controller {
   // are disabled while editing (edits are body-only by design).
 
   beginEdit(event) {
-    const { id, body } = event.detail || {}
+    const { id, body, thread } = event.detail || {}
     if (!id || !this.hasInputTarget) return
+    // Several threads can share a page (the dock's windows): only the
+    // composer of the thread the message lives in edits it.
+    if (thread && !thread.contains(this.element)) return
 
     this.createAction ||= this.element.action
     this.element.action = `${this.createAction}/${id}`
@@ -110,6 +113,16 @@ export default class extends Controller {
     this.autosize()
     this.inputTarget.focus()
     this.inputTarget.setSelectionRange(this.inputTarget.value.length, this.inputTarget.value.length)
+  }
+
+  // Escape while editing cancels the edit, and only that: the dock (if the
+  // composer is in one of its windows) sees the event handled and leaves
+  // the window alone.
+  escape(event) {
+    if (!this.editing) return
+
+    event.preventDefault()
+    this.cancelEdit()
   }
 
   cancelEdit(event) {

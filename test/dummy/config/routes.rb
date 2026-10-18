@@ -12,5 +12,8 @@ Rails.application.routes.draw do
   # without dragging a real auth framework into the dummy.
   post "/test_login", to: "sessions#create", as: :test_login
 
+  get "/wrapped", to: "sessions#wrapped" # the host page in a layout that wraps the dock
+  get "/test_status/:status", to: "sessions#status" # an answer with any status (the dock's failure paths)
+
   root to: "sessions#home"
 end

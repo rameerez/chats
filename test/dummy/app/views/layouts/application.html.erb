@@ -2,13 +2,17 @@
 <html>
   <head>
     <title>Dummy</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <%= csrf_meta_tags %>
-    <%# No javascript_importmap_tags: the suite asserts engine pins via
-        Rails.application.importmap directly; rendering the tags would need
-        propshaft digests for every pinned file in the dummy. %>
+    <%= action_cable_meta_tag %>
+    <%= javascript_importmap_tags %>
     <%= yield :head %>
   </head>
   <body>
     <%= yield %>
+
+    <%# What the README tells a host to add: the dock renders for signed-in
+        viewers, and on none of the engine's own pages. %>
+    <%= chats_dock(**@dock_options.to_h) %>
   </body>
 </html>

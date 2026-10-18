@@ -1,0 +1,23 @@
+<%# A floating window's FRAME, loading its thread from `?window=1`
+    (conversations/window.html.erb). Appended to #chats_dock_windows by
+    ConversationsController#create (`chat_button_to …, dock: true`); the
+    dock's controller builds the identical element itself when a row or a
+    live message opens one (dock_controller.js, buildWindow) — keep the two
+    in step. A conversation already open in a window is focused instead of
+    reloaded (the controller intercepts the append).
+
+    `target: "_top"`: links inside a window open the page, never the frame.
+    `data-chats-active`: the viewer opened it, so it may mark messages read.
+    `data-focus`: and the composer takes the focus once the thread arrives. %>
+<%= turbo_frame_tag dom_id(conversation, :window),
+      src: chats_routes.conversation_path(conversation, window: 1),
+      target: "_top",
+      class: "chats-window",
+      data: {
+        "chats--dock-target": "window",
+        conversation_id: conversation.id,
+        chats_active: true,
+        focus: (true if local_assigns[:focus])
+      } do %>
+  <%= render "chats/dock/window_shell", state: :loading, title: conversation.title_for(chats_current_messager) %>
+<% end %>

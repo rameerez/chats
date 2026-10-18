@@ -35,7 +35,8 @@
   <%= turbo_stream_from chats_current_messager, :chats_inbox %>
 </div>
 
-<div class="chats chats-inbox">
+<%# data-chats-dock-hide: the messaging dock hides itself on this page. %>
+<div class="chats chats-inbox" data-chats-dock-hide>
   <header class="chats-inbox__header">
     <h1 class="chats-inbox__title"><%= t("chats.inbox.title") %></h1>
   </header>

@@ -54,6 +54,23 @@ en:
       send: "Send"
       attach: "Attach images"
       locked: "This conversation is closed."
+    dock:
+      title: "Messages"
+      unread_suffix: "unread"
+      see_all: "See all messages"
+      window_label: "Conversation with %{name}"
+      open_full: "Open full conversation"
+      minimize: "Minimize"
+      close: "Close conversation"
+      back: "Back to messages"
+      hello: "Say hello to %{name}."
+      load_error: "Couldn't load this conversation."
+      retry: "Try again"
+      new_message_from: "New message from %{name}"
+      window_unread:
+        one: "%{count} new message"
+        other: "%{count} new messages"
+      muted: "Muted"
     buttons:
       chat: "Message"
     flashes:

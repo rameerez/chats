@@ -10,7 +10,21 @@ class SessionsController < ApplicationController
     head :no_content
   end
 
+  # A host page (not one of the engine's): what the dock is for.
   def home
-    render plain: "dummy host root"
+    @people = current_user ? User.where.not(id: current_user.id).order(:id).limit(5) : []
+    # The browser tests try the dock's options (`?dock_windows=4`).
+    @dock_options = params[:dock_windows].present? ? { windows: params[:dock_windows].to_i } : {}
+  end
+
+  # Any status, for the browser tests of a window whose load fails.
+  def status
+    head params[:status].to_i
+  end
+
+  # The same page in a layout that wraps the dock in a shell element.
+  def wrapped
+    home
+    render :home, layout: "wrapped"
   end
 end

@@ -30,7 +30,7 @@ class InboxGroupsTest < ActionDispatch::IntegrationTest
 
   test "a deep stack links to the filtered inbox, which lists its conversations" do
     stack = Array.new(2) do |index|
-      @alice.chat_with(@desk, about: create_listing(title: "Listing #{index}"))
+      @alice.message!(@desk, "about listing #{index}", about: create_listing(title: "Listing #{index}")).conversation
     end
     login_as @alice
 
@@ -73,7 +73,7 @@ class InboxGroupsTest < ActionDispatch::IntegrationTest
 
   test "group_path: sends the stacked row wherever the host wants" do
     with_desk_group_path(->(viewer) { "/custom/desk/#{viewer.id}" }) do
-      2.times { |index| @alice.chat_with(@desk, about: create_listing(title: "L#{index}")) }
+      2.times { |index| @alice.message!(@desk, "hi", about: create_listing(title: "L#{index}")) }
       login_as @alice
 
       get "/messages"
@@ -107,8 +107,8 @@ class InboxGroupsTest < ActionDispatch::IntegrationTest
   end
 
   test "the filtered inbox never leaks conversations the viewer isn't in" do
-    outsider_thread = @bob.chat_with(@desk)
-    @alice.chat_with(@desk)
+    outsider_thread = @bob.message!(@desk, "mine, not Alice's").conversation
+    @alice.message!(@desk, "hello")
     login_as @alice
 
     get "/messages", params: { with: Chats.inbox_with_sgid(@desk) }
@@ -118,8 +118,8 @@ class InboxGroupsTest < ActionDispatch::IntegrationTest
   end
 
   test "a stacked counterpart's own inbox stays flat" do
-    @alice.chat_with(@desk)
-    @bob.chat_with(@desk)
+    @alice.message!(@desk, "hello")
+    @bob.message!(@desk, "hello")
     login_as @desk
 
     get "/messages"
@@ -130,7 +130,7 @@ class InboxGroupsTest < ActionDispatch::IntegrationTest
   end
 
   test "the controller still assigns @conversations for inboxes ejected under 0.1.x" do
-    conversation = @alice.chat_with(@bob)
+    conversation = @alice.message!(@bob, "hi").conversation
     login_as @alice
 
     get "/messages"

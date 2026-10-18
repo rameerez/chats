@@ -1,0 +1,75 @@
+<%# A dock window's header. Rendered with the thread (window.html.erb) and,
+    with only a name, as the shell a window shows while it loads or after it
+    failed (chats/dock/_window_shell) — so minimize and close always work.
+
+    Locals: conversation (nil in the shell), title, counterpart (or nil). %>
+<% conversation = local_assigns[:conversation] %>
+<% counterpart = local_assigns[:counterpart] %>
+<header class="chats-window__header">
+  <%# Phones show one full-screen window: back returns to the list. %>
+  <button type="button" class="chats-window__icon chats-window__back"
+          aria-label="<%= t("chats.dock.back") %>" title="<%= t("chats.dock.back") %>"
+          data-action="chats--dock#back">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+         stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 12H5m6-6-6 6 6 6"/></svg>
+  </button>
+
+  <button type="button" class="chats-window__title" aria-expanded="true" title="<%= title %>"
+          data-chats-dock-minimize data-action="chats--dock#minimize">
+    <% if counterpart %>
+      <%= chats_messager_avatar(counterpart) %>
+    <% elsif conversation %>
+      <%= chats_conversation_avatar(conversation, chats_current_messager) %>
+    <% end %>
+    <span class="chats-window__identity">
+      <span class="chats-window__name-row">
+        <span class="chats-window__name" data-chats-dock-name><%= title %></span>
+        <%= chats_verified_badge(counterpart) %>
+      </span>
+      <% if conversation&.subject_label %>
+        <span class="chats-window__subject"><%= conversation.subject_label %></span>
+      <% end %>
+    </span>
+    <%# The conversation's unread count while the window waits to be seen
+        (filled in by the dock's controller). %>
+    <span class="chats-badge chats-window__unread" data-chats-dock-window-unread hidden></span>
+  </button>
+
+  <%# The host's own thread actions (block, report, view profile), as on
+      the page's ⋯ menu, with the same locals. %>
+  <% if conversation && chats_slot?(:conversation_header_actions) %>
+    <details class="chats-menu chats-window__menu">
+      <summary class="chats-window__icon" aria-label="<%= t("chats.thread.options") %>"
+               title="<%= t("chats.thread.options") %>">⋯</summary>
+      <div class="chats-menu__panel">
+        <%= chats_slot :conversation_header_actions,
+              conversation: conversation,
+              viewer: chats_current_messager,
+              counterpart: counterpart,
+              blockable: chats_blockable?(counterpart) %>
+      </div>
+    </details>
+  <% end %>
+
+  <% if conversation %>
+    <%= link_to chats_routes.conversation_path(conversation),
+          class: "chats-window__icon chats-window__expand",
+          title: t("chats.dock.open_full"), "aria-label": t("chats.dock.open_full"),
+          data: { turbo_frame: "_top" } do %>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+    <% end %>
+  <% end %>
+  <button type="button" class="chats-window__icon chats-window__minimize"
+          aria-label="<%= t("chats.dock.minimize") %>" title="<%= t("chats.dock.minimize") %>"
+          data-action="chats--dock#minimize">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+         aria-hidden="true" focusable="false"><path d="M5 12h14"/></svg>
+  </button>
+  <button type="button" class="chats-window__icon chats-window__close"
+          aria-label="<%= t("chats.dock.close") %>" title="<%= t("chats.dock.close") %>"
+          data-action="chats--dock#close">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+         aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg>
+  </button>
+</header>
