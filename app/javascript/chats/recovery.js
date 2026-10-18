@@ -108,6 +108,10 @@ const requests = new Map()
 const answers = new Map() // key → the answer still being applied
 const REQUEST_WITHIN_MS = 15_000
 const APPLY_WITHIN_MS = 2_000
+// An answer Turbo hasn't applied this long after it joined the page never
+// will be: it is cancelled (its callers settle false, and a thread keeps
+// its stale mark, so it asks again on the next trigger).
+const APPLIED_WITHIN_MS = 10_000
 
 export function renderStreamFrom(url, { when = () => true, key = url, order = 0, applying = () => {} } = {}) {
   watchPageRenders()
@@ -134,6 +138,18 @@ export function renderStreamFrom(url, { when = () => true, key = url, order = 0,
     send(url, [caller])
   }
   return caller.answered
+}
+
+// A caller's `applying` hook, on its own: one that throws is reported and
+// marks that caller failed (it resolves false), and never keeps the others,
+// or the stream, from applying.
+function runApplying(caller) {
+  try {
+    caller.applying()
+  } catch (error) {
+    caller.failed = true
+    console.error(error)
+  }
 }
 
 // One request for +callers+ (who asked for the same URL in the same
@@ -167,8 +183,8 @@ function send(url, callers) {
       setTimeout(release, APPLY_WITHIN_MS)
       const newest = wanted.reduce((a, b) => (b.order > a.order ? b : a))
       const applied = await apply(html, () => wanted.some((caller) => caller.when()), newest.key, newest.order,
-                                  () => wanted.forEach((caller) => caller.applying()))
-      wanted.forEach((caller) => caller.resolve(applied && caller.when()))
+                                  () => wanted.forEach(runApplying))
+      wanted.forEach((caller) => caller.resolve(applied && !caller.failed && caller.when()))
     })
     .catch(() => entry.callers.forEach((caller) => caller.resolve(false)))
     .finally(() => {
@@ -293,7 +309,11 @@ function apply(html, when, key, order, applying) {
       when,
       applied: false,
       cancelled: false,
+      settled: false,
       settle(result) {
+        if (this.settled) return
+        this.settled = true
+        clearTimeout(this.bound)
         this.observer?.disconnect()
         if (answers.get(key) === this) answers.delete(key)
         marked.delete(mark)
@@ -323,6 +343,7 @@ function apply(html, when, key, order, applying) {
     }
     answer.observer = new MutationObserver(check)
     answer.observer.observe(document.documentElement, { childList: true })
+    if (waited) answer.bound = setTimeout(() => answer.cancel(), APPLIED_WITHIN_MS)
     check()
   })
 }
@@ -341,9 +362,20 @@ function guardStreams() {
 
     event.detail.render = async (stream) => {
       if (answer.cancelled || !(await stillWanted(answer.when)) || answer.cancelled) return
-      if (!answer.applied) answer.applying()
+      if (!answer.applied) {
+        try {
+          answer.applying()
+        } catch (error) {
+          console.error(error) // a caller's hook never stops the stream
+        }
+      }
       answer.applied = true
-      await render(stream)
+      try {
+        await render(stream)
+      } catch (error) {
+        console.error(error)
+        answer.cancel() // what is left of a broken answer never applies; its callers settle
+      }
     }
   })
 }

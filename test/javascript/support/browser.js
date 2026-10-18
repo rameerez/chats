@@ -188,7 +188,12 @@ function install() {
       const announce = (stream) => {
         const event = documentEvents.dispatch("turbo:before-stream-render", {
           target: stream,
-          detail: { render: async () => performed.push(stream) }
+          detail: {
+            render: async () => {
+              if (stream.fails) throw new Error("Turbo couldn't render it")
+              performed.push(stream)
+            }
+          }
         })
         stream.render = () => event.detail.render(stream)
         return event

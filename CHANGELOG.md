@@ -173,7 +173,11 @@ to configure, no polling.**
   once, but asked while it is already on its way, it is made once more as
   soon as that one has its answer from the network (never waiting on
   Turbo to apply it), for everyone who asked meanwhile, each keeping its
-  own `when` and its own outcome. An empty
+  own `when` and its own outcome. An answer Turbo hasn't applied 10
+  seconds after it joined the page is cancelled (its callers settle, and a
+  thread stays marked behind), and neither a caller's hook that throws nor
+  a stream that fails to render can leave an answer half-applied or its
+  callers waiting. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also

@@ -430,6 +430,66 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "an answer Turbo never applies is cancelled after 10s: every caller settles false, nothing is left watching" do
+    run_streams(<<~JAVASCRIPT)
+      const watchingBefore = page.observerCount()
+      const results = []
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => results.push(rendered))
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => results.push(rendered))
+      answer(0)
+      await page.settle()
+      assert.strictEqual(turbo.pending().length, 2)
+
+      page.advance(9_999); await page.settle()
+      assert.deepStrictEqual(results, [], "still within the bound")
+      page.advance(1); await page.settle()
+      assert.deepStrictEqual(results, [false, false])
+      assert.strictEqual(turbo.pending().length, 0, "its streams are gone")
+      assert.strictEqual(page.observerCount(), watchingBefore, "and nothing watches for them")
+
+      await turbo.applyStreams()                              // were Turbo to get to them now…
+      assert.strictEqual(turbo.performed.length, 0, "…they do nothing")
+    JAVASCRIPT
+  end
+
+  test "a caller's applying hook that throws doesn't stop the stream or the other callers" do
+    run_streams(<<~JAVASCRIPT)
+      const errors = []
+      console.error = (error) => errors.push(error.message)
+      const results = {}
+      const hooks = []
+      renderStreamFrom("/messages/7/refresh?after=0", { applying: () => { hooks.push("B"); throw new Error("B's hook") } })
+        .then((rendered) => { results.B = rendered })
+      renderStreamFrom("/messages/7/refresh?after=0", { applying: () => hooks.push("C") })
+        .then((rendered) => { results.C = rendered })
+      answer(0)
+      await page.settle()
+      await turbo.applyStreams(); await page.settle()
+
+      assert.deepStrictEqual(hooks, ["B", "C"], "the second hook ran")
+      assert.strictEqual(turbo.performed.length, 2, "the streams applied")
+      assert.deepStrictEqual(results, { B: false, C: true })
+      assert.deepStrictEqual(errors, ["B's hook"], "reported")
+    JAVASCRIPT
+  end
+
+  test "a stream that fails to render settles its answer, and what is left of it never applies" do
+    run_streams(<<~JAVASCRIPT)
+      const errors = []
+      console.error = (error) => errors.push(error.message)
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => { resolved = rendered })
+      answer(0)
+      await page.settle()
+      turbo.pending()[0].fails = true
+
+      await turbo.applyStreams(); await page.settle()
+      assert.strictEqual(resolved, false)
+      assert.strictEqual(turbo.performed.length, 0, "the rest of the broken answer did nothing")
+      assert.deepStrictEqual(errors, ["Turbo couldn't render it"])
+    JAVASCRIPT
+  end
+
   test "a request that hangs (a network interruption) is aborted after 15s, and the next catch-up asks again" do
     run_streams(<<~JAVASCRIPT)
       let resolved = null
