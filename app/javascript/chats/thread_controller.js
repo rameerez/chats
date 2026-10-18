@@ -36,9 +36,14 @@ const TRIM_LEEWAY = 20
 //                               already near the bottom (never yank them up
 //                               mid-history-read)
 //   * mark-as-read              debounce a POST to #read when foreign messages
-//                               arrive while the tab is visible — that POST
-//                               advances our read horizon and broadcasts fresh
-//                               read-state to everyone
+//                               arrive while the thread is on screen — that
+//                               POST advances our read horizon and broadcasts
+//                               fresh read-state to everyone. "On screen" is
+//                               a visible tab AND a thread with room to show
+//                               itself: a minimized dock window reads when it
+//                               is expanded, not before. A dock window is
+//                               rendered unread (`readPending`) and reads the
+//                               same way.
 //   * sent / seen receipts      derive per-message ticks client-side from the
 //                               broadcast read-state payload
 //   * day separators            recalculate local-calendar markers after the
@@ -74,7 +79,8 @@ export default class extends Controller {
     daySeparatorClass: { type: String, default: "chats-day-separator" },
     typingSuffix: String,
     copiedLabel: String,
-    group: Boolean
+    group: Boolean,
+    readPending: Boolean
   }
 
   connect() {
@@ -90,6 +96,7 @@ export default class extends Controller {
       this.renderReceipts()
       this.renderDaySeparators()
       this.renderMessageGroups()
+      if (this.readPendingValue) this.queueRead()
     })
 
     if (this.hasTypingTarget) {
@@ -111,6 +118,7 @@ export default class extends Controller {
     }
     this.element.addEventListener("click", this.suppressClickCapture, true)
     this.watchStreamSource()
+    this.watchScreenPresence()
   }
 
   disconnect() {
@@ -120,6 +128,7 @@ export default class extends Controller {
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
     this.sourceObserver?.disconnect()
+    this.presenceObserver?.disconnect()
     this.element.removeEventListener("click", this.suppressClickCapture, true)
     clearTimeout(this.pressTimer)
     this.teardownPopup()
@@ -350,7 +359,7 @@ export default class extends Controller {
   // --- Mark-as-read ------------------------------------------------------------
 
   queueRead() {
-    if (document.visibilityState !== "visible") {
+    if (document.visibilityState !== "visible" || !this.onScreen()) {
       this.pendingRead = true
       return
     }
@@ -373,6 +382,27 @@ export default class extends Controller {
     } else {
       this.hiddenAt = Date.now()
     }
+  }
+
+  // The thread has room to show itself. False for a minimized dock window
+  // (collapsed to its header: the scroller is there, zero pixels tall).
+  onScreen() {
+    return !this.hasScrollerTarget || this.scrollerTarget.clientHeight > 0
+  }
+
+  // A read that waited for the thread to be seen happens the moment it is:
+  // a minimized window expanding gives its scroller a height, and that is
+  // the signal. It lands on the newest message, which is what arrived.
+  watchScreenPresence() {
+    if (!this.hasScrollerTarget || typeof ResizeObserver === "undefined") return
+
+    this.presenceObserver = new ResizeObserver(() => {
+      if (!this.pendingRead || !this.onScreen() || document.visibilityState !== "visible") return
+      this.pendingRead = false
+      this.scrollToBottom()
+      this.queueRead()
+    })
+    this.presenceObserver.observe(this.scrollerTarget)
   }
 
   postRead() {
@@ -822,8 +852,11 @@ export default class extends Controller {
     const messageId = bubble.id.split("_").pop()
 
     this.closePopup()
+    // `thread`: a page can hold several threads (the page's and the dock's
+    // windows), each with its own composer listening on window — the
+    // composer inside THIS thread is the one that edits.
     window.dispatchEvent(new CustomEvent("chats:edit-message", {
-      detail: { id: messageId, body: body }
+      detail: { id: messageId, body: body, thread: this.element }
     }))
   }
 

@@ -1,0 +1,144 @@
+<%# The thread body: everything live about one open conversation, shared by
+    the thread PAGE (show.html.erb) and a floating dock WINDOW
+    (window.html.erb). Rendered as a partial LAYOUT — `yield` is the header,
+    which is the one thing the two differ in: the page keeps its full header
+    (back link, ⋯ menu), the window its compact one (minimize, close, open
+    full page).
+
+    One conversation stream powers everything here: message
+    append/replace/remove, the read-state payload, and typing pings. Bubbles
+    arrive VIEWER-AGNOSTIC from shared broadcasts; the chats--thread Stimulus
+    controller aligns own-vs-other by comparing each bubble's sender key
+    against its `me` value (that's what makes one broadcast render work for
+    every subscriber).
+
+    The DOM ids (messages, composer, composer_errors, read_state, typing) are
+    the targets the streams address, so a conversation is rendered at most
+    ONCE per page: the dock never opens a window for a conversation the page
+    already shows.
+
+    Locals:
+      conversation     the Chats::Conversation
+      messages         the latest page, oldest first
+      more             whether older pages exist (the lazy frame chain)
+      first_unread_id  where the «new messages» line goes, or nil
+      counterpart      the other messager of a direct thread, or nil
+      read_pending     true when the server did NOT read this render (a dock
+                       window): the controller posts #read once it is on
+                       screen. %>
+<% read_pending = local_assigns.fetch(:read_pending, false) %>
+<%= tag.div class: "chats chats-thread", data: {
+      controller: "chats--thread",
+      "chats--thread-me-value": Chats.messager_key(chats_current_messager),
+      "chats--thread-read-url-value": read_conversation_path(conversation),
+      "chats--thread-read-pending-value": read_pending,
+      "chats--thread-sent-label-value": t("chats.thread.sent"),
+      "chats--thread-seen-label-value": Chats.config.read_receipts ? t("chats.thread.seen") : "",
+      "chats--thread-today-label-value": t("chats.thread.today"),
+      "chats--thread-yesterday-label-value": t("chats.thread.yesterday"),
+      "chats--thread-typing-suffix-value": t("chats.thread.typing_suffix"),
+      "chats--thread-group-value": conversation.group?,
+      "chats--thread-refresh-url-value": refresh_conversation_path(conversation),
+      "chats--thread-thread-url-value": conversation_path(conversation),
+      "chats--thread-copied-label-value": t("chats.message.copied"),
+      # A plain data attribute (not a Stimulus value): host CSS/JS keys its
+      # own block/report affordances off it. False for a messager declared
+      # `acts_as_messager blockable: false`.
+      "chats-blockable": chats_blockable?(counterpart),
+      action: "pointerdown->chats--thread#pressStart pointermove->chats--thread#pressMove " \
+              "pointerup->chats--thread#pressEnd pointercancel->chats--thread#pressCancel " \
+              "contextmenu->chats--thread#contextMenu"
+    } do %>
+
+  <%= turbo_stream_from conversation %>
+
+  <%= yield %>
+
+  <div class="chats-thread__scroll" data-chats--thread-target="scroller">
+    <% if more && messages.any? %>
+      <%# Lazy frame chain for infinite scroll-up: when this frame becomes
+          visible, Turbo fetches the previous keyset page (?before=oldest id),
+          whose response contains a frame with this SAME id — older messages
+          plus, recursively, the next frame. See ConversationsController#show. %>
+      <%= turbo_frame_tag "chats_page_#{messages.first.id}",
+            src: conversation_path(conversation, before: messages.first.id),
+            loading: :lazy do %>
+        <div class="chats-loader"><%= t("chats.thread.loading") %></div>
+      <% end %>
+    <% end %>
+
+    <div id="<%= dom_id(conversation, :messages) %>" class="chats-thread__messages">
+      <%# Explicit loop (not a collection render) so the «new messages»
+          divider can sit BEFORE the first unread bubble (WhatsApp's "the
+          catch-up starts here" line). Server-rendered on the initial page
+          only; it scrolls away naturally as the thread lives on. %>
+      <% messages.each do |message| %>
+        <% if message.id == first_unread_id %>
+          <div class="chats-thread__unread-line" role="separator">
+            <span><%= t("chats.thread.new_messages") %></span>
+          </div>
+        <% end %>
+        <%= render "chats/messages/message", message: message %>
+      <% end %>
+    </div>
+
+    <%= render "chats/conversations/read_state", conversation: conversation %>
+
+    <div id="<%= dom_id(conversation, :typing) %>"
+         class="chats-typing"
+         data-chats--thread-target="typing"
+         hidden></div>
+  </div>
+
+  <%# Long-press popup (Telegram-style): the backdrop blurs the thread, the
+      pressed bubble's clone morphs to the center, the reactions pill sits
+      above it and the contextual menu below. Slots are filled by cloning
+      the bubble's <template data-chats-message-menu>. %>
+  <div class="chats-popup"
+       role="dialog"
+       aria-modal="true"
+       data-chats--thread-target="popup"
+       hidden>
+    <div class="chats-popup__backdrop" data-action="click->chats--thread#closePopup"></div>
+    <div class="chats-popup__stack">
+      <div class="chats-popup__slot chats-popup__slot--reactions"
+           data-chats--thread-target="popupReactions"
+           data-action="click->chats--thread#popupMenuClicked"></div>
+      <div class="chats-popup__slot chats-popup__slot--bubble" data-chats--thread-target="popupBubble"></div>
+      <div class="chats-popup__slot chats-popup__slot--menu"
+           data-chats--thread-target="popupMenu"
+           data-action="click->chats--thread#popupMenuClicked"></div>
+    </div>
+  </div>
+
+  <div class="chats-attachment-preview"
+       role="dialog"
+       aria-modal="true"
+       tabindex="-1"
+       data-chats--thread-target="attachmentDialog"
+       data-action="keydown.esc->chats--thread#closeAttachment"
+       hidden>
+    <div class="chats-attachment-preview__surface"
+         data-action="click->chats--thread#closeAttachmentFromBackdrop">
+      <button type="button"
+              class="chats-attachment-preview__close"
+              aria-label="<%= t("chats.message.close_attachment") %>"
+              data-action="chats--thread#closeAttachment">×</button>
+      <figure class="chats-attachment-preview__figure">
+        <img class="chats-attachment-preview__image"
+             alt=""
+             data-chats--thread-target="attachmentImage">
+      </figure>
+    </div>
+  </div>
+
+  <%# A locked conversation (its SUBJECT says so — Chats::ChatSubject#
+      chat_locked?) keeps its whole history readable and swaps the composer
+      for the reason it's closed. Never a hidden screen: gate the action,
+      explain it in place. %>
+  <% if conversation.locked? %>
+    <%= render "chats/conversations/locked_composer", conversation: conversation %>
+  <% else %>
+    <%= render "chats/messages/composer", conversation: conversation %>
+  <% end %>
+<% end %>
