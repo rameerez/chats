@@ -232,6 +232,62 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "a newer catch-up that applied first: the older answer arriving last is dropped, B's state stays" do
+    run_thread(async(<<~JAVASCRIPT))
+      thread.refreshThread()                                    // A
+      live(thread, bubble(20, { createdAtUs: 20_000_000 }))
+      thread.refreshThread()                                    // B
+      page.respond(page.requests[1], { body: '<turbo-stream action="replace" target="b"></turbo-stream>' })   // B applies
+      await page.settle()
+      thread.caughtUp({ detail: { render: "r1", after: 20_000_000, changed: 20_000_000, changedIds: ["20"] } })
+      const bState = JSON.stringify(thread.reconciled)
+      assert.ok(!("chatsStale" in thread.element.dataset))
+      assert.strictEqual(thread.element.dataset.chatsApplied, "2")
+
+      page.respond(page.requests[0], { body: '<turbo-stream action="replace" target="a"></turbo-stream>' })   // A, last
+      await page.settle()
+      assert.strictEqual(page.rendered.length, 1, "A is dropped")
+      assert.strictEqual(JSON.stringify(thread.reconciled), bState, "cursors stay B's")
+      assert.ok(!("chatsStale" in thread.element.dataset), "and so does the mark")
+    JAVASCRIPT
+  end
+
+  test "an older answer whose streams Turbo reaches after a newer answer's started applying does nothing" do
+    # B arrives first and its streams wait for their repaint; A arrives
+    # after. B's begin applying, then A's come up: A's are dropped.
+    run_thread(async(<<~JAVASCRIPT))
+      const turbo = page.turboStreams()
+      thread.refreshThread()                                    // A
+      live(thread, bubble(20, { createdAtUs: 20_000_000 }))
+      thread.refreshThread()                                    // B
+      page.respond(page.requests[1], { body: '<turbo-stream action="replace" target="b"></turbo-stream>' })
+      await page.settle()
+      page.respond(page.requests[0], { body: '<turbo-stream action="replace" target="a"></turbo-stream>' })
+      await page.settle()
+      assert.strictEqual(turbo.pending().length, 1, "A arrived after B was waiting: it never even joins the page")
+
+      await turbo.applyStreams(); await page.settle()
+      assert.deepStrictEqual(turbo.performed.map((stream) => stream.attributes.target), ["b"])
+      assert.strictEqual(thread.element.dataset.chatsApplied, "2")
+    JAVASCRIPT
+  end
+
+  test "an older answer already waiting when a newer one starts applying is stopped at its stream" do
+    run_thread(async(<<~JAVASCRIPT))
+      const turbo = page.turboStreams()
+      thread.refreshThread()                                    // A
+      live(thread, bubble(20, { createdAtUs: 20_000_000 }))
+      thread.refreshThread()                                    // B
+      page.respond(page.requests[0], { body: '<turbo-stream action="replace" target="a"></turbo-stream>' })   // A waits…
+      await page.settle()
+      page.respond(page.requests[1], { body: '<turbo-stream action="replace" target="b"></turbo-stream>' })   // …B, newer, replaces it
+      await page.settle()
+
+      await turbo.applyStreams(); await page.settle()
+      assert.deepStrictEqual(turbo.performed.map((stream) => stream.attributes.target), ["b"])
+    JAVASCRIPT
+  end
+
   test "an empty thread asks from the epoch: its first message may be the one it missed" do
     run_thread(<<~JAVASCRIPT)
       rendered([]).refreshThread()

@@ -585,6 +585,12 @@ export default class extends Controller {
     return Number(this.element.dataset.chatsCatchUp || 0)
   }
 
+  // The newest catch-up whose answer has started applying
+  // (data-chats-applied): nothing older may apply after it.
+  get latestApplied() {
+    return Number(this.element.dataset.chatsApplied || 0)
+  }
+
   // An answer carries the render it was asked from (`render`): one for an
   // earlier render of this conversation (the page or the window rendered it
   // again while the answer was on its way) would move the new render's
@@ -665,12 +671,20 @@ export default class extends Controller {
     // window rendered the conversation again is dropped unrendered.
     const render = this.element.dataset.chatsRender
     params.set("render", render)
-    const current = () => this.element.isConnected && this.element.dataset.chatsRender === render
+    // …and to being no older than the newest catch-up applied: an answer
+    // that arrives (or reaches a stream) after a newer one has applied would
+    // put older bubbles, read state and cursors over the newer ones.
+    const current = () => this.element.isConnected && this.element.dataset.chatsRender === render &&
+      attempt >= this.latestApplied
 
     // Resolves once Turbo has applied the answer, so `last` is gone by then
     // if the history was re-rendered.
-    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, { when: current, key: this.element }).then((rendered) => {
+    const applying = () => { if (attempt > this.latestApplied) this.element.dataset.chatsApplied = String(attempt) }
+    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, {
+      when: current, key: this.element, order: attempt, applying
+    }).then((rendered) => {
       if (!rendered) return
+      applying() // (an answer with no stream to apply has applied all the same)
       // Only the newest catch-up's answer says the thread is up to date: an
       // older one that applies after a newer one was asked (and maybe
       // failed) still renders what it brought, and leaves the mark.

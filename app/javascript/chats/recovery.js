@@ -93,7 +93,12 @@ export function recoverMissedBroadcasts(element, catchUp, { sources = SOURCE, st
 //   * one unapplied answer per `key` (the URL, or what the caller names —
 //     the thread names itself): a newer answer for it cancels the older
 //     one's leftover streams, and so does cancelStreamsFor(key), which the
-//     thread calls as it disconnects.
+//     thread calls as it disconnects. "Newer" is the caller's `order` (the
+//     thread numbers its catch-ups) when it gives one, else arrival: an
+//     older answer arriving after a newer one is waiting is dropped instead;
+//   * `applying` is called once, as the first stream of the answer is about
+//     to be applied, so a caller can tell answers older than it to stop
+//     (the thread's `when` turns false for them).
 // Anything but a Turbo Stream (a sign-in page after the session expired, an
 // error page) is ignored: the next catch-up tries again.
 const requests = new Map()
@@ -101,7 +106,7 @@ const answers = new Map() // key → the answer still being applied
 const REQUEST_WITHIN_MS = 15_000
 const APPLY_WITHIN_MS = 2_000
 
-export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
+export function renderStreamFrom(url, { when = () => true, key = url, order = 0, applying = () => {} } = {}) {
   watchPageRenders()
   if (requests.has(url)) return requests.get(url)
 
@@ -119,7 +124,7 @@ export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
       if (!html || !(await stillWanted(when))) return false
 
       setTimeout(release, APPLY_WITHIN_MS)
-      return apply(html, when, key)
+      return apply(html, when, key, order, applying)
     })
     .catch(() => false)
     .finally(() => {
@@ -232,14 +237,17 @@ async function stillWanted(when) {
 // rendered at the same moment, is none of its business.
 let answerCount = 0
 
-function apply(html, when, key) {
+function apply(html, when, key, order, applying) {
   if (!window.Turbo?.renderStreamMessage) return Promise.resolve(false)
   guardStreams()
+  if ((answers.get(key)?.order ?? -Infinity) > order) return Promise.resolve(false) // a newer one is waiting
   cancelStreamsFor(key)
 
   const mark = `${Date.now().toString(36)}-${++answerCount}`
   return new Promise((resolve) => {
     const answer = {
+      order,
+      applying,
       when,
       applied: false,
       cancelled: false,
@@ -291,6 +299,7 @@ function guardStreams() {
 
     event.detail.render = async (stream) => {
       if (answer.cancelled || !(await stillWanted(answer.when)) || answer.cancelled) return
+      if (!answer.applied) answer.applying()
       answer.applied = true
       await render(stream)
     }
