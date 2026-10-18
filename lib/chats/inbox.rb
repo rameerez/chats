@@ -231,7 +231,8 @@ module Chats
         (stacks[Chats.messager_key(counterpart)] ||= [counterpart, []]).last << conversation
       end
 
-      rows.concat(stacks.each_value.map { |messager, members| build_group(messager, members) })
+      totals = stack_totals(stacks.each_value.map(&:first))
+      rows.concat(stacks.each_value.map { |messager, members| build_group(messager, members, totals) })
       sort_rows(rows).first(limit)
     end
 
@@ -247,31 +248,46 @@ module Chats
       end
     end
 
-    def build_group(messager, members)
-      totals = stack_totals(messager)
+    def build_group(messager, members, totals)
+      key = stack_key(messager.class.polymorphic_name, messager.id)
 
       Chats::InboxGroup.new(
         messager: messager,
         conversations: sort_rows(members),
-        unread_count: totals[:unread],
-        open_count: totals[:open]
+        unread_count: totals[:unread].fetch(key, 0),
+        open_count: totals[:open].fetch(key, 0)
       )
     end
 
-    # What a stacked row says about the WHOLE stack, in two indexed
-    # aggregates — independent of how deep the stack is, and of how much of
-    # it we loaded.
-    def stack_totals(messager)
-      scope = listed(viewer.chats).reorder(nil).direct.where(
-        id: Chats::Participant.select(:conversation_id).where(
-          messager_type: messager.class.polymorphic_name, messager_id: messager.id
-        )
-      )
+    # What each stacked row says about its WHOLE stack, for every stack at
+    # once: two grouped aggregates, however many stacks the inbox shows and
+    # however deep each one runs — never per stack, never by loading one.
+    # Grouped by the counterpart's seat; the type and id lists may pair up
+    # a few seats that aren't stacks here, and those rows are simply never
+    # read back.
+    def stack_totals(messagers)
+      return { open: {}, unread: {} } if messagers.empty?
+
+      types = messagers.map { |messager| messager.class.polymorphic_name }.uniq
+      seats = listed(viewer.chats).reorder(nil).direct
+                                  .joins("INNER JOIN chats_participants stack_seats " \
+                                         "ON stack_seats.conversation_id = chats_conversations.id")
+                                  .where(stack_seats: { messager_type: types, messager_id: messagers.map(&:id) })
+                                  .group("stack_seats.messager_type", "stack_seats.messager_id")
 
       {
-        open: scope.distinct.count,
-        unread: scope.unread_by(viewer).reorder(nil).count("chats_messages.id")
+        open: keyed(seats.distinct.count("chats_conversations.id")),
+        unread: keyed(seats.unread_by(viewer).count("chats_messages.id"))
       }
+    end
+
+    def keyed(counts)
+      counts.transform_keys { |(type, id)| stack_key(type, id) }
+    end
+
+    # uuid and bigint keys alike: the database may hand ids back as strings.
+    def stack_key(type, id)
+      [type, id.to_s]
     end
 
     # The other party of a DIRECT conversation, when their class asked to be

@@ -394,6 +394,24 @@ module Chats
       assert_operator deep, :<=, 14, "and it must stay a small, fixed budget"
     end
 
+    test "several stacks cost the same queries as one, and each counts only itself" do
+      desks = Array.new(2) { |index| create_desk(name: "Desk #{index}") }
+      desks.each_with_index do |desk, index|
+        (index + 2).times { |n| desk.message!(@alice, "ticket #{n}", about: create_listing(title: "D#{index}-#{n}")) }
+      end
+      two_stacks = count_inbox_queries
+
+      more = Array.new(3) { |index| create_desk(name: "More #{index}") }
+      more.each { |desk| 4.times { |n| desk.message!(@alice, "ticket #{n}", about: create_listing(title: "M#{n}")) } }
+      five_stacks = count_inbox_queries
+
+      assert_equal two_stacks, five_stacks, "a stack's totals must not cost queries of its own"
+
+      groups = Chats::Inbox.for(@alice).rows.grep(Chats::InboxGroup).index_by(&:messager)
+      assert_equal([2, 3, 4, 4, 4], (desks + more).map { |desk| groups.fetch(desk).open_count })
+      assert_equal([2, 3, 4, 4, 4], (desks + more).map { |desk| groups.fetch(desk).unread_count })
+    end
+
     private
 
     # Open a conversation AND write in it — the only kind a list shows
