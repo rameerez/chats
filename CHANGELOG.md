@@ -153,11 +153,17 @@ to configure, no polling.**
   can make last many tasks, and keeps its answer, decided only once every
   `turbo:before-render` has had its `turbo:render`, paired first in, first
   out; a render that runs past 10 seconds stops holding things up but stays
-  paired until its own end, a window it then brings back catches up anew,
-  once, and a render that never ends is forgotten after a minute along
-  with what it made give up), and only the
+  paired until its own end, and one that never ends is forgotten after a
+  minute), and only the
   answer's own streams are guarded (`data-chats-answer`), never a host's
-  stream rendered at the same moment. An empty
+  stream rendered at the same moment. A thread whose catch-up didn't apply,
+  for any reason (its page rendered it away, the request failed, Turbo
+  never got to it), is marked behind (`data-chats-stale`, on the thread
+  element itself, so the mark travels with the dock and can't be
+  forgotten while the thread exists) and catches up again when it
+  connects, on its stream's confirmation and after every page render,
+  through the same coalescing and 5-second spacing as every other trigger;
+  only an applied answer clears it. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also
