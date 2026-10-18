@@ -1,5 +1,8 @@
 es:
   chats:
+    page_title:
+      inbox: "Mensajes"
+      conversation: "%{name} · Mensajes"
     inbox:
       title: "Mensajes"
       search_placeholder: "Buscar conversaciones"

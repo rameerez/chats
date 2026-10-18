@@ -84,14 +84,92 @@ class SplitInboxBrowserTest < ActionDispatch::SystemTestCase
 
     wait_until { !@with_bob.participant_for(@alice).reload.unread? }
 
-    # The read refreshes the reader's inbox; that refresh clears the badge.
-    assert_selector "li.chats-row", text: "Bob" do
-      assert_selector ".chats-badge"
-    end
+    # The read refreshes the reader's inbox, which agrees.
     broadcast_refresh
     assert_selector "li.chats-row:not(.chats-row--unread)", text: "Bob"
     assert_no_selector "li.chats-row--current .chats-badge"
     assert_selector "li.chats-row--current", text: "Bob"
+  end
+
+  test "the open row's unread count goes the moment the pane reads it, not when the list next refreshes" do
+    sign_in_at(1280)
+    visit "/messages"
+    assert_selector "#chats_conversation:not([disabled])"
+    assert_selector "li.chats-row.chats-row--unread", text: "Bob" do
+      assert_selector ".chats-badge", text: "40"
+    end
+
+    find(".chats-split__list a", text: "Bob").click # the server reads it as it renders the pane
+
+    # No refresh came (the cable is a test one): the page cleared it itself.
+    assert_selector "li.chats-row--current:not(.chats-row--unread)", text: "Bob"
+    assert_no_selector "li.chats-row--current .chats-badge"
+    assert_selector "li.chats-row.chats-row--unread .chats-badge", text: "1" # Carol's is not this one
+  end
+
+  test "a pane rendered unread clears its row once its thread reads it on screen" do
+    sign_in_at(1280)
+    visit "/messages"
+    assert_selector "#chats_conversation:not([disabled])"
+
+    page.execute_script("Turbo.visit('/messages/#{@with_bob.id}')") # a Turbo visit: the server doesn't read
+    assert_selector ".chats-split__pane[data-read='false'] .chats-thread__title", text: "Bob"
+
+    assert_selector "li.chats-row--current:not(.chats-row--unread)", text: "Bob" # the thread read it, ~0.7s in
+    assert_no_selector "li.chats-row--current .chats-badge"
+    wait_until { !@with_bob.participant_for(@alice).reload.unread? }
+  end
+
+  test "a touch screen's tapped row keeps no hover tint; a mouse's still gets one" do
+    sign_in_at(1280)
+    visit "/messages/#{@with_bob.id}"
+    row = ".chats-split__list li:not(.chats-row--current) a.chats-row__link"
+    find(row).hover
+    hovered = page.evaluate_script("getComputedStyle(document.querySelector(#{row.to_json})).backgroundColor")
+    assert_not_equal "rgba(0, 0, 0, 0)", hovered, "a mouse hovering a row tints it"
+
+    # A touch screen: Chrome's touch emulation answers (hover: none), as a phone or a tablet does.
+    page.driver.browser.execute_cdp("Emulation.setTouchEmulationEnabled", enabled: true, maxTouchPoints: 5)
+    find(row).hover # what a tap leaves behind
+    assert_equal "rgba(0, 0, 0, 0)",
+                 page.evaluate_script("getComputedStyle(document.querySelector(#{row.to_json})).backgroundColor")
+  ensure
+    page.driver.browser.execute_cdp("Emulation.setTouchEmulationEnabled", enabled: false) if self.class.chrome?
+  end
+
+  test "the tab takes the title of the conversation a row opens: Turbo leaves <head> alone on a frame visit" do
+    sign_in_at(1280)
+    visit "/messages/#{@with_carol.id}"
+    assert_equal "Carol · Messages", page.title # the layout's yield(:title)
+
+    find(".chats-split__list a", text: "Bob").click
+
+    assert_selector ".chats-split__pane .chats-thread__title", text: "Bob"
+    wait_until { page.title == "Bob · Messages" }
+
+    page.go_back # a restore re-fetches the page (no-cache): its own title
+    assert_selector ".chats-split__pane .chats-thread__title", text: "Carol"
+    wait_until { page.title == "Carol · Messages" }
+
+    page.go_forward
+    assert_selector ".chats-split__pane .chats-thread__title", text: "Bob"
+    wait_until { page.title == "Bob · Messages" }
+  end
+
+  test "a host that titles pages in its layout, on full pages only, still gets the right tab after a row click" do
+    Chats.config.layout = "titled_by_host"
+    # The host's wording, said once for the gem too.
+    Chats.config.page_title = lambda { |conversation, viewer|
+      conversation ? "Host · #{conversation.title_for(viewer)}" : "Host"
+    }
+    sign_in_at(1280)
+    visit "/messages/#{@with_carol.id}"
+    assert_equal "Host · Carol", page.title
+
+    find(".chats-split__list a", text: "Bob").click
+
+    assert_selector ".chats-split__pane .chats-thread__title", text: "Bob"
+    wait_until { page.title == "Host · Bob" }
   end
 
   test "a row opened from a stack keeps the stack: the address bar carries it, and a refresh keeps the list filtered" do

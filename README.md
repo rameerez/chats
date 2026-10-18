@@ -598,6 +598,8 @@ Each row is a real link to `/messages/:id` (keeping the list's search or stack i
 
 **Reads** happen when you open a conversation: a row clicked, a link, a reload. The page's own refreshes never read (one may arrive in a background tab), and a conversation the page renders unread reads itself as soon as it's on screen.
 
+**The page's title** comes from one place, `chats_page_title`: "Messages" for the inbox, "Bob · Messages" with a conversation open (`chats.page_title.*`, localized). The bundled pages hand it to `content_for :title`, so a layout that shows `<title><%= content_for(:title) || "My app" %></title>` (the Rails default) gets it, and the pane carries it, so the tab follows when a row opens a conversation (Turbo leaves `<head>` alone on a frame visit). Word it your way, for both, with `config.page_title = ->(conversation, viewer) { … }` (`conversation` is nil on the inbox). A layout that builds its own title from what the controller loaded (a `@page_title`) keeps it on full page loads, and shows `chats_page_title` after a row click: say it the same way in `config.page_title`.
+
 The [messaging dock](#-messaging-dock) stays off this page, as on every engine page; its "See all messages" opens it, and a window's ⤢ opens its conversation here.
 
 ```ruby
@@ -770,6 +772,7 @@ Chats.configure do |config|
   config.messager_url = ->(messager) { nil }                 # nil ⇒ names render as plain text
   config.message_signature = nil                             # ->(message) { } for signed bubbles
   config.verified_badge = nil                                # ->(messager) { markup } for verified: true
+  config.page_title = nil                                    # ->(conversation, viewer) { String }; nil ⇒ "Bob · Messages"
 end
 ```
 

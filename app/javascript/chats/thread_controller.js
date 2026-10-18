@@ -456,9 +456,14 @@ export default class extends Controller {
       this.pendingRead = true
       return
     }
+    // chats:read, once the server has it: the two-pane page clears the
+    // conversation's row (chats--split) without waiting for the list's
+    // live refresh.
     fetch(this.readUrlValue, {
       method: "POST",
       headers: { "X-CSRF-Token": csrfToken(), Accept: "application/json" }
+    }).then((response) => {
+      if (response.ok) this.element.dispatchEvent(new CustomEvent("chats:read", { bubbles: true }))
     }).catch(() => {})
   }
 

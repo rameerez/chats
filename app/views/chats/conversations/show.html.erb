@@ -4,6 +4,7 @@
     two-pane page's conversation pane render too — see that partial for how
     the live thread works). Under the default `:split`, /messages/:id is
     the two-pane page instead (index.html.erb). %>
+<% content_for :title, chats_page_title(@conversation) %>
 <%= chats_styles %>
 
 <%= render layout: "chats/conversations/thread",

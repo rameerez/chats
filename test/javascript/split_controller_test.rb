@@ -32,7 +32,11 @@ class SplitControllerTest < ActiveSupport::TestCase
         toggleAttribute(name, force) { force ? this.attributes.set(name, "") : this.attributes.delete(name); return force }
       })
       const row = (href) => {
-        const li = { classes: new Set(), classList: { toggle(name, on) { on ? li.classes.add(name) : li.classes.delete(name) } } }
+        const badge = { removed: false, remove() { this.removed = true } }
+        const li = { classes: new Set(["chats-row--unread"]), badge,
+                     classList: { toggle(name, on) { on ? li.classes.add(name) : li.classes.delete(name) },
+                                  remove(name) { li.classes.delete(name) } },
+                     querySelector: (selector) => (selector === ".chats-row__bottom .chats-badge" && !badge.removed ? badge : null) }
         const link = element({ href, "data-turbo-frame": "chats_conversation" })
         link.closest = (selector) => (selector === ".chats-row" ? li : null)
         link.row = li
@@ -47,7 +51,7 @@ class SplitControllerTest < ActiveSupport::TestCase
       const pane = { getAttribute: (name) => (name === "aria-labelledby" ? "title_conversation_2" : null),
                      querySelector: (selector) => ({ ".chats-composer__input": pane.composer,
                                                      '[id="title_conversation_2"]': title })[selector] || null,
-                     composer }
+                     composer, dataset: { path: "/messages/2", read: "false" } }
       const frame = element({ id: "chats_conversation", disabled: "disabled" })
       frame.id = "chats_conversation"
       frame.pane = null
@@ -143,6 +147,48 @@ class SplitControllerTest < ActiveSupport::TestCase
       controller.opened(event(element({ src: "/messages/1?before=9" })))
       assert.strictEqual(links[0].getAttribute("aria-current"), null)
       assert.strictEqual(links[1].getAttribute("aria-current"), null)
+    JAVASCRIPT
+  end
+
+  test "a pane the server read clears its row's unread count at once; one it didn't leaves it" do
+    run_split(<<~JAVASCRIPT)
+      controller.connect()
+      open("/messages/2")
+      assert.strictEqual(links[1].row.badge.removed, false, "rendered unread: its thread reads it, then says so")
+      assert.ok(links[1].row.classes.has("chats-row--unread"))
+
+      pane.dataset.read = "true"
+      open("/messages/2")
+      assert.strictEqual(links[1].row.badge.removed, true)
+      assert.strictEqual(links[1].row.classes.has("chats-row--unread"), false)
+      assert.strictEqual(links[0].row.badge.removed, false, "only its own row")
+      assert.ok(links[0].row.classes.has("chats-row--unread"))
+    JAVASCRIPT
+  end
+
+  test "the tab takes the title the pane carries; a pane without one leaves the tab's" do
+    run_split(<<~JAVASCRIPT)
+      document.title = "Carol · Messages"
+      controller.connect()
+      open("/messages/2")
+      assert.strictEqual(document.title, "Carol · Messages")
+
+      pane.dataset.title = "Bob · Messages"
+      open("/messages/2")
+      assert.strictEqual(document.title, "Bob · Messages")
+    JAVASCRIPT
+  end
+
+  test "a thread that reads on screen clears its row" do
+    run_split(<<~JAVASCRIPT)
+      controller.connect()
+      open("/messages/2")
+      controller.threadRead({ target: { closest: (selector) => (selector === ".chats-split__pane" ? pane : null) } })
+      assert.strictEqual(links[1].row.badge.removed, true)
+      assert.strictEqual(links[0].row.badge.removed, false)
+
+      controller.threadRead({ target: { closest: () => null } }) // a dock window's thread: none of the list's business
+      assert.strictEqual(links[0].row.badge.removed, false)
     JAVASCRIPT
   end
 

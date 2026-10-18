@@ -4,6 +4,41 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-10-18
+
+The package is the gem again, and three fixes to the two-pane page.
+**No migration, nothing to configure.**
+
+### Fixed
+- **The package shipped seven old packages.** The gemspec takes its files
+  from `git ls-files`, and the built `chats-0.3.2.gem` … `chats-0.5.1.gem`
+  had been committed (`chats-0.3.1.gem` since 0.3.1), so 0.6.0 weighed
+  3.5 MB. They are untracked, `*.gem` is in `.gitignore`, and the gemspec
+  leaves out any `*.gem` it is handed anyway; `test/gemspec_test.rb` keeps
+  it so. The README's screenshots still ship, since the README links them.
+- **The tab kept the previous page's title after a row click.** Turbo
+  leaves `<head>` alone when it promotes a frame load to a visit, so from
+  `/messages/A` clicking B left A's title. The messaging page's title now
+  has one source, the new `chats_page_title` helper ("Messages", "Bob ·
+  Messages": `chats.page_title.inbox` / `.conversation`, localized), which
+  `config.page_title = ->(conversation, viewer) { … }` rewords. The bundled
+  `index` and `show` give it to `content_for :title` (a layout doing
+  `yield(:title)` shows it on a full page), and the pane carries it
+  (`data-title`), which `chats--split` gives the tab when a row opens it.
+  The pane's answer stays in turbo-rails' minimal frame layout, now even
+  under a `config.layout`. A layout that titles pages from what the
+  controller loaded keeps its title on full pages and shows
+  `chats_page_title` after a row click: say it the same way in
+  `config.page_title`.
+- **A tapped row kept its hover tint on touch screens.** Every hover rule
+  on inbox rows and on the dock (rows, the bar's chevron, "See all
+  messages", the window buttons) now sits inside `@media (hover: hover)`.
+- **The open row kept its unread count until the list's live refresh.** The
+  pane says when the server read the conversation as it rendered it
+  (`data-read`), and the thread now dispatches `chats:read` once a read it
+  posted lands; on either, `chats--split` clears that row's count and bold
+  at once. The refresh that follows renders the same.
+
 ## [0.6.0] - 2026-10-18
 
 The messaging page is two panes, LinkedIn-style: on a wide screen

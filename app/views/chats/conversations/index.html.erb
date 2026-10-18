@@ -50,6 +50,9 @@
     `.restore` visit that honors this. Requires the host layout to
     `yield :head` (the Rails convention); harmless no-op otherwise.
     https://turbo.hotwired.dev/handbook/building#opting-out-of-caching %>
+<%# The page's title, for a layout that shows `yield(:title)`: the inbox's,
+    or the open conversation's (chats_page_title, config.page_title). %>
+<% content_for :title, chats_page_title(@conversation) %>
 <% content_for :head do %>
   <meta name="turbo-cache-control" content="no-cache">
 <% end %>
@@ -149,6 +152,7 @@
                 controller: "chats--split",
                 action: "turbo:before-prefetch->chats--split#prefetch " \
                         "turbo:frame-load->chats--split#opened " \
+                        "chats:read->chats--split#threadRead " \
                         "turbo:before-morph-attribute->chats--split#keepEnabled"
               } do %>
     <nav class="chats-split__list" aria-label="<%= t("chats.inbox.title") %>" data-chats--split-target="list">

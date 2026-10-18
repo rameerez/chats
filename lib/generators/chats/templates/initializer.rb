@@ -93,6 +93,14 @@ Chats.configure do |config|
   #
   # config.inbox_layout = :split
   #
+  # The messaging page's title (the bundled views give it to
+  # `content_for :title`, and the two-pane page to the tab when a row opens
+  # a conversation). nil: "Messages" / "Bob · Messages" (chats.page_title.*).
+  #
+  # config.page_title = ->(conversation, viewer) {
+  #   conversation ? "#{conversation.title_for(viewer)} | MyApp" : "Messages | MyApp"
+  # }
+  #
   # Encrypt message bodies at rest (ActiveRecord Encryption; requires
   # `bin/rails db:encryption:init`). Body search degrades when enabled.
   #

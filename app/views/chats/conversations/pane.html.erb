@@ -1,7 +1,9 @@
 <%# The answer to a row click on the two-pane messaging page: the request
     comes from the page's `chats_conversation` frame (Turbo-Frame header),
     so the answer is that frame with the conversation pane in it and
-    nothing else — no list, no layout (ConversationsController#show).
+    nothing else — no list, turbo-rails' minimal frame layout
+    (ConversationsController#show). The pane carries its title
+    (data-title), which chats--split gives the tab.
     Turbo swaps it into the frame and, the frame being
     data-turbo-action="advance", moves the address bar to /messages/:id. %>
 <%= turbo_frame_tag Chats::ConversationsController::PANE_FRAME do %>

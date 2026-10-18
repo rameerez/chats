@@ -248,8 +248,13 @@ module Chats
     # page's own conversation frame, else the whole page around it (any
     # other frame of the page, the search's results among them, finds its
     # own part in it).
+    #
+    # The pane alone comes in turbo-rails' minimal frame layout, always (even
+    # under a `config.layout`): nothing of the host's page is rendered for
+    # Turbo to throw away. Its title travels on the pane (`data-title`,
+    # chats_page_title), since Turbo leaves <head> alone on a frame visit.
     def render_split_page
-      return render :pane, layout: false if pane_request?
+      return render :pane, layout: "turbo_rails/frame" if pane_request?
 
       load_inbox
       render :index

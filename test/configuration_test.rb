@@ -35,6 +35,17 @@ class ConfigurationTest < ActiveSupport::TestCase
     assert_same relation, config.inbox_scope.call(relation, nil)
     assert_nil config.messager_url.call(nil)
     assert_nil config.message_signature
+    assert_nil config.page_title
+  end
+
+  test "page_title is a callable or nil" do
+    Chats.config.page_title = ->(conversation, _viewer) { conversation&.id.to_s }
+    assert_respond_to Chats.config.page_title, :call
+
+    Chats.config.page_title = nil
+    assert_nil Chats.config.page_title
+
+    assert_raises(Chats::ConfigurationError) { Chats.config.page_title = "Messages" }
   end
 
   test "configure yields, validates and returns the config" do
