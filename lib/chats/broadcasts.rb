@@ -167,9 +167,13 @@ module Chats
       # counted on it are never left without one. The failure is reported to
       # Rails.error, not raised: the write has committed, and the refresh is
       # out.
+      #
+      # Only a marker that is really there means a refresh is queued. A store
+      # that can't hold it (RedisCacheStore answers nil when the write
+      # fails, any store may raise) means nothing about the queue, so this
+      # write queues its own refresh.
       def refresh_inbox_of(messager)
-        marker = inbox_refresh_marker(messager)
-        return unless Rails.cache.write(marker, true, unless_exist: true, expires_in: INBOX_REFRESH_PENDING)
+        return if inbox_refresh_queued?(inbox_refresh_marker(messager))
         return if 2.times.any? { enqueue_inbox_refresh(messager) } # once more if the first fails
 
         refresh_inbox_now(messager)
@@ -181,7 +185,11 @@ module Chats
       # No request id: one refresh may answer writes from several requests,
       # and a tab that skipped it as "its own" would miss the others'.
       def refresh_inbox_now(messager)
-        Rails.cache.delete(inbox_refresh_marker(messager))
+        begin
+          Rails.cache.delete(inbox_refresh_marker(messager))
+        rescue StandardError => e
+          Rails.error.report(e, handled: true) # the marker expires on its own; the refresh goes out regardless
+        end
         Turbo::StreamsChannel.broadcast_stream_to(messager, :chats_inbox, content: INBOX_REFRESH)
       end
 
@@ -236,6 +244,18 @@ module Chats
         Rails.error.report(job&.enqueue_error || ActiveJob::EnqueueError.new("Chats::InboxRefreshJob was not enqueued"),
                            handled: true)
         false
+      rescue StandardError => e
+        Rails.error.report(e, handled: true)
+        false
+      end
+
+      # Whether a refresh is already queued for this marker's messager: the
+      # write was refused (false) AND the marker can be read back. Anything
+      # else — this write put it up, the store answered nil or raised, the
+      # marker vanished in between — is "not that we know of".
+      def inbox_refresh_queued?(marker)
+        written = Rails.cache.write(marker, true, unless_exist: true, expires_in: INBOX_REFRESH_PENDING)
+        written == false && Rails.cache.read(marker).present?
       rescue StandardError => e
         Rails.error.report(e, handled: true)
         false

@@ -15,6 +15,8 @@ class BroadcastsDurabilityTest < ActiveSupport::TestCase
     @conversation = conversation_between(@alice, @bob)
   end
 
+  CacheDown = Class.new(StandardError) # what a cache store raises when its server is gone
+
   REFRESH = %(<turbo-stream action="refresh" method="morph" scroll="preserve"></turbo-stream>)
 
   test "a new message's inbox refreshes are in the job queue as soon as it commits, real debouncer and all" do
@@ -113,6 +115,52 @@ class BroadcastsDurabilityTest < ActiveSupport::TestCase
   # The marker goes up before the enqueue, so a write can find it while the
   # enqueue is in flight. These are that interleaving: write B commits and
   # finds A's marker in the middle of A's failing enqueue.
+  # Only a marker that is really there means a refresh is queued.
+  test "a cache that answers nil to the marker's write (RedisCacheStore when the write fails) can't skip a refresh" do
+    Rails.cache.stub(:write, nil) do
+      assert_enqueued_jobs 2, only: Chats::InboxRefreshJob do
+        2.times { Chats::Broadcasts.refresh_inbox_of(@bob) }
+      end
+    end
+  end
+
+  test "a cache that raises on the marker queues the refresh anyway, and says so to Rails.error" do
+    Rails.cache.stub(:write, ->(*) { raise CacheDown, "connection refused" }) do
+      assert_error_reported(CacheDown) do
+        assert_enqueued_jobs 1, only: Chats::InboxRefreshJob do
+          Chats::Broadcasts.refresh_inbox_of(@bob)
+        end
+      end
+    end
+  end
+
+  test "a refused write whose marker can't be read back queues the refresh" do
+    Rails.cache.stub(:write, false) do
+      assert_enqueued_jobs 1, only: Chats::InboxRefreshJob do
+        Chats::Broadcasts.refresh_inbox_of(@bob) # nothing there to read: it expired, or was never written
+      end
+    end
+  end
+
+  test "a marker that is really there means the refresh is queued: nothing more is" do
+    Chats::Broadcasts.refresh_inbox_of(@bob)
+    assert Rails.cache.read("chats:inbox-refresh:#{Chats.messager_key(@bob)}")
+
+    assert_no_enqueued_jobs only: Chats::InboxRefreshJob do
+      Chats::Broadcasts.refresh_inbox_of(@bob)
+    end
+  end
+
+  test "a cache that raises as the job takes the marker down doesn't stop the refresh" do
+    Chats::Broadcasts.refresh_inbox_of(@bob)
+    streams = capture_turbo_stream_broadcasts([@bob, :chats_inbox]) do
+      Rails.cache.stub(:delete, ->(*) { raise CacheDown, "timeout" }) do
+        perform_enqueued_jobs only: Chats::InboxRefreshJob
+      end
+    end
+    assert_equal [REFRESH], streams.map(&:to_html)
+  end
+
   test "an enqueue that fails while another write counts on it is tried again, and that job covers both" do
     calls = 0
     flaky = lambda do |messager|
