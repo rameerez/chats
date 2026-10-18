@@ -514,47 +514,6 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
-  test "what a render past its bound made give up is caught up anew when that render ends with the window back" do
-    run_streams(<<~JAVASCRIPT)
-      let wanted = true
-      const retries = []
-      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted, retry: () => retries.push("again") })
-      answer(0)
-      await page.settle()
-
-      page.documentEvents.dispatch("turbo:before-render")
-      wanted = false                                       // the window is away…
-      page.mutate(document.documentElement)
-      page.advance(10_001); await page.settle()            // …longer than the bound
-      assert.strictEqual(turbo.pending().length, 0, "given up")
-      assert.deepStrictEqual(retries, [])
-
-      wanted = true                                        // the render, late, brings it back
-      page.documentEvents.dispatch("turbo:render")
-      page.advance(0); await page.settle()
-      assert.deepStrictEqual(retries, ["again"], "and it catches up anew")
-
-      page.documentEvents.dispatch("turbo:before-render")
-      page.documentEvents.dispatch("turbo:render")
-      page.advance(0); await page.settle()
-      assert.deepStrictEqual(retries, ["again"], "once")
-    JAVASCRIPT
-  end
-
-  test "an answer given up for a window a late render never brings back is not retried" do
-    run_streams(<<~JAVASCRIPT)
-      const retries = []
-      page.documentEvents.dispatch("turbo:before-render")
-      renderStreamFrom("/messages/7/refresh?after=0", { when: () => false, retry: () => retries.push("again") })
-      page.advance(10_001); await page.settle()            // overdue
-      answer(0)                                            // arrives with the window away
-      await page.settle(); page.advance(0); await page.settle()
-      page.documentEvents.dispatch("turbo:render")         // the late render ends; the window never came back
-      page.advance(0); await page.settle()
-      assert.deepStrictEqual(retries, [])
-    JAVASCRIPT
-  end
-
   test "a timed-out render's late end is paired with it, not with the render after it (first in, first out)" do
     run_streams(<<~JAVASCRIPT)
       afterRendering()                                      // (watching page renders, as a connected thread is)
@@ -574,53 +533,105 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
-  test "a catch-up given up by several of its streams is remembered, and retried, once" do
-    run_streams(<<~JAVASCRIPT)
-      let wanted = true
-      const retries = []
-      const thread = {}
-      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted, key: thread, retry: () => retries.push("again") })
-      answer(0)                                             // two streams
-      await page.settle()
+  # --- a window known to be behind (`stale:`) ----------------------------------
 
-      page.documentEvents.dispatch("turbo:before-render")
-      wanted = false
-      page.advance(10_001); await page.settle()             // the render is overdue
-      await turbo.applyStreams(); await page.settle()       // both streams reach their guards and give up
-      assert.strictEqual(turbo.performed.length, 0)
+  test "a window a render kept away for 61s comes back stale and catches up exactly once, clearing the mark" do
+    run_recovery(<<~JAVASCRIPT)
+      const element = { ...page.element({ sources: [page.streamSource()] }), dataset: {} }
+      const stale = () => "chatsStale" in element.dataset
+      const caught = { count: 0 }
+      const catchUp = () => { caught.count++; delete element.dataset.chatsStale } // an answer applied
+      let stop = recoverMissedBroadcasts(element, catchUp, { stale })
 
-      wanted = true
-      page.documentEvents.dispatch("turbo:render")          // the late render ends with the window back
-      page.advance(0); await page.settle()
+      element.dataset.chatsStale = ""                       // its catch-up was given up…
+      stop()                                                // …as a render took the dock away
       page.documentEvents.dispatch("turbo:before-render")
-      page.documentEvents.dispatch("turbo:render")
-      page.advance(0); await page.settle()
-      assert.deepStrictEqual(retries, ["again"])
+      page.advance(61_000)                                  // past the 10s bound and the 60s forget
+      assert.strictEqual(caught.count, 0)
+
+      stop = recoverMissedBroadcasts(element, catchUp, { stale })   // back on the page
+      page.advance(250)
+      assert.strictEqual(caught.count, 1)
+      assert.ok(!stale(), "the mark is cleared by the answer")
+
+      page.documentEvents.dispatch("turbo:render")           // the render's late end
+      page.advance(10_000)
+      assert.strictEqual(caught.count, 1, "and nothing more")
+      stop()
     JAVASCRIPT
   end
 
-  test "a render that never ends, and what it made give up, are forgotten after 60s" do
-    run_streams(<<~JAVASCRIPT)
-      const retries = []
-      afterRendering()
-      page.documentEvents.dispatch("turbo:before-render")   // never ends
-      page.advance(10_001)
-      let wanted = false
-      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted, retry: () => retries.push("again") })
-      answer(0)
-      await page.settle(); page.advance(0); await page.settle()  // given up, remembered
+  test "a stale window catches up after a page render, and on its stream's first confirmation" do
+    run_recovery(<<~JAVASCRIPT)
+      const source = page.streamSource()
+      const element = { ...page.element({ sources: [source] }), dataset: {} }
+      const caught = { count: 0 }
+      recoverMissedBroadcasts(element, () => caught.count++, { stale: () => "chatsStale" in element.dataset })
 
-      page.advance(60_000); await page.settle()             // forgotten: the render, and the retry
-      wanted = true
-      page.documentEvents.dispatch("turbo:before-render")   // a later, unrelated render…
-      page.documentEvents.dispatch("turbo:render")          // …is paired with itself, not the forgotten one
-      page.advance(0); await page.settle()
-      assert.deepStrictEqual(retries, [], "nothing old is retried")
+      page.documentEvents.dispatch("turbo:render")
+      source.confirm()                                      // a first confirmation: not stale yet
+      page.advance(1_000)
+      assert.strictEqual(caught.count, 0, "nothing while it isn't marked")
 
-      let after = false
-      afterRendering().then(() => { after = true })
-      page.advance(0); await page.settle()
-      assert.ok(after, "and nothing holds things up")
+      element.dataset.chatsStale = ""
+      page.documentEvents.dispatch("turbo:load")
+      page.advance(250)
+      assert.strictEqual(caught.count, 1)
+
+      const other = page.streamSource()
+      const fresh = { ...page.element({ sources: [other] }), dataset: { chatsStale: "" } }
+      const caughtFresh = { count: 0 }
+      recoverMissedBroadcasts(fresh, () => caughtFresh.count++, { stale: () => true })
+      page.advance(250)
+      assert.strictEqual(caughtFresh.count, 1, "connecting while stale")
+      page.advance(5_000)
+      other.confirm()                                       // its stream's first confirmation, still stale
+      page.advance(250)
+      assert.strictEqual(caughtFresh.count, 2)
+    JAVASCRIPT
+  end
+
+  test "a stale window's catch-ups keep the 5s spacing: a render right after a fetch waits, then fires once" do
+    run_recovery(<<~JAVASCRIPT)
+      const source = page.streamSource()
+      const element = { ...page.element({ sources: [source] }), dataset: {} }
+      const caught = { count: 0 }
+      recoverMissedBroadcasts(element, () => caught.count++, { stale: () => "chatsStale" in element.dataset })
+      source.confirm()
+
+      source.confirm()                                      // a reconnect: a catch-up…
+      page.advance(250)
+      assert.strictEqual(caught.count, 1)
+      element.dataset.chatsStale = ""                       // …that didn't apply
+
+      page.advance(750)
+      page.documentEvents.dispatch("turbo:render")          // a render 1s after that fetch
+      page.documentEvents.dispatch("turbo:load")
+      page.advance(4_249)                                   // 5s after the fetch, less a millisecond
+      assert.strictEqual(caught.count, 1, "not within 5s of the last")
+      page.advance(1)
+      assert.strictEqual(caught.count, 2, "then once")
+      page.advance(30_000)
+      assert.strictEqual(caught.count, 2)
+    JAVASCRIPT
+  end
+
+  test "a window that never comes back leaves nothing behind" do
+    run_recovery(<<~JAVASCRIPT)
+      afterRendering()                                      // chats/recovery's own page-wide watch, installed once
+      page.advance(0)
+      const listeningBefore = page.documentEvents.count("turbo:render")
+      const watchingBefore = page.observerCount()
+      const element = { ...page.element({ sources: [page.streamSource()] }), dataset: { chatsStale: "" } }
+      const stop = recoverMissedBroadcasts(element, () => {}, { stale: () => true })
+      page.advance(250)
+      stop()                                                // gone for good
+      page.documentEvents.dispatch("turbo:before-render")   // a render that never ends
+      page.advance(61_000)
+
+      assert.strictEqual(page.documentEvents.count("turbo:render"), listeningBefore, "no listener of its own left")
+      assert.strictEqual(page.observerCount(), watchingBefore, "nothing watching")
+      assert.strictEqual(page.pendingTimers(), 0, "no timer: the render record is forgotten too")
     JAVASCRIPT
   end
 

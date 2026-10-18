@@ -186,6 +186,28 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "a thread is marked behind while it catches up, and only an applied answer clears the mark" do
+    run_thread(async(<<~JAVASCRIPT))
+      thread.refreshThread()
+      assert.ok("chatsStale" in thread.element.dataset, "behind while asking")
+      page.requests[0].resolve(Promise.reject(new Error("offline")))
+      await page.settle()
+      assert.ok("chatsStale" in thread.element.dataset, "a failed catch-up leaves it behind")
+
+      thread.refreshThread()
+      thread.element.isConnected = false                    // given up: its page rendered it away
+      page.respond(page.requests[1])
+      await page.settle()
+      assert.ok("chatsStale" in thread.element.dataset)
+
+      thread.element.isConnected = true
+      thread.refreshThread()
+      page.respond(page.requests[2])
+      await page.settle()
+      assert.ok(!("chatsStale" in thread.element.dataset), "an applied answer clears it")
+    JAVASCRIPT
+  end
+
   test "an empty thread asks from the epoch: its first message may be the one it missed" do
     run_thread(<<~JAVASCRIPT)
       rendered([]).refreshThread()

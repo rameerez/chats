@@ -61,8 +61,16 @@ const SPACED_BY_MS = 5_000
 // Watch +element+'s stream sources (all of them, or those matching
 // `sources:`, a selector) and the page, and call +catchUp+ whenever a
 // broadcast may have been missed. Returns the function that stops watching.
-export function recoverMissedBroadcasts(element, catchUp, { sources = SOURCE } = {}) {
-  const recovery = new Recovery(element, catchUp, sources)
+//
+// `stale:` says the element is known to be behind (a catch-up of its was
+// given up: its page rendered it away, the request failed, Turbo never
+// applied the answer). While it says so, the element also catches up when
+// it connects, on its stream's first confirmation, and after every page
+// render (`turbo:render`, `turbo:load`) — through the same coalescing and
+// 5-second spacing as every other trigger, which also survives the element
+// being carried from page to page.
+export function recoverMissedBroadcasts(element, catchUp, { sources = SOURCE, stale = () => false } = {}) {
+  const recovery = new Recovery(element, catchUp, sources, stale)
   recovery.start()
   return () => recovery.stop()
 }
@@ -93,7 +101,7 @@ const answers = new Map() // key → the answer still being applied
 const REQUEST_WITHIN_MS = 15_000
 const APPLY_WITHIN_MS = 2_000
 
-export function renderStreamFrom(url, { when = () => true, key = url, retry = null } = {}) {
+export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
   watchPageRenders()
   if (requests.has(url)) return requests.get(url)
 
@@ -108,10 +116,10 @@ export function renderStreamFrom(url, { when = () => true, key = url, retry = nu
     .then((response) => (isTurboStream(response) ? response.text() : ""))
     .then(async (html) => {
       clearTimeout(hung)
-      if (!html || !(await stillWanted(when, retry, key))) return false
+      if (!html || !(await stillWanted(when))) return false
 
       setTimeout(release, APPLY_WITHIN_MS)
-      return apply(html, when, key, retry)
+      return apply(html, when, key)
     })
     .catch(() => false)
     .finally(() => {
@@ -125,7 +133,7 @@ export function renderStreamFrom(url, { when = () => true, key = url, retry = nu
 // Drops what is left of +key+'s answer: streams Turbo hasn't applied yet
 // never will be.
 export function cancelStreamsFor(key) {
-  answers.get(key)?.cancel({ unwanted: true })
+  answers.get(key)?.cancel()
 }
 
 // --- Page renders ------------------------------------------------------------
@@ -147,21 +155,18 @@ export function cancelStreamsFor(key) {
 // Bounds. A render that hasn't ended after RENDER_WITHIN_MS stops holding
 // things up, but stays on record, in its place, until its own end arrives
 // (so the next `turbo:render` is still paired with it), or until
-// FORGET_AFTER_MS, when it is let go for good. What is given up while such
-// an overdue render is out (an answer, streams waiting) may belong to a
-// window it will yet bring back: it is remembered, once per key, with the
-// caller's way to catch up again (`retry:`), and asked again when the next
-// render ends — a window that is back and still wanted catches up anew,
-// anything else is let go — or forgotten after FORGET_AFTER_MS.
+// FORGET_AFTER_MS, when it is let go for good: render records are bounded
+// memory. Nothing about a stale window is kept here: what a render made a
+// window give up is marked on the window itself (the thread's
+// `data-chats-stale`, which travels with the permanent dock), and that
+// window asks again whenever it is back — see `stale:` below.
 const RENDER_WITHIN_MS = 10_000
 const FORGET_AFTER_MS = 60_000
 const renders = [] // oldest first: { overdue, bound, forget }
-const givenUp = new Map() // key → { when, retry, forget }
 let idle = null // { finished, resolve } while a render holds things up
 let watchingRenders = false
 
 const holding = () => renders.some((render) => !render.overdue)
-const anyOverdue = () => renders.some((render) => render.overdue)
 
 function watchPageRenders() {
   if (watchingRenders) return
@@ -193,7 +198,6 @@ function watchPageRenders() {
     clearTimeout(render.bound)
     clearTimeout(render.forget)
     settleIfIdle()
-    if (givenUp.size) afterRendering().then(askAgain)
   })
 }
 
@@ -215,35 +219,12 @@ export async function afterRendering() {
 }
 
 // Whether +when+ holds — or, if it doesn't while a page is rendering, once
-// the render is over. Given up while an overdue render is out: remembered.
-async function stillWanted(when, retry, key) {
+// the render is over.
+async function stillWanted(when) {
   if (when()) return true
-  if (idle) {
-    await afterRendering()
-    if (when()) return true
-  }
-  giveUp(key, when, retry)
-  return false
-}
-
-function giveUp(key, when, retry) {
-  if (!retry || !anyOverdue()) return
-
-  clearTimeout(givenUp.get(key)?.forget)
-  const entry = { when, retry }
-  entry.forget = setTimeout(() => { if (givenUp.get(key) === entry) givenUp.delete(key) }, FORGET_AFTER_MS)
-  givenUp.set(key, entry)
-}
-
-// Each remembered catch-up is asked once: run if its window is back and
-// still wanted, let go otherwise.
-function askAgain() {
-  const entries = [...givenUp.values()]
-  givenUp.clear()
-  for (const entry of entries) {
-    clearTimeout(entry.forget)
-    if (entry.when()) entry.retry()
-  }
+  if (!idle) return false
+  await afterRendering()
+  return when()
 }
 
 // Every stream of an answer carries its mark (data-chats-answer), so the
@@ -251,7 +232,7 @@ function askAgain() {
 // rendered at the same moment, is none of its business.
 let answerCount = 0
 
-function apply(html, when, key, retry) {
+function apply(html, when, key) {
   if (!window.Turbo?.renderStreamMessage) return Promise.resolve(false)
   guardStreams()
   cancelStreamsFor(key)
@@ -259,9 +240,7 @@ function apply(html, when, key, retry) {
   const mark = `${Date.now().toString(36)}-${++answerCount}`
   return new Promise((resolve) => {
     const answer = {
-      key,
       when,
-      retry,
       applied: false,
       cancelled: false,
       settle(result) {
@@ -270,10 +249,9 @@ function apply(html, when, key, retry) {
         marked.delete(mark)
         resolve(result)
       },
-      cancel({ unwanted = false } = {}) {
+      cancel() {
         this.cancelled = true
         streamsMarked(mark).forEach((stream) => stream.remove())
-        if (unwanted) giveUp(key, when, retry)
         this.settle(false)
       }
     }
@@ -291,7 +269,7 @@ function apply(html, when, key, retry) {
     const check = () => {
       if (answer.cancelled) return
       if (!streamsMarked(mark).length) return answer.settle(answer.applied || !waited)
-      afterRendering().then(() => { if (!answer.cancelled && !when()) answer.cancel({ unwanted: true }) })
+      afterRendering().then(() => { if (!answer.cancelled && !when()) answer.cancel() })
     }
     answer.observer = new MutationObserver(check)
     answer.observer.observe(document.documentElement, { childList: true })
@@ -312,7 +290,7 @@ function guardStreams() {
     if (!answer || typeof render !== "function") return
 
     event.detail.render = async (stream) => {
-      if (answer.cancelled || !(await stillWanted(answer.when, answer.retry, answer.key)) || answer.cancelled) return
+      if (answer.cancelled || !(await stillWanted(answer.when)) || answer.cancelled) return
       answer.applied = true
       await render(stream)
     }
@@ -352,13 +330,23 @@ function watchPage() {
   })
 }
 
+const lastCaughtUp = new WeakMap() // element → when it last caught up
+
 class Recovery {
-  constructor(element, catchUp, sources) {
+  constructor(element, catchUp, sources, stale) {
     this.element = element
     this.catchUp = catchUp
     this.selector = sources
+    this.stale = stale
     this.confirmed = new WeakSet()
-    this.lastCaughtUpAt = -Infinity
+  }
+
+  get lastCaughtUpAt() {
+    return lastCaughtUp.get(this.element) ?? -Infinity
+  }
+
+  set lastCaughtUpAt(at) {
+    lastCaughtUp.set(this.element, at)
   }
 
   start() {
@@ -376,13 +364,18 @@ class Recovery {
     })
 
     document.addEventListener("visibilitychange", this.visibilityChanged)
+    document.addEventListener("turbo:render", this.pageRendered)
+    document.addEventListener("turbo:load", this.pageRendered)
     window.addEventListener("online", this.online)
     window.addEventListener("pageshow", this.pageShown)
+    if (this.stale()) this.request()
   }
 
   stop() {
     this.observer?.disconnect()
     document.removeEventListener("visibilitychange", this.visibilityChanged)
+    document.removeEventListener("turbo:render", this.pageRendered)
+    document.removeEventListener("turbo:load", this.pageRendered)
     window.removeEventListener("online", this.online)
     window.removeEventListener("pageshow", this.pageShown)
     clearTimeout(this.timer)
@@ -398,9 +391,13 @@ class Recovery {
   sourcesChanged(records) {
     records.forEach(({ target: source }) => {
       if (!source.hasAttribute("connected")) return
-      if (this.confirmed.has(source)) this.request()
+      if (this.confirmed.has(source) || this.stale()) this.request()
       this.confirmed.add(source)
     })
+  }
+
+  pageRendered = () => {
+    if (this.stale()) this.request()
   }
 
   visibilityChanged = () => {

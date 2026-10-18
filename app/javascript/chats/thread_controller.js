@@ -138,7 +138,7 @@ export default class extends Controller {
     this.element.addEventListener("click", this.suppressClickCapture, true)
     this.element.addEventListener("chats:prune", this.prune)
     this.element.addEventListener("chats:caught-up", this.caughtUp)
-    this.stopRecovery = recoverMissedBroadcasts(this.element, () => this.refreshThread())
+    this.stopRecovery = recoverMissedBroadcasts(this.element, () => this.refreshThread(), { stale: () => this.stale })
     this.watchScreenPresence()
   }
 
@@ -557,6 +557,22 @@ export default class extends Controller {
     }
   }
 
+  // `data-chats-stale`: this thread is known to be behind. On the element,
+  // not the controller, because the element is what the dock carries from
+  // page to page (and what a long page render keeps away): the mark can't
+  // be forgotten while the thread exists, and goes when it does.
+  get stale() {
+    return "chatsStale" in this.element.dataset
+  }
+
+  set stale(behind) {
+    if (behind) {
+      this.element.dataset.chatsStale = ""
+    } else {
+      delete this.element.dataset.chatsStale
+    }
+  }
+
   // An answer carries the render it was asked from (`render`): one for an
   // earlier render of this conversation (the page or the window rendered it
   // again while the answer was on its way) would move the new render's
@@ -599,6 +615,11 @@ export default class extends Controller {
   refreshThread({ followUp = true } = {}) {
     if (!this.refreshUrlValue) return
 
+    // Behind until an answer is applied: a catch-up given up for any reason
+    // (the page rendered the thread away, the request failed, Turbo never
+    // applied it) leaves the mark, and chats/recovery asks again on connect,
+    // on the stream's confirmation and after every page render.
+    this.stale = true
     const params = new URLSearchParams()
     if (this.legacyCursor && !this.messageTargets.some((message) => message.dataset.createdAtUs)) {
       params.set("since", this.legacyCursor)
@@ -635,14 +656,10 @@ export default class extends Controller {
 
     // Resolves once Turbo has applied the answer, so `last` is gone by then
     // if the history was re-rendered.
-    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, {
-      when: current,
-      key: this.element,
-      // Given up while a page render that ran past its bound had the thread
-      // away, and asked again once that render ended with it back: catch up anew.
-      retry: () => this.refreshThread()
-    }).then((rendered) => {
-      if (!rendered || !last || last.isConnected) return
+    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, { when: current, key: this.element }).then((rendered) => {
+      if (!rendered) return
+      this.stale = false
+      if (!last || last.isConnected) return
 
       this.element.dataset.chatsRender = newRender() // the re-rendered history is a new render
       this.scrollToBottom()
