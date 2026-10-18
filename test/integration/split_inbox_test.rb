@@ -229,6 +229,52 @@ class SplitInboxTest < ActionDispatch::IntegrationTest
     assert_select "input[name=q][value=Carol]"
   end
 
+  test "a filtered list's rows keep its filter in their links, so the list's refreshes find the same list" do
+    login_as @alice
+
+    get "/messages", params: { q: "Bob" }
+    assert_equal(["/messages/#{@conversation.id}?q=Bob"], css_select("a.chats-row__link").map { |link| link["href"] })
+
+    desk = create_desk(name: "Soporte")
+    tickets = Array.new(2) do |index|
+      ticket = @alice.chat_with(desk, about: create_listing(title: "Listing #{index}"))
+      desk.message!(ticket, "ticket #{index}")
+      ticket
+    end
+    get "/messages"
+    stack = css_select("li.chats-row--group a").sole["href"]
+
+    get stack
+    with = Rack::Utils.parse_query(URI(stack).query).fetch("with")
+    hrefs = css_select("a.chats-row__link").map { |link| link["href"] }
+    assert_equal tickets.reverse.map { |ticket| "/messages/#{ticket.id}?with=#{CGI.escape(with)}" }, hrefs
+
+    get hrefs.first # what the frame advanced the address bar to, and what a refresh re-requests
+    assert_select ".chats-inbox__filter", text: /Soporte/
+    assert_equal hrefs, css_select("a.chats-row__link").map { |link| link["href"] }, "still the stack, not the inbox"
+    current = css_select("li.chats-row--current a[aria-current=page]").sole
+    assert_equal hrefs.first, current["href"]
+    back = css_select(".chats-split__pane a.chats-thread__back").sole["href"]
+    assert_equal "/messages/?with=#{CGI.escape(with)}", back, "back on a phone goes to the stack it came from"
+  end
+
+  test "the stacked layout's rows stay bare links: their list has no pane to keep" do
+    Chats.config.inbox_layout = :stacked
+    login_as @alice
+
+    get "/messages", params: { q: "Bob" }
+
+    assert_equal(["/messages/#{@conversation.id}"], css_select("a.chats-row__link").map { |link| link["href"] })
+  end
+
+  test "the pane's title can take the focus, for the touch screens chats--split sends it to" do
+    login_as @alice
+
+    get "/messages/#{@conversation.id}"
+
+    assert_equal "-1", css_select(".chats-split__pane h2.chats-thread__title").sole["tabindex"]
+  end
+
   # --- the pane's own frame ------------------------------------------------------------
 
   test "the pane's frame gets the pane alone: no layout, no list, no inbox stream" do

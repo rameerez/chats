@@ -24,10 +24,18 @@ import { Controller } from "@hotwired/stimulus"
 //
 // When the pane opens a conversation, its row becomes the current one
 // (aria-current="page", .chats-row--current) at once, exactly as the server
-// renders /messages/:id, instead of when the list next refreshes.
+// renders /messages/:id, instead of when the list next refreshes. And the
+// focus goes where the viewer is now, as LinkedIn's messaging page does:
+// into the conversation's composer, ready to reply. Entering the pane, a
+// screen reader names it (a section labelled by the conversation's title),
+// then the field. On a touch screen the composer would raise the keyboard
+// over a conversation not read yet, so the focus goes to the pane's title
+// instead (tabindex="-1"), which is read out the same; and to the title
+// too when there is nothing to write in (a locked conversation).
 //
 // Registered as "chats--split" through the engine's importmap pin.
 const WIDE = "(min-width: 700px)" // keep in step with chats.css
+const TOUCH = "(pointer: coarse)"
 
 export default class extends Controller {
   static targets = ["frame", "list"]
@@ -57,7 +65,8 @@ export default class extends Controller {
     if (event.target?.getAttribute?.("data-turbo-frame") === this.frameTarget.id) event.preventDefault()
   }
 
-  // turbo:frame-load: the pane opened a conversation.
+  // turbo:frame-load: the pane opened a conversation. Its row is current,
+  // and the viewer is taken to it.
   opened(event) {
     if (!this.hasFrameTarget || event.target !== this.frameTarget || !this.hasListTarget) return
     const src = this.frameTarget.getAttribute("src")
@@ -73,5 +82,16 @@ export default class extends Controller {
       }
       link.closest(".chats-row")?.classList.toggle("chats-row--current", current)
     })
+    this.arrive()
+  }
+
+  arrive() {
+    const pane = this.frameTarget.querySelector(".chats-split__pane")
+    if (!pane) return
+
+    const touch = Boolean(window.matchMedia?.(TOUCH)?.matches)
+    const composer = touch ? null : pane.querySelector(".chats-composer__input")
+    const title = pane.querySelector(`[id="${pane.getAttribute("aria-labelledby")}"]`)
+    ;(composer || title)?.focus({ preventScroll: true })
   }
 }

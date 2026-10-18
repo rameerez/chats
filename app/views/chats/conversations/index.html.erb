@@ -111,14 +111,16 @@
         <% @rows.each do |row| %>
           <% if row.is_a?(Chats::InboxGroup) %>
             <%= render "chats/conversations/group", group: row, viewer: chats_current_messager,
-                                                    pane: split, current: @conversation %>
+                                                    pane: split, current: @conversation,
+                                                    filter: chats_inbox_filter %>
           <% else %>
             <%= render "chats/conversations/conversation_row",
                   conversation: row,
                   viewer: chats_current_messager,
                   unread_count: @unread_counts.fetch(row.id, 0),
                   pane: split,
-                  current: @conversation %>
+                  current: @conversation,
+                  filter: chats_inbox_filter %>
           <% end %>
         <% end %>
       </ul>

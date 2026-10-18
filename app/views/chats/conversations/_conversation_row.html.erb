@@ -11,10 +11,14 @@
     page's conversation frame, which opens it beside the list on a wide
     screen; on a phone, and without JavaScript, the frame is disabled and
     the link opens the thread page. `current:` is the conversation the page
-    has open: its row says so (aria-current="page", .chats-row--current). %>
+    has open: its row says so (aria-current="page", .chats-row--current).
+    `filter:` is the list's search or stack (`q`, `with`), kept in the
+    link: the list's refreshes re-request the page's URL, and must find the
+    same list there. %>
 <% current = local_assigns[:current] == conversation %>
+<% filter = local_assigns[:pane] ? local_assigns.fetch(:filter, {}) : {} %>
 <li class="<%= class_names("chats-row", "chats-row--unread": unread_count.positive?, "chats-row--current": current) %>">
-  <%= link_to conversation_path(conversation), class: "chats-row__link",
+  <%= link_to conversation_path(conversation, **filter), class: "chats-row__link",
         "aria-current": ("page" if current),
         data: (if local_assigns[:dock]
                  chats_dock_opener(conversation)

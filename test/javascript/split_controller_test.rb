@@ -17,8 +17,9 @@ class SplitControllerTest < ActiveSupport::TestCase
       const media = { matches: true, listeners: [],
                       addEventListener(type, fn) { this.listeners.push(fn) },
                       removeEventListener(type, fn) { this.listeners = this.listeners.filter((l) => l !== fn) } }
+      const touch = { matches: false }
       const queries = []
-      global.window = { matchMedia: (query) => { queries.push(query); return media } }
+      global.window = { matchMedia: (query) => { queries.push(query); return query === "(pointer: coarse)" ? touch : media } }
       global.document = { baseURI: "https://example.test/messages" }
       const resize = (wide) => { media.matches = wide; media.listeners.forEach((fn) => fn()) }
 
@@ -38,8 +39,20 @@ class SplitControllerTest < ActiveSupport::TestCase
         return link
       }
 
+      // What the pane holds once a row opened it: its title and its composer.
+      const focused = []
+      const focusable = (name) => ({ name, focus(options) { focused.push([name, options]) } })
+      const composer = focusable("composer")
+      const title = focusable("title")
+      const pane = { getAttribute: (name) => (name === "aria-labelledby" ? "title_conversation_2" : null),
+                     querySelector: (selector) => ({ ".chats-composer__input": pane.composer,
+                                                     '[id="title_conversation_2"]': title })[selector] || null,
+                     composer }
       const frame = element({ id: "chats_conversation", disabled: "disabled" })
       frame.id = "chats_conversation"
+      frame.pane = null
+      frame.querySelector = (selector) => (selector === ".chats-split__pane" ? frame.pane : null)
+      const open = (src) => { frame.setAttribute("src", src); frame.pane = pane; controller.opened(event(frame)) }
       const links = [row("/messages/1"), row("/messages/2")]
       const list = { querySelectorAll: (selector) => (selector === 'a[data-turbo-frame="chats_conversation"]' ? links : []) }
 
@@ -118,8 +131,7 @@ class SplitControllerTest < ActiveSupport::TestCase
       links[0].setAttribute("aria-current", "page")
       links[0].row.classes.add("chats-row--current")
 
-      frame.setAttribute("src", "https://example.test/messages/2")
-      controller.opened(event(frame))
+      open("https://example.test/messages/2?with=abc") // the list's filter rides along; the row is the path
 
       assert.strictEqual(links[0].getAttribute("aria-current"), null)
       assert.strictEqual(links[0].row.classes.has("chats-row--current"), false)
@@ -131,6 +143,41 @@ class SplitControllerTest < ActiveSupport::TestCase
       controller.opened(event(element({ src: "/messages/1?before=9" })))
       assert.strictEqual(links[0].getAttribute("aria-current"), null)
       assert.strictEqual(links[1].getAttribute("aria-current"), null)
+    JAVASCRIPT
+  end
+
+  test "the viewer is taken into the conversation the row opened: its composer, ready to reply" do
+    run_split(<<~JAVASCRIPT)
+      controller.connect()
+      open("/messages/2")
+      assert.deepStrictEqual(focused, [["composer", { preventScroll: true }]])
+    JAVASCRIPT
+  end
+
+  test "on a touch screen, the conversation's title: the keyboard stays down until the viewer asks for it" do
+    run_split(<<~JAVASCRIPT)
+      touch.matches = true
+      controller.connect()
+      open("/messages/2")
+      assert.deepStrictEqual(focused.map(([name]) => name), ["title"])
+    JAVASCRIPT
+  end
+
+  test "the title too when there is nothing to write in (a locked conversation)" do
+    run_split(<<~JAVASCRIPT)
+      pane.composer = null
+      controller.connect()
+      open("/messages/2")
+      assert.deepStrictEqual(focused.map(([name]) => name), ["title"])
+    JAVASCRIPT
+  end
+
+  test "a load that brought no pane (a 404 page Turbo visits instead) moves nothing" do
+    run_split(<<~JAVASCRIPT)
+      controller.connect()
+      frame.setAttribute("src", "/messages/2")
+      controller.opened(event(frame))
+      assert.deepStrictEqual(focused, [])
     JAVASCRIPT
   end
 end

@@ -34,6 +34,11 @@
   --chats-max-width: 42rem;
   /* The conversation list beside an open conversation (two panes). */
   --chats-list-width: 320px;
+  /* --chats-split-height, how tall the two-pane page is, is NOT declared
+     here: the rules read it with the whole screen (100dvh) as the fallback,
+     so a host's own declaration wins wherever it is, even on a :root rule
+     loaded before this file (the bundled views link it in the body).
+     Under a host header: calc(100dvh - <the header's height>). */
 
   /* Safe areas, re-pointable by a host with its own source of truth. */
   --chats-safe-top: env(safe-area-inset-top, 0px);
@@ -1028,7 +1033,9 @@ turbo-frame[id^="chats_page_"] {
      .chats-split__empty          no conversation open (--inbox: no conversations at all)
 
    The page is as wide as the list plus a thread page (--chats-max-width),
-   so the conversation reads at the width it always had. */
+   so the conversation reads at the width it always had, and as tall as
+   --chats-split-height (the screen; a host with its own header above the
+   page sets what is left: calc(100dvh - 4rem)). */
 .chats-split {
   max-width: calc(var(--chats-list-width) + var(--chats-max-width));
 }
@@ -1067,7 +1074,7 @@ turbo-frame[id^="chats_page_"] {
   .chats-split {
     box-sizing: border-box;
     flex-direction: row;
-    height: 100dvh;
+    height: var(--chats-split-height, 100dvh);
     min-height: 0;
     overflow: hidden;
     /* Its edges, where a page wider than it shows the host's background. */
@@ -1095,7 +1102,7 @@ turbo-frame[id^="chats_page_"] {
 @media (max-width: 699.98px) {
   /* A conversation open: the page is the thread, as tall as the screen. */
   .chats-split:has(.chats-split__pane) {
-    height: 100dvh;
+    height: var(--chats-split-height, 100dvh);
     min-height: 0;
     overflow: hidden;
   }

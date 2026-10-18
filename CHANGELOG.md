@@ -21,8 +21,10 @@ the old pages everywhere.**
   "Select a conversation" (`chats.inbox.select_hint`), and with no
   conversations at all it holds the inbox's empty state and the
   `inbox_empty` slot (rendered once, in the pane, no longer in the list
-  too). Both panes are as tall as the screen and scroll on their own; the
-  page is as wide as the list plus a thread page (`--chats-max-width`).
+  too). Both panes are as tall as `--chats-split-height` (the screen,
+  `100dvh`, by default; a host with its own header above the page sets what
+  is left, `calc(100dvh - 4rem)`) and scroll on their own; the page is as
+  wide as the list plus a thread page (`--chats-max-width`).
   Below 700px it is one column, exactly the separate pages: `/messages` is
   the list, `/messages/:id` the thread with its back link. One media query
   decides, so the layout holds before JavaScript and without it.
@@ -37,8 +39,16 @@ the old pages everywhere.**
   enables the frame only on a wide screen; on a phone, before it connects
   and without JavaScript, the same link opens the page. It also skips the
   hover prefetch of a row while the frame is disabled (Turbo would ask for
-  the pane alone and then render it as the page), and marks the row the
-  pane opened current at once.
+  the pane alone and then render it as the page), marks the row the pane
+  opened current at once, and takes the viewer into it, as LinkedIn does:
+  the focus goes to its composer, inside the pane a screen reader names
+  after the conversation; on a touch screen (`pointer: coarse`), and in a
+  locked conversation, to the pane's title (`tabindex="-1"`), so no
+  keyboard rises over a conversation not read yet.
+- **A filtered list stays filtered.** A row of a search's results or of a
+  stack (`?with=`) links to `/messages/:id?q=…` / `?with=…`: the address
+  bar names the list the page shows, so the list's refreshes, which
+  re-request it, keep it, and the pane's back link (phones) returns to it.
 - **The open conversation survives the list's refreshes.** The inbox's live
   updates are Turbo 8 morphs of the whole page; the pane's thread sits in a
   `data-turbo-permanent` element keyed by the conversation and the viewer
@@ -95,19 +105,21 @@ the old pages everywhere.**
   - `chats/conversations/_conversation_row.html.erb` and `_group.html.erb`:
     with `pane: true` the link carries
     `data-turbo-frame="chats_conversation"` (a stack only when it holds one
-    conversation), and with `current:` the current row its class and
-    `aria-current="page"`; the `<li>`'s classes come from `class_names`
-    (no trailing space).
+    conversation) and the list's `filter:` (`q`, `with`) in its URL, and
+    with `current:` the current row its class and `aria-current="page"`;
+    the `<li>`'s classes come from `class_names` (no trailing space).
+  - `chats/conversations/_thread_header.html.erb` takes `back_path:` (the
+    pane's keeps the list's filter) and gives a titled pane's heading
+    `tabindex="-1"`.
   - `chats/dock/_dock.html.erb`: one more action,
     `turbo:frame-load@document->chats--dock#pageFrameLoaded`.
   - `chats.css`: the `chats-split`, `chats-split__list`,
     `chats-split__conversation`, `chats-split__pane`, `chats-split__thread`,
     `chats-split__empty` and `chats-thread--pane` rules and
-    `--chats-list-width`. The existing class names are unchanged, so a theme
-    on `.chats`, `.chats-row` or `.chats-thread` keeps applying. Like the
-    thread page, the two-pane page is `100dvh` tall: a layout with a nav bar
-    above gives `.chats-split` the height that's left, as it does
-    `.chats-thread`.
+    `--chats-list-width`; `--chats-split-height` is read with a `100dvh`
+    fallback and never declared by the gem, so a host's declaration wins
+    wherever it is. The existing class names are unchanged, so a theme on
+    `.chats`, `.chats-row` or `.chats-thread` keeps applying.
 
 ## [0.5.1] - 2026-10-18
 

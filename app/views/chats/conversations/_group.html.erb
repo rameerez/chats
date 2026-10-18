@@ -11,13 +11,18 @@
     floating window; a deeper stack still goes to the stack list. On the
     two-pane page (`pane: true`) a stack of one opens its thread in the
     conversation pane, and is the current row while it is open there
-    (`current:`, as in _conversation_row); a deeper stack still goes to the
-    stack list. %>
+    (`current:`, `filter:`, as in _conversation_row); a deeper stack still
+    goes to the stack list. %>
 <% single = group.single? %>
 <% current = single && local_assigns[:current].present? && local_assigns[:current] == group.conversation %>
 <li class="<%= class_names("chats-row chats-row--group", "chats-row--unread": group.unread?, "chats-row--current": current) %>"
     id="<%= group.dom_id %>">
-  <%= link_to chats_group_path(group), class: "chats-row__link",
+  <% href = if local_assigns[:pane] && single
+             conversation_path(group.conversation, **local_assigns.fetch(:filter, {}))
+           else
+             chats_group_path(group)
+           end %>
+  <%= link_to href, class: "chats-row__link",
         "aria-current": ("page" if current),
         data: (if local_assigns[:dock] && single
                  chats_dock_opener(group.conversation)

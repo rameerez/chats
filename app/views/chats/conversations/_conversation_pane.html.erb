@@ -24,7 +24,7 @@
                 data: { conversation_id: conversation.id } do %>
   <%= render "chats/conversations/thread_header",
              conversation: conversation, participant: participant, counterpart: counterpart,
-             heading: :h2, title_id: title_id %>
+             heading: :h2, title_id: title_id, back_path: conversations_path(**chats_inbox_filter) %>
 
   <%= tag.div id: "chats_conversation_pane_#{conversation.id}_#{Chats.messager_key(chats_current_messager)}",
               class: "chats-split__thread", data: { turbo_permanent: true } do %>

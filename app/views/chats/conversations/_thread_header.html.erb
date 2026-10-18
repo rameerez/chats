@@ -13,10 +13,15 @@
       counterpart   the other messager of a direct thread, or nil
       heading       the title's element: :h1 on the thread page, :h2 in the
                     pane, under the page's own "Messages" heading
-      title_id      the title's id, which a pane is labelled by (optional) %>
+      title_id      the title's id, which a pane is labelled by (optional);
+                    the pane's title also takes the focus when a row opens
+                    it on a touch screen (tabindex="-1", see chats--split)
+      back_path     where the back link goes (default: the inbox; the pane
+                    keeps the list's search or stack) %>
 <% heading = local_assigns.fetch(:heading, :h1) %>
+<% title_id = local_assigns[:title_id] %>
 <header class="chats-thread__header">
-  <%= link_to root_path, class: "chats-thread__back", "aria-label": t("chats.thread.back") do %>
+  <%= link_to local_assigns[:back_path] || root_path, class: "chats-thread__back", "aria-label": t("chats.thread.back") do %>
     <span aria-hidden="true">‹</span>
   <% end %>
 
@@ -32,7 +37,7 @@
     <%# Both arms wrap the name in .chats-thread__name: the heading is a flex
         row (the badge is its second child), and only a real element can
         carry the ellipsis. %>
-    <%= content_tag heading, class: "chats-thread__title", id: local_assigns[:title_id] do %>
+    <%= content_tag heading, class: "chats-thread__title", id: title_id, tabindex: (-1 if title_id) do %>
       <% if counterpart %>
         <%= chats_messager_name(counterpart, css_class: "chats-thread__name") %>
         <%= chats_verified_badge(counterpart) %>

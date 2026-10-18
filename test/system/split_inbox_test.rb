@@ -94,6 +94,65 @@ class SplitInboxBrowserTest < ActionDispatch::SystemTestCase
     assert_selector "li.chats-row--current", text: "Bob"
   end
 
+  test "a row opened from a stack keeps the stack: the address bar carries it, and a refresh keeps the list filtered" do
+    desk = create_desk(name: "Soporte")
+    first, = Array.new(2) do |index|
+      ticket = @alice.chat_with(desk, about: create_listing(title: "Listing #{index}"))
+      desk.message!(ticket, "ticket #{index}")
+      ticket
+    end
+    sign_in_at(1280)
+    visit "/messages"
+    find("li.chats-row--group a").click # a deeper stack: the stack list, a page
+    assert_selector ".chats-inbox__filter", text: "Soporte"
+    assert_selector "#chats_conversation:not([disabled])"
+    assert_selector ".chats-split__list li.chats-row", count: 2
+
+    find(".chats-split__list a", text: "ticket 0").click
+    assert_selector ".chats-split__pane[data-conversation-id='#{first.id}']"
+    url = URI(page.current_url)
+    assert_equal "/messages/#{first.id}", url.path
+    assert_includes url.query.to_s, "with=", "the address bar keeps the stack"
+
+    @bob.message!(@with_bob, "a message elsewhere") # what the refresh is about
+    broadcast_refresh
+    assert_selector ".chats-split__pane[data-conversation-id='#{first.id}']"
+    sleep 0.5 # the morph has landed (the list would hold Bob's row if it had gone back to the inbox)
+    assert_selector ".chats-inbox__filter", text: "Soporte"
+    assert_selector ".chats-split__list li.chats-row", count: 2
+    assert_no_selector ".chats-split__list li.chats-row", text: "Bob"
+    assert_selector "li.chats-row--current", text: "ticket 0"
+  end
+
+  test "a row click takes the viewer into the conversation: the composer has the focus, inside the labelled pane" do
+    sign_in_at(1280)
+    visit "/messages"
+    assert_selector "#chats_conversation:not([disabled])"
+
+    find(".chats-split__list a", text: "Carol").click
+
+    assert_selector ".chats-split__pane .chats-thread__title", text: "Carol"
+    wait_until { page.evaluate_script("document.activeElement?.matches('.chats-split__pane .chats-composer__input')") }
+    label = page.evaluate_script(<<~JS)
+      document.getElementById(document.activeElement.closest("section").getAttribute("aria-labelledby")).textContent.trim()
+    JS
+    assert_equal "Carol", label, "a screen reader entering the pane hears whose conversation it is"
+  end
+
+  test "under a host's own header, the page fits what is left of the screen: no page scroll, the composer in view" do
+    Chats.config.layout = "with_header"
+    sign_in_at(1280)
+
+    visit "/messages/#{@with_bob.id}"
+    assert_selector ".chats-thread--pane .chats-composer__input"
+    assert_fits_under_the_header
+
+    resize(390, mobile: true)
+    visit "/messages/#{@with_bob.id}"
+    assert_selector ".chats-split__pane .chats-thread__back", visible: true
+    assert_fits_under_the_header
+  end
+
   test "a refresh of the list leaves the open conversation alone: draft, scroll, focus, the thread itself" do
     sign_in_at(1280)
     visit "/messages/#{@with_bob.id}"
@@ -329,6 +388,15 @@ class SplitInboxBrowserTest < ActionDispatch::SystemTestCase
       (() => { const r = document.querySelector(#{selector.to_json}).getBoundingClientRect();
                return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height } })()
     JS
+  end
+
+  def assert_fits_under_the_header
+    viewport = page.evaluate_script("window.innerHeight")
+    assert_equal 56, rect(".chats-split")["top"].round, "the page starts under the header"
+    assert_operator page.evaluate_script("document.documentElement.scrollHeight"), :<=, viewport,
+                    "the page doesn't scroll"
+    assert_operator rect(".chats-thread--pane .chats-composer")["bottom"].round, :<=, viewport,
+                    "the composer is in view"
   end
 
   def assert_no_sideways_scroll(width = 1280)

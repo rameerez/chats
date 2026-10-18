@@ -19,7 +19,7 @@ module Chats
     PANE_FRAME = "chats_conversation"
 
     before_action :set_conversation, only: %i[show read typing leave mute unmute refresh]
-    helper_method :chats_counterpart, :chats_two_panes?
+    helper_method :chats_counterpart, :chats_two_panes?, :chats_inbox_filter
 
     # The inbox. Everything is preloaded/batched so rendering N rows costs a
     # constant number of queries (conversations + last messages + participants
@@ -270,6 +270,16 @@ module Chats
       return @chats_two_panes if defined?(@chats_two_panes)
 
       @chats_two_panes = Chats.config.split_inbox? && !views_ejected_before_two_panes?
+    end
+
+    # The list's filter on the two-pane page: its search (`q`) or the stack
+    # it shows (`with`). A row opened in the pane carries it into its URL,
+    # /messages/:id?with=…, because that URL is what the list's live
+    # refreshes re-request: without it, the next refresh would bring back
+    # the whole inbox under a list that was filtered. The back link to the
+    # list keeps it too.
+    def chats_inbox_filter
+      { q: params[:q], with: params[:with] }.select { |_, value| value.is_a?(String) && value.present? }
     end
 
     def views_ejected_before_two_panes?

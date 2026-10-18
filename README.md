@@ -590,7 +590,7 @@ An engine mounted on top of chats ships its own `app/views/chats/slots/…`; the
 
 ![Two panes](docs/screenshots/split-inbox.png)
 
-Each row is a real link to `/messages/:id`. On a wide screen it opens the conversation in the right pane, a `turbo_frame_tag "chats_conversation"` whose `data-turbo-action="advance"` moves the address bar and history with it, and the server answers that frame with the pane alone. The pane's thread sits in a `data-turbo-permanent` element keyed by the conversation (and the viewer), so the inbox's live refreshes (Turbo 8 morphs of the whole page) re-render the list and leave the conversation alone: its draft, scroll position, read state and stream subscription.
+Each row is a real link to `/messages/:id` (keeping the list's search or stack in its query, so the page's URL always names the list it shows). On a wide screen it opens the conversation in the right pane, a `turbo_frame_tag "chats_conversation"` whose `data-turbo-action="advance"` moves the address bar and history with it, and the server answers that frame with the pane alone. The pane's thread sits in a `data-turbo-permanent` element keyed by the conversation (and the viewer), so the inbox's live refreshes (Turbo 8 morphs of the whole page) re-render the list and leave the conversation alone: its draft, scroll position, read state and stream subscription. Opening one takes you into it, as on LinkedIn: the focus goes to its composer (on a touch screen, to its title, so the keyboard waits until you ask for it), inside a pane a screen reader names after the conversation.
 
 **On a phone** (under 700px wide, where the dock turns into a full-screen sheet) it is one column, exactly the separate pages as before: `/messages` is the list, and a row opens the conversation's page, with its back link to the list. One media query decides, so the layout holds before JavaScript runs and without it; with JavaScript off a row always opens the page.
 
@@ -605,7 +605,11 @@ config.inbox_layout = :split    # the default: two panes from 700px wide
 config.inbox_layout = :stacked  # separate pages at every width, as before 0.6
 ```
 
-The list pane is `--chats-list-width` wide (320px), and the page as wide as the list plus a thread (`--chats-max-width`). Like the thread page, it is as tall as the screen (`100dvh`): a layout with a nav bar above it gives `.chats-split` the height that's left, as it does `.chats-thread`. Views ejected with `rails generate chats:views` before 0.6 keep their own separate pages; re-eject to get the panes.
+The list pane is `--chats-list-width` wide (320px), and the page as wide as the list plus a thread (`--chats-max-width`). It is as tall as the screen, so each pane scrolls on its own and the composer stays at the bottom. If your layout puts a header above it, say how much is left, or the page will scroll by the header's height:
+
+```css
+:root { --chats-split-height: calc(100dvh - 4rem); } /* 4rem: your header */
+``` Views ejected with `rails generate chats:views` before 0.6 keep their own separate pages; re-eject to get the panes.
 
 ## 🪟 Messaging dock
 
@@ -702,6 +706,7 @@ The bundled UI is intentionally framework-free (semantic `chats-*` classes + one
   --chats-accent-contrast: #111827;
   --chats-verified: #0284c7;         /* the "official account" badge */
   --chats-list-width: 320px;         /* the list beside an open conversation */
+  --chats-split-height: calc(100dvh - 4rem); /* the two-pane page under a 4rem header (default 100dvh) */
 }
 ```
 
