@@ -288,5 +288,14 @@ module Chats
       assert_nil group.reload.title
       refute group.remove_reported_field!(:something_else)
     end
+
+    test "a group's title is removed once: a second decision, even on a stale copy, removes nothing" do
+      group = Conversation.group!(@alice, [@bob, @carol], title: "Spam group")
+      stale = Conversation.find(group.id)
+
+      assert_equal true, group.remove_reported_field!(:title)
+      assert_equal false, group.remove_reported_field!(:title)
+      assert_equal false, stale.remove_reported_field!(:title), "read again under the row lock"
+    end
   end
 end

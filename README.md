@@ -253,7 +253,7 @@ Use **`:flag`, never `:block`** for chat: you don't gag someone mid-conversation
 |---|---|
 | `reported_owner` | the sender (who a decision notifies, who a ban targets) |
 | `moderation_snapshot(:body)` | the body — frozen as evidence at report time, surviving later edits/deletes |
-| `remove_reported_field!(:body)` | the **soft-delete tombstone** — a moderator's removal looks exactly like a user deletion ("Message deleted"), no special admin rendering path |
+| `remove_reported_field!(:body)` | the **soft-delete tombstone** — a moderator's removal looks exactly like a user deletion ("Message deleted"), no special admin rendering path. Returns whether anything was removed; moderate refuses a removal that removed nothing. So it is `false` for a message already deleted (by its sender or an earlier decision), or whose body is already blank, decided under the message's row lock so two decisions at once can't both remove it. A group's `remove_reported_field!(:title)` keeps the same contract |
 | `report_visible_to?(viewer)` | participants only (a DM isn't public content), and never the author |
 | `moderation_field_value(:files)` / change detection | attachment-aware seams so image filters classify what actually changed |
 

@@ -312,6 +312,64 @@ module Chats
       assert message.reload.deleted?
     end
 
+    # remove_reported_field! answers whether it removed anything: moderate
+    # refuses a removal that removed nothing, rather than recording a second
+    # "content removed" and a statement of reasons that would be false.
+
+    test "removing a reported body removes it once: true, then false" do
+      message = @conversation.messages.create!(sender: @alice, body: "reportable")
+
+      assert_equal true, message.remove_reported_field!(:body)
+      assert message.reload.deleted?
+      assert_equal false, message.remove_reported_field!(:body), "already removed"
+    end
+
+    test "a message its sender already deleted has nothing to remove" do
+      message = @conversation.messages.create!(sender: @alice, body: "said, then deleted")
+      message.soft_delete!
+
+      assert_equal false, message.remove_reported_field!(:body)
+    end
+
+    test "a message whose body is already blank has nothing to remove" do
+      message = @conversation.messages.create!(sender: @alice, body: "words")
+      message.update_columns(body: "")
+
+      assert_equal false, message.remove_reported_field!(:body)
+      assert_not message.reload.deleted?, "and it isn't tombstoned for nothing"
+    end
+
+    test "two decisions on the same message: only the first removes, even holding a stale copy" do
+      # The decision is taken under the message's row lock and read again
+      # under it. The dummy runs on SQLite, which has no row locks to race
+      # on, so the race is played sequentially: the second decision holds a
+      # copy loaded before the first removed it, and still sees it removed.
+      message = @conversation.messages.create!(sender: @alice, body: "reported twice")
+      first = Chats::Message.find(message.id)
+      second = Chats::Message.find(message.id)
+
+      assert_equal true, first.remove_reported_field!(:body)
+      assert_not second.deleted?, "a stale copy, as the second decision had it"
+      assert_equal false, second.remove_reported_field!(:body)
+      assert second.deleted?, "read again under the lock"
+    end
+
+    test "under deletion: :hard, a message already gone has nothing to remove" do
+      Chats.config.deletion = :hard
+      message = @conversation.messages.create!(sender: @alice, body: "gone")
+      stale = Chats::Message.find(message.id)
+
+      assert_equal true, message.remove_reported_field!(:body)
+      assert_equal false, stale.remove_reported_field!(:body)
+    end
+
+    test "a field that isn't the body is never removed" do
+      message = @conversation.messages.create!(sender: @alice, body: "words")
+
+      assert_equal false, message.remove_reported_field!(:files)
+      assert_not message.reload.deleted?
+    end
+
     test "moderation_field_value and change detection cover the files seam" do
       message = @conversation.messages.create!(sender: @alice, body: "with file")
       assert_equal "with file", message.moderation_field_value(:body)

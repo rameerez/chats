@@ -356,12 +356,26 @@ module Chats
     # A moderator removing a reported message body = the soft-delete
     # tombstone path, so the thread shows "Message deleted" instead of a
     # hole, and attachments are purged with it.
+    #
+    # Returns whether anything was removed, and moderate takes that as the
+    # truth: a removal that removed nothing is refused, never recorded as
+    # "content removed" with a statement of reasons that would be false. So
+    # false for a message already deleted (by its sender, by an earlier
+    # decision) or whose body is already blank, and for one already gone
+    # (`deletion: :hard`). Decided under the message's row lock, read again
+    # under it: two decisions taken at once cannot both see it standing.
     def remove_reported_field!(field)
       return false unless field.to_s == "body"
 
-      # Trust & Safety outranks a product lock: a closed conversation must
-      # never be a place reported content can hide.
-      soft_delete!(enforce_lock: false)
+      with_lock do
+        next false if deleted? || body.blank?
+
+        # Trust & Safety outranks a product lock: a closed conversation must
+        # never be a place reported content can hide.
+        soft_delete!(enforce_lock: false)
+      end
+    rescue ActiveRecord::RecordNotFound
+      false # hard-deleted meanwhile: nothing left to remove
     end
 
     # Only people *in* the conversation may report a message (a message

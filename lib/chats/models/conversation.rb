@@ -449,11 +449,19 @@ module Chats
       field.to_s == "title" && title.present?
     end
 
+    # Whether anything was removed (see Chats::Message#remove_reported_field!):
+    # false for a title already gone, decided under the row lock.
     def remove_reported_field!(field)
       return false unless field.to_s == "title"
 
-      update!(title: nil)
-      true
+      with_lock do
+        next false if title.blank?
+
+        update!(title: nil)
+        true
+      end
+    rescue ActiveRecord::RecordNotFound
+      false
     end
 
     def report_visible_to?(viewer, field: nil)
