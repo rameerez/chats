@@ -162,11 +162,14 @@ function apply(html, when, key) {
     const waited = streamsMarked(mark).length > 0 // an answer with no stream has nothing left to apply
 
     // Each stream removes itself from <html> once Turbo has performed it
-    // (or skipped it). A page re-rendered meanwhile cancels the rest.
+    // (or skipped it). A page re-rendered meanwhile cancels the rest — asked
+    // a task later, when a permanent element Turbo is carrying across a
+    // visit is back on the page. (A re-render inside <body>, which this
+    // doesn't see, is the caller's to cancel: the thread does as it goes.)
     const check = () => {
       if (answer.cancelled) return
       if (!streamsMarked(mark).length) return answer.settle(answer.applied || !waited)
-      if (!when()) answer.cancel()
+      setTimeout(() => { if (!answer.cancelled && !when()) answer.cancel() }, 0)
     }
     answer.observer = new MutationObserver(check)
     answer.observer.observe(document.documentElement, { childList: true })

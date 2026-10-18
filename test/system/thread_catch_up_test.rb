@@ -85,11 +85,7 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
 
   test "an answer that arrives after a dock window loaded its thread again is dropped" do
     sign_in
-    visit "/"
-    find(".chats-dock__bar").click
-    find("#chats_dock_list a", text: "Bob").click
-    window = "turbo-frame.chats-window[data-conversation-id='#{@conversation.id}']"
-    assert_selector "#{window} [data-chats--thread-target='message']", text: "hola"
+    window = open_dock_window
     hold_catch_up_answers
 
     catch_up(window)
@@ -151,11 +147,7 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
 
   test "an answer whose streams are still waiting when a dock window loads its thread again changes nothing" do
     sign_in
-    visit "/"
-    find(".chats-dock__bar").click
-    find("#chats_dock_list a", text: "Bob").click
-    window = "turbo-frame.chats-window[data-conversation-id='#{@conversation.id}']"
-    assert_selector "#{window} [data-chats--thread-target='message']", text: "hola"
+    window = open_dock_window
     @bob.message!(@conversation, "missed")
     hold_catch_up_answers
 
@@ -167,7 +159,42 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
     page.execute_script("document.querySelector(#{window.to_json}).reload()")
     run_frames_until_rendered_again(within: window, after: waiting)
 
+    # Turbo still hasn't had the frame to apply the old streams: the window
+    # re-rendering inside <body> settled the old answer and took them away.
+    Timeout.timeout(Capybara.default_max_wait_time) do
+      sleep 0.02 until page.evaluate_script("window.__caughtUp") == "settled"
+    end
+    assert_equal 0, answer_streams_waiting
     assert_no_change_from_old_streams(waiting, within: window)
+  end
+
+  test "a dock window carried across a visit while its answer waits still gets the answer" do
+    sign_in
+    window = open_dock_window
+    @bob.message!(@conversation, "missed while the dock moved")
+    hold_catch_up_answers
+
+    catch_up(window)
+    wait_until_answered(1)
+    hold_frames
+    release_answers
+    waiting = wait_for_pending_streams
+    page.execute_script("document.body.dataset.before = 'visit'; Turbo.visit('/')") # the dock is permanent
+    Timeout.timeout(Capybara.default_max_wait_time) do
+      loop do
+        page.execute_script("window.__runFrames(#{waiting}, Infinity)")
+        break unless page.evaluate_script("document.body.dataset.before")
+
+        sleep 0.02
+      end
+    end
+    sleep 0.2 # past the task in which a thread that really went away would let its answer go
+
+    assert_equal first_render, thread_state(window)["render"], "the same thread, carried along"
+    assert_operator answer_streams_waiting, :>, 0, "its answer still waits"
+    release_frames
+
+    assert_selector "#{window} [data-chats--thread-target='message']", text: "missed while the dock moved"
   end
 
   # Starting a browser once tells whether this machine can run these.
@@ -190,6 +217,20 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
 
   def ci?
     %w[1 true yes].include?(ENV["CI"].to_s.downcase)
+  end
+
+  # The conversation with Bob in a dock window on a host page. The dock's
+  # controller must be connected (it sets data-mode) before a row is
+  # clicked, or the click is a plain link to the thread page.
+  def open_dock_window
+    visit "/"
+    assert_selector ".chats-dock[data-mode]"
+    find(".chats-dock__bar").click
+    assert_selector "#chats_dock_list li"
+    find("#chats_dock_list a", text: "Bob").click
+    window = "turbo-frame.chats-window[data-conversation-id='#{@conversation.id}']"
+    assert_selector "#{window} [data-chats--thread-target='message']", text: "hola"
+    window
   end
 
   def sign_in
@@ -240,7 +281,9 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
   def catch_up(within = "body")
     page.execute_script(<<~JS, within)
       const element = document.querySelector(arguments[0]).querySelector(".chats-thread")
+      window.__caughtUp = "waiting"
       window.Stimulus.getControllerForElementAndIdentifier(element, "chats--thread").refreshThread()
+        .then(() => { window.__caughtUp = "settled" })
     JS
     @first_render = thread_state(within)["render"]
   end
@@ -330,6 +373,10 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
     log = page.evaluate_script("window.__changeLog")
     assert_equal 0, changes, "the old answer's streams touched the new render: #{log.inspect}"
     assert_equal fresh, thread_state(within), "its bubbles and cursors are its own"
+  end
+
+  def answer_streams_waiting
+    page.evaluate_script("document.querySelectorAll('html > turbo-stream[data-chats-answer]').length")
   end
 
   def count_rendered_streams

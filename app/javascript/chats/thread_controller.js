@@ -149,7 +149,13 @@ export default class extends Controller {
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
     this.stopRecovery?.()
-    cancelStreamsFor(this.element) // what this render asked for is not wanted any more
+    // What this render asked for is not wanted any more — once it is really
+    // gone. A Turbo visit carries the dock from page to page by detaching it
+    // and attaching it again in the same task: a window's thread is off the
+    // page for an instant and keeps everything, its answer on the way
+    // included. Off the page by the next task is a thread that went away
+    // (another page, a window reloaded or closed).
+    setTimeout(() => { if (!this.element.isConnected) cancelStreamsFor(this.element) }, 0)
     this.element.removeEventListener("chats:prune", this.prune)
     this.element.removeEventListener("chats:caught-up", this.caughtUp)
     this.presenceObserver?.disconnect()

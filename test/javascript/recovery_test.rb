@@ -405,6 +405,7 @@ class RecoveryTest < ActiveSupport::TestCase
 
       wanted = false                                  // the thread rendered again…
       page.mutate(document.documentElement)           // …and <html> changed as it did
+      page.advance(0)                                 // asked a task later
       await page.settle()
       assert.strictEqual(resolved, false)
       assert.strictEqual(turbo.pending().length, 0, "its leftover streams are gone")
@@ -412,6 +413,26 @@ class RecoveryTest < ActiveSupport::TestCase
 
       await turbo.applyStreams()
       assert.strictEqual(turbo.performed.length, 0, "a stream Turbo still had queued does nothing")
+    JAVASCRIPT
+  end
+
+  test "an element away for an instant (Turbo carrying the dock across a visit) keeps its answer" do
+    run_streams(<<~JAVASCRIPT)
+      let wanted = true
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
+      answer(0)
+      await page.settle()
+
+      wanted = false                                  // detached by the visit…
+      page.mutate(document.documentElement)           // (the body is replaced)
+      wanted = true                                   // …and attached again, in the same task
+      page.advance(0); await page.settle()
+      assert.strictEqual(turbo.pending().length, 2, "its streams still wait")
+
+      await turbo.applyStreams(); await page.settle()
+      assert.strictEqual(resolved, true)
+      assert.strictEqual(turbo.performed.length, 2)
     JAVASCRIPT
   end
 
