@@ -33,8 +33,10 @@
         "chats--dock-window-url-value": chats_routes.conversation_path("__id__", window: 1),
         "chats--dock-record-key-value": Chats::Conversation.model_name.param_key,
         "chats--dock-announcement-value": t("chats.dock.new_message_from", name: "%{name}"),
-        # Plural forms uninterpolated: the controller fills %{count} in.
-        "chats--dock-window-unread-value": I18n.t("chats.dock.window_unread").to_json,
+        # Every plural form the locale has (CLDR: zero, one, two, few, many,
+        # other), uninterpolated: the controller picks one with
+        # Intl.PluralRules and fills %{count} in.
+        "chats--dock-window-unread-value": chats_plural_forms("chats.dock.window_unread").to_json,
         action: "keydown->chats--dock#keydown " \
                 "focusin->chats--dock#engage pointerdown->chats--dock#engage wheel->chats--dock#engage " \
                 "touchstart->chats--dock#engage " \

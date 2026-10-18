@@ -113,6 +113,24 @@ class EngineHelperTest < ActionView::TestCase
                     %(data-chats-dock-conversation-id="#{conversation.id}")
   end
 
+  # I18n's own %{count} placeholders, not Ruby format strings.
+  # rubocop:disable Style/FormatStringToken
+  test "chats_plural_forms hands over every CLDR form the locale has, and nothing else" do
+    assert_equal({ one: "%{count} new message", other: "%{count} new messages" },
+                 chats_plural_forms("chats.dock.window_unread"), "the gem ships one and other")
+
+    # A host's own locale file adds the forms its language needs.
+    host_forms = { few: "%{count} pocos", many: "%{count} muchos", note: "not a plural form" }
+    I18n.backend.store_translations(:es, chats: { dock: { window_unread: host_forms } })
+    forms = I18n.with_locale(:es) { chats_plural_forms("chats.dock.window_unread") }
+    assert_equal %i[one other few many].sort, forms.keys.sort, "every form, the host's included, no other key"
+
+    assert_equal({}, chats_plural_forms("chats.dock.no_such_key"), "missing: empty, never 'translation missing'")
+  ensure
+    I18n.reload!
+  end
+  # rubocop:enable Style/FormatStringToken
+
   test "chats_muted? reads the viewer's own seat" do
     conversation = conversation_between(@alice, @bob)
 

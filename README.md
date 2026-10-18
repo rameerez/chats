@@ -629,7 +629,7 @@ It needs `chats_dock` on the same page: without the dock, the button's response 
 }
 ```
 
-The `dock_panel_footer` [slot](#-view-slots) puts your own link next to "See all messages". `rails generate chats:views` ejects the dock's partials (`chats/dock/`) along with everything else. All labels are localized under `chats.dock.*`.
+The `dock_panel_footer` [slot](#-view-slots) puts your own link next to "See all messages". `rails generate chats:views` ejects the dock's partials (`chats/dock/`) along with everything else. All labels are localized under `chats.dock.*`. The window's unread count (`chats.dock.window_unread`) is pluralized in the browser with `Intl.PluralRules` in the page's `<html lang>`: the gem ships `one`/`other`, so add the forms your languages need (`zero`, `two`, `few`, `many`) in your own locale file, e.g. Polish `few: "%{count} nowe wiadomości"`, `many: "%{count} nowych wiadomości"`.
 
 ## 🔗 Profile links
 

@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Nothing changes by default: system messages still bump `messages_count`
   and `last_message`, and the inbox still lists system-only threads.
 
+### Fixed
+- **The dock's window count used the right plural form only in two-form
+  languages.** `dock_controller.js` picked `one` for exactly 1 and `other`
+  for everything else, so Polish, Russian, Ukrainian, Croatian or Serbian
+  (one/few/many, with 21 read like 1 in the East Slavic ones) and
+  Arabic-style zero/two read wrong. The dock now renders every plural form
+  the locale provides for `chats.dock.window_unread` (`zero`, `one`, `two`,
+  `few`, `many`, `other`; new helper `chats_plural_forms`), and the
+  controller picks one with `Intl.PluralRules` in the page's language
+  (`<html lang>`, else the browser's), reading a missing form as `other`
+  and falling back to the old rule where `Intl` is unavailable. The gem's
+  `en` and `es` keep `one`/`other`; a host adds the forms its languages need
+  in its own locale files.
+
 ## [0.5.0] - 2026-10-18
 
 The messaging dock. LinkedIn and Steam keep your conversations in small
