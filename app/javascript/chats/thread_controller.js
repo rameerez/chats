@@ -510,36 +510,55 @@ export default class extends Controller {
   // --- Stale-thread refresh (catch up after sleep/disconnect) --------------------
 
   // Two cursors, because "new" and "changed" are different questions: the
-  // newest creation rendered (`after`, µs: what is newer gets appended) and
-  // the newest change rendered (`since`, ms: what changed since gets
-  // replaced). One cursor can't answer both: a message created at 10:15
-  // and missed, while a bubble on screen was edited at 10:20, is older than
-  // the newest change and would never come.
+  // newest creation on screen (`after`: anything newer is appended) and the
+  // newest change on screen (`changed`: anything changed since is
+  // replaced). One can't answer both: a message created at 10:15 and
+  // missed, while a bubble on screen was edited at 10:20, is older than the
+  // newest change. Each is a moment to the microsecond the database keeps
+  // (an integer below 2^53, exact as a Number) and the ids already on
+  // screen at that moment: two rows can share a timestamp, and the moment
+  // alone can't tell the one shown from the one missed.
   trackLoadCursor(element) {
-    const created = Number(element.dataset.createdAtUs || 0)
-    const updated = Number(element.dataset.updatedAtMs || 0)
-    if (created > (this.createdCursor || 0)) this.createdCursor = created
-    if (updated > (this.updatedCursor || 0)) this.updatedCursor = updated
+    const id = element.dataset.messageId
+    this.createdCursor = this.advance(this.createdCursor, Number(element.dataset.createdAtUs || 0), id)
+    this.changedCursor = this.advance(this.changedCursor, Number(element.dataset.updatedAtUs || 0), id)
+    // Bubbles ejected before they carried the cursors above: the one
+    // millisecond cursor they had.
+    const legacy = Number(element.dataset.updatedAtMs || 0)
+    if (legacy > (this.legacyCursor || 0)) this.legacyCursor = legacy
   }
 
-  // What the stream missed: messages created after the newest one rendered
-  // (appended), rendered ones changed since (replaced: edits, tombstones,
+  advance(cursor = { at: 0, ids: new Set() }, at, id) {
+    if (!at || !id || at < cursor.at) return cursor
+    if (at > cursor.at) return { at, ids: new Set([id]) }
+    cursor.ids.add(id)
+    return cursor
+  }
+
+  // What the stream missed: messages created after the newest one on screen
+  // (appended), ones on screen changed since (replaced: edits, tombstones,
   // reactions), the read state, and — when messages are hard-deleted —
-  // which rendered bubbles still exist. An empty thread asks from the epoch:
-  // its first message may be the one it missed. `from` is the oldest
-  // rendered bubble, so the server can name every bubble that should be on
-  // screen. A thread more than a page
-  // behind gets its history re-rendered at the latest page instead
-  // (`history`: this thread's scroller has the id that takes it; one
-  // ejected before it did gets a page refresh); it then opens at the
-  // bottom, as a fresh thread does.
+  // which rendered bubbles still exist. An empty thread asks from the
+  // epoch: its first message may be the one it missed. `from` is the
+  // oldest rendered bubble, so the server can name every bubble that should
+  // be on screen. A thread more than a page behind gets its history
+  // re-rendered at the latest page instead (`history`: this thread's
+  // scroller has the id that takes it; one ejected before it did gets a
+  // page refresh); it then opens at the bottom, as a fresh thread does.
   refreshThread() {
     if (!this.refreshUrlValue) return
 
-    const params = new URLSearchParams({ since: this.updatedCursor || 0 })
-    // A bubble ejected before it carried its creation time leaves `after`
-    // out, and the server falls back to the one cursor it used to have.
-    if (this.createdCursor || !this.messageTargets.length) params.set("after", this.createdCursor || 0)
+    const params = new URLSearchParams()
+    if (this.createdCursor?.at || !this.legacyCursor) {
+      const created = this.createdCursor || { at: 0, ids: new Set() }
+      const changed = this.changedCursor || { at: 0, ids: new Set() }
+      params.set("after", created.at)
+      if (created.ids.size) params.set("after_ids", [...created.ids].join(","))
+      params.set("changed", changed.at)
+      if (changed.ids.size) params.set("changed_ids", [...changed.ids].join(","))
+    } else {
+      params.set("since", this.legacyCursor)
+    }
     const oldest = this.messageTargets[0]
     if (oldest?.dataset.createdAtUs) params.set("from", oldest.dataset.createdAtUs)
     if (this.hasScrollerTarget && this.scrollerTarget.id) params.set("history", "1")

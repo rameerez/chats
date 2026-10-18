@@ -102,7 +102,7 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     rendered = cursor_after(shown)
     missed = travel_to(Time.zone.parse("2026-10-18 10:15")) { @bob.message!(@conversation, "missed at 10:15") }
     travel_to(Time.zone.parse("2026-10-18 10:20")) { shown.edit!("shown, edited at 10:20") }
-    cursors = rendered.merge(since: cursor_after(shown)[:since]) # the edit came in live
+    cursors = rendered.merge(cursor_after(shown).slice(:changed, :changed_ids)) # the edit came in live
 
     login_as @alice
     get "/messages/#{@conversation.id}/refresh", params: cursors, headers: { "Accept" => TURBO_STREAM }
@@ -111,6 +111,65 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     assert_equal [dom_id(missed)], appended_ids(append)
     assert_empty css_select("turbo-stream[action='replace'][target='#{dom_id(shown)}']"),
                  "the edit it already has isn't sent again"
+  end
+
+  test "a missed message created in the same instant as the newest bubble on screen comes, and that bubble only once" do
+    shown, missed = travel_to(Time.zone.parse("2026-10-18 10:00:00.123456"), with_usec: true) do
+      [@bob.message!(@conversation, "shown"), @bob.message!(@conversation, "missed, same instant")]
+    end
+    assert_equal shown.reload.created_at, missed.reload.created_at, "one timestamp, two messages"
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: cursor_after(shown), headers: { "Accept" => TURBO_STREAM }
+
+    append = css_select("turbo-stream[action='append']").sole
+    assert_equal [dom_id(missed)], appended_ids(append)
+    assert_empty css_select("turbo-stream[action='replace'][target='#{dom_id(shown)}']")
+  end
+
+  test "a missed change inside the same millisecond as the newest change on screen still comes" do
+    shown = @bob.message!(@conversation, "shown")
+    other = @bob.message!(@conversation, "other")
+    travel_to(Time.zone.parse("2026-10-18 10:20:00.000100"), with_usec: true) { shown.edit!("seen at .000100") }
+    rendered = cursor_after(other).merge(cursor_after(shown).slice(:changed, :changed_ids))
+    travel_to(Time.zone.parse("2026-10-18 10:20:00.000700"), with_usec: true) { other.edit!("missed at .000700") }
+    assert_equal 600, microseconds(other.reload.updated_at) - microseconds(shown.reload.updated_at),
+                 "two changes inside one millisecond"
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: rendered, headers: { "Accept" => TURBO_STREAM }
+
+    assert_equal [dom_id(other)], replaced_messages
+    assert_includes response.body, "missed at .000700"
+  end
+
+  test "a missed change in the very same microsecond as the change on screen still comes; the one on screen doesn't" do
+    shown = @bob.message!(@conversation, "shown")
+    other = @bob.message!(@conversation, "other")
+    rendered = cursor_after(other)
+    travel_to(Time.zone.parse("2026-10-18 10:20:00.000500"), with_usec: true) do
+      shown.edit!("seen")
+      other.edit!("missed, same microsecond")
+    end
+    rendered = rendered.merge(changed: microseconds(shown.reload.updated_at), changed_ids: shown.id.to_s)
+    assert_equal shown.updated_at, other.reload.updated_at
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: rendered, headers: { "Accept" => TURBO_STREAM }
+
+    assert_equal [dom_id(other)], replaced_messages
+  end
+
+  test "bubbles ejected before the microsecond cursors are answered on the one cursor they had" do
+    shown = @bob.message!(@conversation, "shown")
+    since = (shown.reload.updated_at.to_f * 1000).ceil
+    travel 1.second
+    missed = @bob.message!(@conversation, "missed")
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: { since: since }, headers: { "Accept" => TURBO_STREAM }
+
+    assert_equal [dom_id(missed)], appended_ids(css_select("turbo-stream[action='append']").sole)
   end
 
   test "a change to a rendered bubble since the newest change comes as a replacement, never as an append" do
@@ -130,7 +189,7 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     first = @bob.message!(@conversation, "the very first, while the cable was down")
 
     login_as @alice
-    get "/messages/#{@conversation.id}/refresh", params: { since: 0, after: 0 }, headers: { "Accept" => TURBO_STREAM }
+    get "/messages/#{@conversation.id}/refresh", params: { after: 0, changed: 0 }, headers: { "Accept" => TURBO_STREAM }
 
     append = css_select("turbo-stream[action='append']").sole
     assert_equal [dom_id(first)], appended_ids(append)
@@ -235,7 +294,9 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     get "/messages/#{@conversation.id}"
 
     bubble = css_select("##{dom_id(message)}").sole
-    assert_equal (message.updated_at.to_f * 1000).ceil, Integer(bubble["data-updated-at-ms"])
+    assert_equal message.id.to_s, bubble["data-message-id"]
+    assert_equal microseconds(message.reload.updated_at), Integer(bubble["data-updated-at-us"])
+    assert_nil bubble["data-updated-at-ms"], "the millisecond cursor is only an ejected bubble's"
     assert_equal microseconds(message.reload.created_at), Integer(bubble["data-created-at-us"])
     assert_select "##{dom_id(@conversation, :history)}.chats-thread__scroll[data-chats--thread-target='scroller']" do
       assert_select "##{dom_id(@conversation, :messages)}"
@@ -272,6 +333,12 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
 
   private
 
+  # The bubbles a catch-up replaced (the read state is always replaced).
+  def replaced_messages
+    targets = css_select("turbo-stream[action='replace']").map { |stream| stream["target"] }
+    targets - [dom_id(@conversation, :read_state)]
+  end
+
   def appended_ids(append)
     css_select(append, "[data-chats--thread-target='message']").map { |node| node["id"] }
   end
@@ -280,11 +347,12 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     streams.map { |stream| [stream["action"], stream["target"]] }
   end
 
-  # The client's cursors when +message+ is the newest bubble it rendered,
-  # exactly as the bubble partial emits them.
+  # The client's cursors when +message+ is the newest bubble it rendered
+  # and the last one changed, exactly as the thread controller sends them.
   def cursor_after(message)
     message.reload
-    { since: (message.updated_at.to_f * 1000).ceil, after: microseconds(message.created_at) }
+    { after: microseconds(message.created_at), after_ids: message.id.to_s,
+      changed: microseconds(message.updated_at), changed_ids: message.id.to_s }
   end
 
   def microseconds(time)

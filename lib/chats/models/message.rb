@@ -164,25 +164,38 @@ module Chats
     }
 
     # Catch-up scopes for ConversationsController#refresh (the stale-thread
-    # recovery path — see the thread controller's refresh trigger), on the
-    # client's two cursors: the newest `created_at` it has rendered, and the
-    # newest `updated_at`:
-    #   created_since(created) — messages created after the newest one
-    #                   rendered (appended);
-    #   updated_since(updated, rendered_through: created) — messages the
-    #                   client HAS rendered (created by then) that changed
-    #                   since (edits, tombstones, reactions — replaced).
-    # Two cursors, because one can't answer both: a message created at 10:15
-    # and missed, while a rendered one was edited at 10:20, is older than the
-    # newest change — compared with it, it would never come. The two scopes
-    # split on the same creation cursor, so nothing renders twice — a Turbo
-    # append of an existing dom_id would otherwise also MOVE that bubble to
-    # the end (Turbo removes-then-appends on id collision).
+    # recovery path — see the thread controller's catch-up). A cursor is a
+    # moment, to the microsecond, and the ids of the messages the client
+    # already has AT that moment: two rows can share a timestamp, and a
+    # moment alone can't tell the one on screen from the one that was missed.
+    # The client keeps two, its newest creation and its newest change:
+    #   created_after(at, seen:)   — created later, or at that moment and not
+    #                                among the ones seen: appended;
+    #   created_through(at, seen:) — the complement: what the client has;
+    #   updated_after(at, seen:)   — changed later, or at that moment and not
+    #                                among the ones seen.
+    # Replacements are created_through(after).updated_after(changed): changes
+    # to what is on screen, never a second copy of what is appended — a Turbo
+    # append of an existing dom_id would MOVE that bubble to the end. Two
+    # cursors, because one can't answer both: a message created at 10:15 and
+    # missed is older than a 10:20 edit that did arrive.
     # Pattern from Basecamp's Campfire (Rooms::RefreshesController):
     # https://github.com/basecamp/once-campfire
+    scope :created_after, lambda { |at, seen: []|
+      where(arel_table[:created_at].gt(at)).or(where(created_at: at).where.not(id: seen))
+    }
+    scope :created_through, lambda { |at, seen: []|
+      where(arel_table[:created_at].lt(at)).or(where(created_at: at, id: seen))
+    }
+    scope :updated_after, lambda { |at, seen: []|
+      where(arel_table[:updated_at].gt(at)).or(where(updated_at: at).where.not(id: seen))
+    }
+    # The one-cursor catch-up of bubbles ejected before they carried the
+    # cursors above (`data-updated-at-ms` alone, rounded up): what was
+    # created after it, and what was rendered by then and changed since.
     scope :created_since, ->(time) { where("chats_messages.created_at > ?", time) }
-    scope :updated_since, lambda { |time, rendered_through: time|
-      where("chats_messages.updated_at > ?", time).where("chats_messages.created_at <= ?", rendered_through)
+    scope :updated_since, lambda { |time|
+      where("chats_messages.updated_at > ?", time).where("chats_messages.created_at <= ?", time)
     }
 
     validates :kind, inclusion: { in: KINDS }

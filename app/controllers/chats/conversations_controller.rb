@@ -94,11 +94,12 @@ module Chats
       end
     end
 
-    # Stale-thread catch-up, on the client's cursors: `after=` µs, the newest
-    # `created_at` it has rendered (0 for an empty thread); `since=` ms, the
-    # newest `updated_at`; `from=` µs, its oldest bubble's `created_at`. A
-    # client without `after` (bubbles ejected before they carried it) is
-    # answered on `since` alone, as it always was. The thread
+    # Stale-thread catch-up, on the client's cursors (see Message's catch-up
+    # scopes): `after=` µs and `after_ids=`, its newest creation and the ids
+    # it has at that moment (0 and none for an empty thread); `changed=` µs
+    # and `changed_ids=`, its newest change; `from=` µs, its oldest bubble's
+    # creation. Bubbles ejected before they carried these send `since=` ms
+    # alone, and are answered as they always were. The thread
     # controller calls this whenever chats/recovery says the stream may have
     # missed something: a reconnect, a return after 10 seconds hidden, the
     # network back, a restored page. Mobile WebViews suspend WebSockets
@@ -117,13 +118,11 @@ module Chats
     # latter forces text/html and silently ignores the content type, so the
     # body says <turbo-stream> while the response says it isn't one.
     def refresh
-      head :no_content and return if params[:since].blank?
+      head :no_content and return if params[:changed].blank? && params[:since].blank?
 
-      since = time_from_ms(params[:since])
-      after = params[:after].present? ? time_from_us(params[:after]) : since
       scope = rendered_messages
-
-      @new_messages = scope.created_since(after).oldest_first.limit(Chats.config.messages_per_page + 1).to_a
+      new_messages, @updated_messages = catch_up_on(scope)
+      @new_messages = new_messages.oldest_first.limit(Chats.config.messages_per_page + 1).to_a
 
       # More than a page behind: splicing an arbitrary backlog through
       # surgical appends would leave a hole in the scroll-up chain. Re-render
@@ -138,7 +137,6 @@ module Chats
         return render turbo_stream: turbo_stream.refresh(request_id: nil)
       end
 
-      @updated_messages = scope.updated_since(since, rendered_through: after)
       @present = present_messages if Chats.config.deletion == :hard && params[:from].present?
       render "chats/conversations/refresh", formats: :turbo_stream
     end
@@ -228,6 +226,25 @@ module Chats
 
     def time_from_us(value)
       Time.zone.at(0, value.to_i, :microsecond)
+    end
+
+    # What to append and what to replace: on the two microsecond cursors,
+    # or on the one millisecond cursor of bubbles ejected before them.
+    def catch_up_on(scope)
+      if params[:changed].present?
+        created_at, created_seen = cursor(:after)
+        updated_at, updated_seen = cursor(:changed)
+        [scope.created_after(created_at, seen: created_seen),
+         scope.created_through(created_at, seen: created_seen).updated_after(updated_at, seen: updated_seen)]
+      else
+        since = time_from_ms(params[:since])
+        [scope.created_since(since), scope.updated_since(since)]
+      end
+    end
+
+    # The moment and the ids seen at it, from `<name>=µs` and `<name>_ids=1,2`.
+    def cursor(name)
+      [time_from_us(params[name]), params[:"#{name}_ids"].to_s.split(",")]
     end
 
     # The conversation's messages with everything a bubble renders.

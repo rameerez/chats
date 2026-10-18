@@ -29,7 +29,7 @@ module Chats
 
     # A reaction changes how its message renders, so it moves the message's
     # updated_at: that is what a thread catching up on missed broadcasts asks
-    # for (`?since=`, Message.updated_since). update_columns, not touch: the
+    # for (Message.updated_after). update_columns, not touch: the
     # broadcast above already re-renders the bubble, and touch would run the
     # message's own update callbacks and broadcast it a second time. Not when
     # the message itself is being destroyed and takes its reactions with it.

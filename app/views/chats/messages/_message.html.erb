@@ -15,18 +15,14 @@
      data-chats--thread-target="message"
      data-sender-key="<%= message.sender_key %>"
      data-timestamp="<%= message.created_at.iso8601 %>"
-     <%# updated-at-ms: the thread controller tracks the max across bubbles as
-         its `?since=` cursor for the stale-thread refresh — updated_at (not
-         created_at) so edits/tombstones that happened while asleep are caught
-         too. `.ceil` biases the cursor PAST this row's sub-millisecond tail,
-         so the strictly-greater server query can't re-fetch it. %>
-     data-updated-at-ms="<%= (message.updated_at.to_f * 1000).ceil %>"
-     <%# created-at-us, to the microsecond the database keeps: the newest
-         bubble's is the catch-up's `after` (anything created later is
-         appended), the oldest bubble's its `from` (the server lists every
-         message from there that still exists, so a hard delete the stream
-         missed is removed too). %>
-     data-created-at-us="<%= (message.created_at.to_i * 1_000_000) + message.created_at.usec %>">
+     <%# The stale-thread catch-up's cursors, to the microsecond the
+         database keeps, with the id that breaks a tie: the newest creation
+         on screen decides what is appended (`after`), the newest change
+         what is replaced (`changed`), and the oldest bubble's creation is
+         the `from` of the list of what still exists (hard deletes). %>
+     data-message-id="<%= message.id %>"
+     data-created-at-us="<%= (message.created_at.to_i * 1_000_000) + message.created_at.usec %>"
+     data-updated-at-us="<%= (message.updated_at.to_i * 1_000_000) + message.updated_at.usec %>">
 
   <% if message.system? %>
     <div class="chats-message__system<%= " chats-message__system--with-action" if message.action? %>">

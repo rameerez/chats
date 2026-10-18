@@ -16,10 +16,12 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
       const page = browser.install()
       const Thread = loader.loadController("thread_controller.js")
 
-      // createdAtUs in µs (to the microsecond the database keeps), updatedAtMs in ms.
-      function bubble(id, { createdAtUs, updatedAtMs = createdAtUs / 1000 } = {}) {
-        const dataset = { updatedAtMs: String(updatedAtMs) }
-        if (createdAtUs !== undefined) dataset.createdAtUs = String(createdAtUs)
+      // Cursors in µs, as the bubble partial emits them; `legacyMs` is a
+      // bubble ejected before them, with only data-updated-at-ms.
+      function bubble(id, { createdAtUs, updatedAtUs = createdAtUs, legacyMs } = {}) {
+        const dataset = legacyMs === undefined
+          ? { messageId: id.replace("message_", ""), createdAtUs: String(createdAtUs), updatedAtUs: String(updatedAtUs) }
+          : { updatedAtMs: String(legacyMs) }
         return {
           id,
           isConnected: true,
@@ -31,7 +33,7 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
       const thread = new Thread()
       thread.refreshUrlValue = "/messages/7/refresh"
       thread.messageTargets = [
-        bubble("message_1", { createdAtUs: 1_000_000, updatedAtMs: 9_500 }),   // edited last, at 9.5s
+        bubble("message_1", { createdAtUs: 1_000_000, updatedAtUs: 9_500_000 }),   // edited last, at 9.5s
         bubble("message_2", { createdAtUs: 2_000_000 }),
         bubble("message_3", { createdAtUs: 3_000_123 })                        // the newest creation
       ]
@@ -53,7 +55,7 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
     run_thread(async(<<~JAVASCRIPT))
       thread.refreshThread()
       assert.strictEqual(page.requests.length, 1)
-      assert.strictEqual(page.requests[0].url, "/messages/7/refresh?since=9500&after=3000123&from=1000000",
+      assert.strictEqual(page.requests[0].url, "/messages/7/refresh?after=3000123&after_ids=3&changed=9500000&changed_ids=1&from=1000000",
                          "no `history`: this scroller has no id, as in a thread view ejected before it did")
       assert.strictEqual(page.requests[0].options.headers.Accept, "text/vnd.turbo-stream.html")
 
@@ -73,7 +75,8 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
         thread.messageTargets = [bubble("message_90", { createdAtUs: 90_000_000 })]
       }
       thread.refreshThread()
-      assert.strictEqual(page.requests[0].url, "/messages/7/refresh?since=9500&after=3000123&from=1000000&history=1")
+      assert.strictEqual(page.requests[0].url,
+                         "/messages/7/refresh?after=3000123&after_ids=3&changed=9500000&changed_ids=1&from=1000000&history=1")
       page.respond(page.requests[0])
       await page.settle()
       assert.strictEqual(scrolledToBottom, 1)
@@ -87,7 +90,38 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
       empty.messageTargets = []
       empty.refreshThread()
       assert.strictEqual(page.requests.length, 1)
-      assert.strictEqual(page.requests[0].url, "/messages/7/refresh?since=0&after=0")
+      assert.strictEqual(page.requests[0].url, "/messages/7/refresh?after=0&changed=0")
+    JAVASCRIPT
+  end
+
+  test "two bubbles in one instant are both named, so the server can tell them from one it missed" do
+    run_thread(<<~JAVASCRIPT)
+      const tied = new Thread()
+      tied.refreshUrlValue = "/messages/7/refresh"
+      tied.messageTargets = [
+        bubble("message_4", { createdAtUs: 5_000_001 }),
+        bubble("message_5", { createdAtUs: 5_000_001 }),
+        bubble("message_2", { createdAtUs: 2_000_000, updatedAtUs: 5_000_001 })   // edited in that instant too
+      ]
+      tied.messageTargets.forEach((message) => tied.trackLoadCursor(message))
+      tied.trackLoadCursor(tied.messageTargets[0])                                // a replaced bubble reconnects: no double
+      tied.refreshThread()
+      const params = new URL(page.requests[0].url, "https://example.test").searchParams
+      assert.strictEqual(params.get("after"), "5000001")
+      assert.strictEqual(params.get("after_ids"), "4,5")
+      assert.strictEqual(params.get("changed"), "5000001")
+      assert.strictEqual(params.get("changed_ids"), "4,5,2")
+    JAVASCRIPT
+  end
+
+  test "a newer change moves the change cursor on and forgets the ids of the older moment" do
+    run_thread(<<~JAVASCRIPT)
+      thread.trackLoadCursor(bubble("message_2", { createdAtUs: 2_000_000, updatedAtUs: 9_600_000 }))
+      thread.refreshThread()
+      const params = new URL(page.requests[0].url, "https://example.test").searchParams
+      assert.strictEqual(params.get("changed"), "9600000")
+      assert.strictEqual(params.get("changed_ids"), "2")
+      assert.strictEqual(params.get("after_ids"), "3", "its creation is old news")
     JAVASCRIPT
   end
 
@@ -95,7 +129,7 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
     run_thread(<<~JAVASCRIPT)
       const old = new Thread()
       old.refreshUrlValue = "/messages/7/refresh"
-      old.messageTargets = [bubble("message_1", { updatedAtMs: 4_000 })]
+      old.messageTargets = [bubble("message_1", { legacyMs: 4_000 })]
       old.messageTargets.forEach((message) => old.trackLoadCursor(message))
       old.refreshThread()
       assert.strictEqual(page.requests[0].url, "/messages/7/refresh?since=4000")
