@@ -357,13 +357,15 @@ module Chats
     # tombstone path, so the thread shows "Message deleted" instead of a
     # hole, and attachments are purged with it.
     #
-    # Returns whether anything was removed, and moderate takes that as the
-    # truth: a removal that removed nothing is refused, never recorded as
-    # "content removed" with a statement of reasons that would be false. So
+    # Returns whether anything was removed: true only when it actually
+    # removed something (the tombstone, or the row under `deletion: :hard`);
     # false for a message already deleted (by its sender, by an earlier
-    # decision) or whose body is already blank, and for one already gone
-    # (`deletion: :hard`). Decided under the message's row lock, read again
-    # under it: two decisions taken at once cannot both see it standing.
+    # decision), already gone, or whose body is already blank. moderate
+    # 1.0.0.beta3 and later take that as the truth and refuse a removal that
+    # removed nothing, rather than record "content removed" with a statement
+    # of reasons that would be false; earlier versions ignore the return
+    # value. Decided under the message's row lock, read again under it: two
+    # decisions taken at once cannot both see it standing.
     def remove_reported_field!(field)
       return false unless field.to_s == "body"
 

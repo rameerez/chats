@@ -14,10 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of reasons that was false. It now returns whether anything was removed:
   false for a message already deleted (by its sender or an earlier
   decision), one whose body is already blank, and one already gone
-  (`deletion: :hard`); true only when it tombstoned the message. It decides
-  under the message's row lock and reads the message again under it, so two
-  decisions taken at once cannot both see it standing. moderate refuses a
-  removal that removed nothing. A group's `remove_reported_field!(:title)`
+  (`deletion: :hard`); true only when it actually removed something (the
+  tombstone, or the row under `deletion: :hard`). It decides under the
+  message's row lock and reads the message again under it, so two
+  decisions taken at once cannot both see it standing. moderate
+  1.0.0.beta3 and later refuse a removal that removed nothing; earlier
+  versions ignore the return value. A group's `remove_reported_field!(:title)`
   keeps the same contract (false for a title already removed).
 
 ## [0.6.1] - 2026-10-18
