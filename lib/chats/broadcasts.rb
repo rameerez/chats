@@ -225,11 +225,17 @@ module Chats
 
       private
 
-      # Whether the queue took the job: perform_later raises, or returns
-      # false or a job that wasn't enqueued, depending on the adapter.
+      # Whether the queue took the job. A refusal is reported to Rails.error
+      # however the adapter says it: perform_later raises, or returns false
+      # (a callback aborted it), or a job that wasn't enqueued.
       def enqueue_inbox_refresh(messager)
         job = Chats::InboxRefreshJob.perform_later(messager)
-        job ? job.successfully_enqueued? : false
+        job = nil unless job.is_a?(ActiveJob::Base) # false: a callback aborted it
+        return true if job&.successfully_enqueued?
+
+        Rails.error.report(job&.enqueue_error || ActiveJob::EnqueueError.new("Chats::InboxRefreshJob was not enqueued"),
+                           handled: true)
+        false
       rescue StandardError => e
         Rails.error.report(e, handled: true)
         false

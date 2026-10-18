@@ -157,19 +157,33 @@ class BroadcastsDurabilityTest < ActiveSupport::TestCase
     end
   end
 
-  test "a queue that declines the job without raising counts as refusing it" do
+  test "a queue that declines the job without raising counts as refusing it, and says so to Rails.error" do
     declined = Chats::InboxRefreshJob.new(@bob)
+    declined.enqueue_error = ActiveJob::EnqueueError.new("redis is full")
     def declined.successfully_enqueued? = false
 
     streams = capture_turbo_stream_broadcasts([@bob, :chats_inbox]) do
-      Chats::InboxRefreshJob.stub(:perform_later, ->(*) { declined }) { Chats::Broadcasts.refresh_inbox_of(@bob) }
+      reported = assert_error_reported(ActiveJob::EnqueueError) do
+        Chats::InboxRefreshJob.stub(:perform_later, ->(*) { declined }) { Chats::Broadcasts.refresh_inbox_of(@bob) }
+      end
+      assert_equal "redis is full", reported.error.message, "the adapter's own reason, when it gave one"
     end
     assert_equal [REFRESH], streams.map(&:to_html)
 
     streams = capture_turbo_stream_broadcasts([@alice, :chats_inbox]) do
-      Chats::InboxRefreshJob.stub(:perform_later, ->(*) { false }) { Chats::Broadcasts.refresh_inbox_of(@alice) }
+      reported = assert_error_reported(ActiveJob::EnqueueError) do
+        Chats::InboxRefreshJob.stub(:perform_later, ->(*) { false }) { Chats::Broadcasts.refresh_inbox_of(@alice) }
+      end
+      assert_match "Chats::InboxRefreshJob was not enqueued", reported.error.message
     end
     assert_equal [REFRESH], streams.map(&:to_html)
+  end
+
+  test "a raising enqueue is reported too, once per attempt" do
+    reports = capture_error_reports(RuntimeError) do
+      Chats::InboxRefreshJob.stub(:perform_later, ->(*) { raise "queue down" }) { Chats::Broadcasts.refresh_inbox_of(@bob) }
+    end
+    assert_equal 2, reports.size
   end
 
   test "the job discards a refresh for a messager deleted before it ran" do
