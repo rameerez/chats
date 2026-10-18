@@ -220,6 +220,24 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     assert_equal({ after: cursors[:after], changed: cursors[:changed], changed_ids: [message.id.to_s] }, caught_up)
   end
 
+  test "the answer names the render that asked, so a later render of the thread can ignore it" do
+    message = @bob.message!(@conversation, "hola")
+    login_as @alice
+
+    get "/messages/#{@conversation.id}/refresh", params: cursor_after(message).merge(render: "lq3r9a1x2b"),
+                                                 headers: { "Accept" => TURBO_STREAM }
+    assert_equal "lq3r9a1x2b", css_select("turbo-stream[action='chats_caught_up']").sole["data-render"]
+
+    get "/messages/#{@conversation.id}/refresh",
+        params: cursor_after(message).merge(render: "r" * 500, history: 1, full: 1),
+        headers: { "Accept" => TURBO_STREAM }
+    assert_equal "r" * 64, css_select("turbo-stream[action='chats_caught_up']").sole["data-render"],
+                 "a history re-render names it too; never more than an id's length of it"
+
+    get "/messages/#{@conversation.id}/refresh", params: cursor_after(message), headers: { "Accept" => TURBO_STREAM }
+    assert_nil css_select("turbo-stream[action='chats_caught_up']").sole["data-render"]
+  end
+
   test "the answer moves the cursors to what it sent: the newest creation and the newest change in it" do
     shown = @bob.message!(@conversation, "shown")
     cursors = cursor_after(shown)

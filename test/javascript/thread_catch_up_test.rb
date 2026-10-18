@@ -33,10 +33,11 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
       }
 
       // What connect() does with the cursors, on a thread rendered with +bubbles+.
-      function rendered(bubbles, element = { dataset: {} }) {
+      function rendered(bubbles, element = { dataset: {}, isConnected: true }) {
         const controller = new Thread()
         controller.refreshUrlValue = "/messages/7/refresh"
         controller.element = element
+        element.dataset.chatsRender ||= "r1"
         controller.messageTargets = bubbles
         controller.messageTargets.forEach((message) => controller.trackLegacyCursor(message))
         controller.caughtUp({ detail: controller.storedCursors() || controller.cursorsOfRender() })
@@ -71,7 +72,7 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
     run_thread(async(<<~JAVASCRIPT))
       thread.refreshThread()
       assert.strictEqual(page.requests.length, 1)
-      assert.deepStrictEqual(asked(), { after: "3000123", changed: "9500000", after_ids: "3", changed_ids: "1", from: "1000000" },
+      assert.deepStrictEqual(asked(), { after: "3000123", changed: "9500000", after_ids: "3", changed_ids: "1", from: "1000000", render: "r1" },
                              "no `history`: this scroller has no id, as in a thread view ejected before it did")
       assert.strictEqual(page.requests[0].options.headers.Accept, "text/vnd.turbo-stream.html")
 
@@ -135,6 +136,28 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "an answer for an earlier render is dropped unrendered, and its cursors ignored" do
+    run_thread(async(<<~JAVASCRIPT))
+      thread.refreshThread()
+      thread.element.dataset.chatsRender = "r2"            // the window rendered the conversation again
+      page.respond(page.requests[0])
+      await page.settle()
+      assert.strictEqual(page.rendered.length, 0, "nothing of the old answer reaches the page")
+
+      thread.refreshThread()
+      thread.element.isConnected = false                    // the page went away (a Turbo visit)
+      page.respond(page.requests[1])
+      await page.settle()
+      assert.strictEqual(page.rendered.length, 0)
+
+      const before = thread.reconciled
+      thread.caughtUp({ detail: { render: "r1", after: 99, changed: 99, changedIds: [] } })
+      assert.deepStrictEqual(thread.reconciled, before, "cursors from an earlier render are ignored")
+      thread.caughtUp({ detail: { render: "r2", after: 99, changed: 99, changedIds: [] } })
+      assert.deepStrictEqual(thread.reconciled, { after: 99, changed: 99, changedIds: [] })
+    JAVASCRIPT
+  end
+
   test "a thread re-rendered at its latest page opens at the bottom, and asks once more from there" do
     run_thread(async(<<~JAVASCRIPT))
       thread.hasScrollerTarget = true
@@ -151,6 +174,7 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
       assert.strictEqual(scrolledToBottom, 1)
       assert.strictEqual(page.requests.length, 2, "anything that came live during the re-render is asked for")
       assert.strictEqual(asked(1).after, "90000000")
+      assert.notStrictEqual(asked(1).render, "r1", "from the new render the re-rendered history is")
 
       window.Turbo.renderStreamMessage = () => {
         thread.messageTargets.slice().forEach((message) => message.remove())
@@ -165,7 +189,7 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
   test "an empty thread asks from the epoch: its first message may be the one it missed" do
     run_thread(<<~JAVASCRIPT)
       rendered([]).refreshThread()
-      assert.deepStrictEqual(asked(), { after: "0", changed: "0" })
+      assert.deepStrictEqual(asked(), { after: "0", changed: "0", render: "r1" })
     JAVASCRIPT
   end
 
@@ -196,7 +220,7 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
   test "bubbles ejected before the microsecond cursors ask on the one cursor they had" do
     run_thread(<<~JAVASCRIPT)
       rendered([bubble(1, { legacyMs: 4_000 })]).refreshThread()
-      assert.deepStrictEqual(asked(), { since: "4000" })
+      assert.deepStrictEqual(asked(), { since: "4000", render: "r1" })
     JAVASCRIPT
   end
 

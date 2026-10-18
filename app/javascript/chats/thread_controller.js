@@ -24,6 +24,9 @@ const POPUP_TRANSITION_MS = 280
 const MAX_RENDERED_MESSAGES = 300
 // Keep in step with ConversationsController::CURSOR_IDS_LIMIT.
 const CURSOR_IDS = 200
+
+// A name for one render of a thread.
+const newRender = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 const TRIM_LEEWAY = 20
 
 // chats--thread: everything live about an open conversation.
@@ -95,6 +98,7 @@ export default class extends Controller {
     this.registerTypingStreamAction()
     this.registerPruneStreamAction()
     this.registerCaughtUpStreamAction()
+    this.element.dataset.chatsRender ||= newRender()
     this.caughtUp({ detail: this.storedCursors() || this.cursorsOfRender() })
     // The dock's engagement gate: the window frame around a dock thread.
     // No gate (the thread page) means always engaged.
@@ -545,9 +549,16 @@ export default class extends Controller {
     }
   }
 
+  // An answer carries the render it was asked from (`render`): one for an
+  // earlier render of this conversation (the page or the window rendered it
+  // again while the answer was on its way) would move the new render's
+  // cursors to the old one's, and is ignored.
   caughtUp = (event) => {
-    this.reconciled = event.detail
-    this.element.dataset.chatsReconciled = JSON.stringify(event.detail)
+    const { render, ...cursors } = event.detail
+    if (render && render !== this.element.dataset.chatsRender) return
+
+    this.reconciled = cursors
+    this.element.dataset.chatsReconciled = JSON.stringify(cursors)
   }
 
   storedCursors() {
@@ -607,9 +618,19 @@ export default class extends Controller {
     if (this.hasScrollerTarget && this.scrollerTarget.id) params.set("history", "1")
     const last = this.messageTargets[this.messageTargets.length - 1]
 
-    return renderStreamFrom(`${this.refreshUrlValue}?${params}`).then(() => {
-      if (!last || last.isConnected) return
+    // Bound to this render of the thread (data-chats-render, renewed by
+    // every complete render): an answer that arrives after the page or the
+    // window rendered the conversation again is dropped unrendered.
+    const render = this.element.dataset.chatsRender
+    params.set("render", render)
+    const current = () => this.element.isConnected && this.element.dataset.chatsRender === render
 
+    // Resolves once Turbo has applied the answer, so `last` is gone by then
+    // if the history was re-rendered.
+    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, { when: current }).then((rendered) => {
+      if (!rendered || !last || last.isConnected) return
+
+      this.element.dataset.chatsRender = newRender() // the re-rendered history is a new render
       this.scrollToBottom()
       if (followUp) return this.refreshThread({ followUp: false })
     })
@@ -635,6 +656,7 @@ export default class extends Controller {
 
     Turbo.StreamActions.chats_caught_up = function () {
       const detail = {
+        render: this.getAttribute("data-render") || null,
         after: Number(this.getAttribute("data-after") || 0),
         changed: Number(this.getAttribute("data-changed") || 0),
         changedIds: (this.getAttribute("data-changed-ids") || "").split(",").filter(Boolean)

@@ -285,7 +285,10 @@ module Chats
         :chats_caught_up,
         target: helpers.dom_id(@conversation, :messages),
         "data-after": microseconds(after), "data-changed": microseconds(changed_at),
-        "data-changed-ids": changed_seen.join(",")
+        "data-changed-ids": changed_seen.join(","),
+        # Which render of the thread asked: an answer for an earlier one is
+        # ignored (see the thread controller's caughtUp).
+        "data-render": params[:render].to_s.first(CURSOR_ID_LENGTH).presence
       )
     end
 
