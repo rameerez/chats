@@ -131,12 +131,12 @@ Chats::Message.last_human_in(alice.chats.limit(20))  # the same for a page of th
 # Admin-wide: no viewer, so no blocks and no inbox_scope. Only behind your staff authorization.
 Chats::Conversation.with_human_messages.count
 Chats::Conversation.about(ride).without_human_messages
-Chats::Message.last_human_in(page)                 # page: records, ids, or a relation (read as a subquery)
+Chats::Message.last_human_in(page)                 # page: records, ids, or a relation (read as a subquery, see below)
               .select(:id, :conversation_id, :body)  # narrow the columns if you like
               .index_by(&:conversation_id)         # { id => message }; no key means nobody wrote
 ```
 
-Both conversation scopes are a single correlated `EXISTS` built from `Chats::Message.human` (kind `text`, not deleted), so they compose with anything (`about`, `unread_by`, `with_messages`) and never multiply rows. Counting what messagers wrote per conversation is the plain `Chats::Message.human.where(conversation_id: ids).group(:conversation_id).count`. None of this changes the inbox, unread counts, `messages_count` or `last_message`.
+Both conversation scopes are a single correlated `EXISTS` built from `Chats::Message.human` (kind `text`, not deleted), so they compose with anything (`about`, `unread_by`, `with_messages`) and never multiply rows. `last_human_in` reads an unloaded relation as a subquery without its `includes` (they only load records), so a relation that filters on an associated table needs that table joined explicitly, with `joins` or `left_joins`; `includes(:participants).references(:participants).where(chats_participants: …)` loses the join and raises. Or pass the loaded page, or its ids. Counting what messagers wrote per conversation is the plain `Chats::Message.human.where(conversation_id: ids).group(:conversation_id).count`. None of this changes the inbox, unread counts, `messages_count` or `last_message`.
 
 ## 🧩 The macros
 

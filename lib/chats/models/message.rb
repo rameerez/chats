@@ -95,8 +95,13 @@ module Chats
     # Conversation#last_human_message for lists (admin walls, moderation
     # queues). +conversations+ is a page of records, ids, a single record, or
     # a Chats::Conversation relation — an unloaded relation is read as a
-    # subquery, never loaded first. The result is a relation, so the columns
-    # can be narrowed:
+    # subquery, never loaded first, and without its `includes`/`preload`/
+    # `eager_load` (they load records; a subquery has none to load). So a
+    # relation that FILTERS on an associated table must join it explicitly
+    # (`joins` / `left_joins`): `includes(:x).references(:x).where(x: …)`
+    # loses the join and raises. Or pass the loaded page, or its ids.
+    #
+    # The result is a relation, so the columns can be narrowed:
     #
     #   Chats::Message.last_human_in(conversations)
     #                 .select(:id, :conversation_id, :created_at)

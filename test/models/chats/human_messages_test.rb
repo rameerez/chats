@@ -266,6 +266,19 @@ module Chats
       assert_equal [@talked.id], Message.last_human_in(busy).map(&:conversation_id)
     end
 
+    test "a filter on an associated table needs joins, not includes, or a loaded page" do
+      with_bob = { chats_participants: { messager_type: "User", messager_id: @bob.id } }
+      included = -> { Conversation.includes(:participants).references(:participants).where(with_bob) }
+
+      assert_equal [@hello], Message.last_human_in(Conversation.joins(:participants).where(with_bob)).to_a
+      assert_equal [@hello], Message.last_human_in(Conversation.left_joins(:participants).where(with_bob)).to_a
+      assert_equal [@hello], Message.last_human_in(included.call.load).to_a, "a loaded page is read from memory"
+      assert_equal [@hello], Message.last_human_in(included.call.ids).to_a
+      # The documented limit: an unloaded relation's includes are stripped,
+      # and the filter on the table they joined has nothing to stand on.
+      assert_raises(ActiveRecord::StatementInvalid) { Message.last_human_in(included.call).to_a }
+    end
+
     test "a loaded relation is read from memory: one query, for the messages" do
       page = @alice.chats.load
 
