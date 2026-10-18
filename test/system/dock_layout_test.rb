@@ -18,7 +18,9 @@ require "selenium-webdriver"
 # On a machine without Chrome they skip. Either way the suite's output says
 # how many ran (see the after_run hook below).
 class DockLayoutTest < ActionDispatch::SystemTestCase
-  driven_by :selenium, using: :headless_chrome, screen_size: [1800, 1000]
+  driven_by :selenium, using: :headless_chrome, screen_size: [1800, 1000] do |options|
+    options.add_option("goog:loggingPrefs", { browser: "ALL" }) # printed when a test fails
+  end
 
   @ran = 0
   @skipped = 0
@@ -29,6 +31,18 @@ class DockLayoutTest < ActionDispatch::SystemTestCase
   Minitest.after_run do
     puts "\nDock layout tests (headless Chrome): #{DockLayoutTest.ran} ran, #{DockLayoutTest.skipped} skipped" \
          "#{" — Chrome unavailable" if DockLayoutTest.skipped.positive?}"
+  end
+
+  # A layout failure is a browser failure: show what the page said, and
+  # what every frame was answered (recorded from each page's start, see
+  # sign_in_at, so nothing is added around the moment under test).
+  teardown do
+    next if passed? || skipped? || !self.class.chrome?
+
+    page.driver.browser.logs.get(:browser).each { |entry| puts "  [browser #{entry.level}] #{entry.message}" }
+    puts page.evaluate_script("(window.chatsTestLog || []).join('\\n')")
+  rescue StandardError
+    nil
   end
 
   setup do
@@ -143,8 +157,60 @@ class DockLayoutTest < ActionDispatch::SystemTestCase
     assert_equal "words not sent yet", JSON.parse(draft)["text"], "kept under this viewer's key"
 
     open_row("Carla")
-    assert_equal "words not sent yet", find("#{window_selector("Carla")} .chats-composer__input").value,
-                 "and it comes back with the conversation"
+    within(window_selector("Carla")) do
+      assert_field "message[body]", with: "words not sent yet" # it comes back with the conversation
+    end
+  end
+
+  test "a 5xx keeps what was typed a moment before, under the failure, and gives it back" do
+    sign_in_at(1280)
+    open_panel
+    open_row("Carla")
+    # Typed and failed within the 500ms autosave debounce.
+    type_into("Carla", "typed just now")
+    point_window("Carla", "/test_status/500")
+
+    assert_selector "#{window_selector("Carla")} .chats-window__retry", text: "Try again"
+    assert_equal "typed just now", saved_draft("Carla")
+
+    point_window("Carla", "/messages/#{conversation_with("Carla").id}?window=1")
+    within(window_selector("Carla")) { assert_field "message[body]", with: "typed just now" }
+  end
+
+  test "a network failure keeps what was typed a moment before, under the failure" do
+    sign_in_at(1280)
+    open_panel
+    open_row("Carla")
+    type_into("Carla", "typed before the network went")
+    point_window("Carla", "http://127.0.0.1:9/unreachable")
+
+    assert_selector "#{window_selector("Carla")} .chats-window__retry"
+    assert_equal "typed before the network went", saved_draft("Carla")
+  end
+
+  test "a saved draft is restored only into an empty composer, and nothing shorter replaces it" do
+    sign_in_at(1280)
+    open_panel
+    open_row("Carla")
+    # The viewer typed before a late restore ran (an ejected composer
+    # restores on turbo:frame-load): what they typed stays…
+    type_into("Carla", "hi")
+    page.execute_script(<<~JS, "#{Chats.messager_key(@alice)}:#{conversation_with("Carla").id}")
+      localStorage.setItem("chats:draft:" + arguments[0], JSON.stringify({ text: "a much longer saved draft", at: Date.now() }))
+      const dock = document.querySelector(".chats-dock")
+      const frame = dock.querySelector(#{window_selector("Carla").to_json})
+      window.Stimulus.getControllerForElementAndIdentifier(dock, "chats--dock").restoreDraft(frame)
+    JS
+    within(window_selector("Carla")) { assert_field "message[body]", with: "hi" }
+
+    # …and the saved draft stays saved while what's typed is shorter.
+    type_into("Carla", " there")
+    sleep 0.8
+    assert_equal "a much longer saved draft", saved_draft("Carla")
+
+    type_into("Carla", ", now longer than the saved one")
+    sleep 0.8
+    assert_equal "hi there, now longer than the saved one", saved_draft("Carla")
   end
 
   test "a reload at 768px brings back the expanded and the folded window, both on screen" do
@@ -163,7 +229,7 @@ class DockLayoutTest < ActionDispatch::SystemTestCase
     assert_selector window_selector("Carla", folded: true)
     assert_equal({ "Carla" => 104, "Bruno" => 336 }, widths, "the arrangement as it was")
     assert_row_on_screen
-    assert_equal "draft two", find("#{window_selector("Bruno")} .chats-composer__input").value
+    within(window_selector("Bruno")) { assert_field "message[body]", with: "draft two" }
   end
 
   # Starting a browser once tells whether this machine can run these.
@@ -189,7 +255,16 @@ class DockLayoutTest < ActionDispatch::SystemTestCase
     %w[1 true yes].include?(ENV["CI"].to_s.downcase)
   end
 
+  FRAME_LOG = <<~JS
+    window.chatsTestLog = [];
+    ["turbo:before-fetch-response", "turbo:fetch-request-error", "turbo:frame-missing", "turbo:visit"].forEach((name) =>
+      document.addEventListener(name, (event) => window.chatsTestLog.push(
+        `${performance.now().toFixed(0)} ${name} ${event.target.id || event.target.tagName} ` +
+        `${event.detail?.fetchResponse?.statusCode || event.detail?.url || ""}`), true))
+  JS
+
   def sign_in_at(width, height: 900, mobile: false, dock_windows: nil)
+    page.driver.browser.execute_cdp("Page.addScriptToEvaluateOnNewDocument", source: FRAME_LOG)
     resize(width, height: height, mobile: mobile)
     visit "/"
     page.evaluate_async_script(<<~JS, @alice.to_global_id.to_s)
@@ -228,8 +303,25 @@ class DockLayoutTest < ActionDispatch::SystemTestCase
   end
 
   def window_selector(name, folded: false)
-    id = Chats::Conversation.direct_between(@alice, @people.find { |person| person.name == name }).id
-    "turbo-frame.chats-window[data-conversation-id='#{id}']#{".chats-window--minimized" if folded}"
+    "turbo-frame.chats-window[data-conversation-id='#{conversation_with(name).id}']" \
+      "#{".chats-window--minimized" if folded}"
+  end
+
+  def conversation_with(name)
+    Chats::Conversation.direct_between(@alice, @people.find { |person| person.name == name })
+  end
+
+  # Load something else into a window's frame.
+  def point_window(name, url)
+    page.execute_script("document.querySelector(#{window_selector(name).to_json}).src = #{url.to_json}")
+  end
+
+  # The draft saved for this viewer and conversation, or nil.
+  def saved_draft(name)
+    raw = page.evaluate_script(
+      "localStorage.getItem('chats:draft:#{Chats.messager_key(@alice)}:#{conversation_with(name).id}')"
+    )
+    raw && JSON.parse(raw)["text"]
   end
 
   # { name => rendered width } for every window shown.

@@ -63,7 +63,9 @@ const DRAFT_DELAY_MS = 500
 const LIST_DELAY_MS = 300
 
 export default class extends Controller {
-  static targets = ["windows", "window", "panel", "list", "badge", "signal", "announcer", "loadingShell", "failedShell"]
+  static targets = [
+    "windows", "window", "panel", "list", "badge", "signal", "announcer", "loadingShell", "failedShell", "composer"
+  ]
   static values = {
     windows: { type: Number, default: 3 },
     messager: String,
@@ -494,6 +496,7 @@ export default class extends Controller {
 
     const frame = this.frameOf(event.target)
     if (!frame) return
+    delete frame.savedDraft
     this.forgetDraft(frame.dataset.conversationId)
     this.refreshList()
   }
@@ -565,6 +568,7 @@ export default class extends Controller {
     const frame = this.frameOf(event.target)
     if (!frame) return
 
+    this.keepDraft(frame)
     frame.replaceChildren(this.shell("loading", this.rowName(frame.dataset.conversationId)))
     frame.reload()
   }
@@ -636,7 +640,17 @@ export default class extends Controller {
     if (!this.windowTargets.includes(frame)) return
 
     this.syncControls(frame)
-    this.restoreDraft(frame)
+    this.restoreDraft(frame) // a composer ejected before 0.5.0 isn't a target: restored here instead
+  }
+
+  // A window's composer just appeared: put its saved draft back NOW. Turbo
+  // inserts a frame's content, then awaits its render before dispatching
+  // turbo:frame-load; in that gap the field is on the page and empty, so a
+  // first keystroke could land before the draft and be overwritten by it.
+  // Stimulus reports the target as it connects, which closes the gap.
+  composerTargetConnected(input) {
+    const frame = this.frameOf(input)
+    if (frame && this.windowTargets.includes(frame)) this.restoreDraft(frame)
   }
 
   // A window's answer, before Turbo acts on it. A 4xx means the
@@ -655,7 +669,7 @@ export default class extends Controller {
       this.dropWindow(frame)
       this.save()
     } else {
-      frame.replaceChildren(this.shell("failed", this.rowName(frame.dataset.conversationId)))
+      this.showFailure(frame)
     }
   }
 
@@ -674,6 +688,14 @@ export default class extends Controller {
     const frame = event.target
     if (!this.windowTargets.includes(frame)) return
 
+    this.showFailure(frame)
+  }
+
+  // The failed shell replaces the window's content, composer included: what
+  // was typed in it — maybe within the last 500ms, before the autosave — is
+  // saved first, and comes back with the thread on Try again.
+  showFailure(frame) {
+    this.keepDraft(frame)
     frame.replaceChildren(this.shell("failed", this.rowName(frame.dataset.conversationId)))
   }
 
@@ -821,6 +843,13 @@ export default class extends Controller {
     const input = frame.querySelector(".chats-composer__input")
     if (!input) return
 
+    // A saved draft that couldn't be restored (see restoreDraft) is never
+    // replaced by something shorter typed over it.
+    if (frame.savedDraft !== undefined) {
+      if (input.value.trim().length < frame.savedDraft.trim().length) return
+      delete frame.savedDraft
+    }
+
     if (input.value.trim()) {
       this.write(this.draftKey(frame.dataset.conversationId), { text: input.value, at: Date.now() })
     } else {
@@ -828,13 +857,24 @@ export default class extends Controller {
     }
   }
 
+  // The rule: a saved draft goes back only into an EMPTY composer. If the
+  // viewer already typed something (the restore ran late — an ejected
+  // composer restores on turbo:frame-load), what they typed stays in the
+  // field, and the saved draft stays saved: no autosave replaces it with
+  // anything shorter (keepDraft), so neither text is lost.
   restoreDraft(frame) {
     const input = frame.querySelector(".chats-composer__input")
     const draft = this.read(this.draftKey(frame.dataset.conversationId))
-    if (!input || !draft || input.value) return
+    if (!input || !draft) return
 
-    if (typeof draft.text === "string" && Date.now() - (draft.at || 0) < DRAFT_TTL_MS) input.value = draft.text
-    this.forgetDraft(frame.dataset.conversationId)
+    if (typeof draft.text !== "string" || Date.now() - (draft.at || 0) >= DRAFT_TTL_MS) {
+      this.forgetDraft(frame.dataset.conversationId)
+    } else if (input.value) {
+      if (input.value !== draft.text) frame.savedDraft = draft.text
+    } else {
+      input.value = draft.text
+      this.forgetDraft(frame.dataset.conversationId)
+    }
   }
 
   forgetDraft(id) {

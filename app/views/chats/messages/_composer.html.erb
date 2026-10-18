@@ -77,6 +77,9 @@
             autocomplete: "off",
             data: {
               "chats--composer-target": "input",
+              # In a dock window, the dock puts a saved draft back the moment
+              # this field appears (dock_controller.js, composerTargetConnected).
+              "chats--dock-target": "composer",
               action: "input->chats--composer#typed keydown.enter->chats--composer#enterSend " \
                       "keydown.esc->chats--composer#escape"
             } %>

@@ -105,8 +105,12 @@ reads a thread, and the thread body moved into a partial.
   (which windows, minimized or folded or not, when each was used, the
   recently closed ones and the panel) and `chats:draft:<messager key>:
   <conversation id>` (unsent text, saved as you type and whenever a window
-  goes, by any path, a refused or missing one included; restored when it
-  comes back, cleared on send, kept seven days). A reload restores the
+  goes, by any path, a refused or missing one included, and before a
+  failure (5xx, network) replaces the window's content; restored the moment
+  the window's composer appears, cleared on send, kept seven days). A saved
+  draft goes back only into an EMPTY composer: if something was already
+  typed there, it stays, and the saved draft is never replaced by anything
+  shorter, so neither text is lost. A reload restores the
   saved arrangement as it was, folded windows included, up to the cap, then
   fits it to the width there is now by the resize rules; none of them is
   engaged. The panel comes back in dock mode only, and the phone's sheet

@@ -17,6 +17,11 @@ class SessionsController < ApplicationController
     @dock_options = params[:dock_windows].present? ? { windows: params[:dock_windows].to_i } : {}
   end
 
+  # Any status, for the browser tests of a window whose load fails.
+  def status
+    head params[:status].to_i
+  end
+
   # The same page in a layout that wraps the dock in a shell element.
   def wrapped
     home
