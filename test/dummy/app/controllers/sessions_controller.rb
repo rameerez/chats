@@ -14,4 +14,10 @@ class SessionsController < ApplicationController
   def home
     @people = current_user ? User.where.not(id: current_user.id).order(:id).limit(5) : []
   end
+
+  # The same page in a layout that wraps the dock in a shell element.
+  def wrapped
+    home
+    render :home, layout: "wrapped"
+  end
 end

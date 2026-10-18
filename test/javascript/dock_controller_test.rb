@@ -70,6 +70,7 @@ class DockControllerTest < ActiveSupport::TestCase
             },
             querySelector: (selector) => (selector === ".chats-composer__input" ? input : null),
             querySelectorAll: () => [],
+            toggleAttribute: () => {},
             contains: (element) => element === node || (input && element === input),
             dispatchEvent: (event) => events.push(event.type),
             remove() {
@@ -122,10 +123,15 @@ class DockControllerTest < ActiveSupport::TestCase
         })
         document.activeElement = windows[1].input || windows[1] // window 2 has the focus
         windows[1].contains = () => true
-        assert(controller.makeRoom(null, { force: false }))
-        assert.deepStrictEqual(removed, ["3", "1"], "least recently used first, the focused one spared")
-        assert.deepStrictEqual(JSON.parse(stored["chats:draft:alice:1"]).text, "half a thought",
-                               "an evicted window's unsent text is kept")
+        assert.strictEqual(controller.makeRoom(null, { force: false }), false,
+                           "only windows in use are left, and a pop-up closes none of them")
+        assert.deepStrictEqual(removed, ["3"], "the one not in use went; the focused one and the drafted one stay")
+
+        // Closed by the viewer, a window's unsent text is kept for next time.
+        controller = dock({ open: [frame("1", { draft: "half a thought" })] })
+        controller.closeWindow(windows[0])
+        assert.deepStrictEqual(JSON.parse(stored["chats:draft:alice:1"]).text, "half a thought")
+        assert.ok(controller.closed["1"], "and it won't pop open again for five minutes")
 
         controller = dock({ open: [frame("1")] }) // fit 1 at 768
         window.innerWidth = 768
@@ -133,6 +139,69 @@ class DockControllerTest < ActiveSupport::TestCase
         document.activeElement = {}
         assert.strictEqual(controller.makeRoom(null, { force: false }), false, "a pop-up never closes the window in use")
         assert.deepStrictEqual(removed, [])
+
+        // --- a window the viewer opens never closes one in use ------------------
+        // At the one-window fit (768px): the focused window, or one holding
+        // unsent text, is folded instead and stays; a window not in use goes.
+
+        controller = dock({ width: 768, open: [frame("1")] })
+        windows[0].contains = () => true
+        document.activeElement = {}
+        assert.strictEqual(controller.makeRoom(null, { force: true }), true)
+        assert.deepStrictEqual(removed, [], "the window being typed in is never closed")
+        assert(windows[0].classes.has("chats-window--minimized"), "it folds, beside the new one")
+        assert(windows[0].classes.has("chats-window--squeezed"), "with the compact header a crowded row needs")
+        controller.setMinimized(windows[0], false)
+        assert(!windows[0].classes.has("chats-window--squeezed"), "and gets its full header back when expanded")
+
+        controller = dock({ width: 768, open: [frame("1", { draft: "half a thought" })] })
+        assert.strictEqual(controller.makeRoom(null, { force: true }), true)
+        assert.deepStrictEqual(removed, [], "nor one holding unsent text")
+        assert(windows[0].classes.has("chats-window--minimized"))
+
+        controller = dock({ width: 768, open: [frame("1", { draft: "   " })] })
+        assert.strictEqual(controller.makeRoom(null, { force: true }), true)
+        assert.deepStrictEqual(removed, ["1"], "a window not in use makes room")
+
+        controller = dock({ width: 768, open: [frame("1", { draft: "kept" }), frame("2", { usedAt: 1 })] })
+        controller.makeRoom(null, { force: true })
+        assert.deepStrictEqual(removed, ["2"], "the one not in use goes first, whatever its age")
+        assert(windows[0].classes.has("chats-window--minimized"), "then the one in use folds: the new one needs the row")
+
+        controller = dock({ width: 1280, open: [frame("1", { draft: "kept" }), frame("2", { usedAt: 1 })] })
+        controller.makeRoom(null, { force: true })
+        assert.deepStrictEqual(removed, ["2"])
+        assert(!windows[0].classes.has("chats-window--minimized"), "with room for two, nothing in use needs folding")
+
+        // --- the phone sheet inerts the page, never itself ----------------------
+        // A host may render the dock inside a layout wrapper: every sibling
+        // of the dock and of each ancestor is inerted, the ancestors are not.
+
+        function node(name, children = []) {
+          const element = { name, inert: false, children }
+          children.forEach((child) => { child.parentElement = element })
+          return element
+        }
+        const dockElement = node("dock")
+        const main = node("main")
+        const shell = node("shell", [main, dockElement])
+        const header = node("header")
+        const script = node("script")
+        const body = node("body", [header, shell, script])
+        global.document.body = body
+        global.document.documentElement = { classList: { toggle() {}, remove() {} } }
+
+        controller = dock({ compact: true, width: 390 })
+        controller.element = Object.assign(dockElement, { hidden: false, contains: () => false })
+        controller.panelTarget.open = true
+        DockController.prototype.syncSheet.call(controller)
+        assert.deepStrictEqual([header, shell, script, main, dockElement].map((n) => `${n.name}:${n.inert}`),
+                               ["header:true", "shell:false", "script:true", "main:true", "dock:false"],
+                               "the wrapper and the dock stay live; everything around them goes inert")
+
+        controller.panelTarget.open = false
+        DockController.prototype.syncSheet.call(controller)
+        assert.deepStrictEqual([header, script, main].map((n) => n.inert), [false, false, false], "and back on close")
 
         // --- a live message pops a window up -----------------------------------
 

@@ -106,6 +106,19 @@ class MessagingDockTest < ActionDispatch::IntegrationTest
     assert_select ".chats.chats-thread[data-chats-dock-hide]"
   end
 
+  test "a layout that wraps the dock renders it inside the wrapper, where the sheet must not inert itself" do
+    login_as @alice
+
+    get "/wrapped"
+
+    assert_response :success
+    # The JavaScript half (siblings of the dock and of each ancestor go
+    # inert, the ancestors don't) is test/javascript/dock_controller_test.rb
+    # and the browser check; this is the shape it walks.
+    assert_select "body > .dummy-shell > .chats-dock[data-controller='chats--dock']"
+    assert_select "body > .dummy-shell > .dummy-nav"
+  end
+
   test "a signed-out visitor gets no dock" do
     get "/"
 

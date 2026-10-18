@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Dummy (wrapped)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <%= csrf_meta_tags %>
+    <%= action_cable_meta_tag %>
+    <%= javascript_importmap_tags %>
+  </head>
+  <body>
+    <%# A host whose layout wraps everything, the dock included, in one shell
+        element: the dock's phone sheet must make the page around it inert
+        without making itself inert. %>
+    <div class="dummy-shell">
+      <header class="dummy-nav">Dummy</header>
+      <%= yield %>
+      <%= chats_dock %>
+    </div>
+  </body>
+</html>

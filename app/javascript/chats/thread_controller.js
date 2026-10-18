@@ -394,17 +394,24 @@ export default class extends Controller {
 
   // Whether the viewer can be reading this thread right now.
   canRead() {
-    return document.visibilityState === "visible" && this.onScreen() && this.engaged()
+    return document.visibilityState === "visible" && this.engaged() && this.onScreen()
   }
 
-  // The thread has room to show itself. False for a minimized dock window
-  // (collapsed to its header: the scroller is there, zero pixels tall).
+  // The thread has room to show itself. Geometry alone, for any host that
+  // collapses a thread its own way; the dock's own state is engaged()'s job.
   onScreen() {
     return !this.hasScrollerTarget || this.scrollerTarget.clientHeight > 0
   }
 
+  // Inside a dock window, what the dock says, explicitly: the window is
+  // neither minimized (data-chats-minimized) nor waiting for the viewer to
+  // turn to it (data-chats-active="false"). Geometry can't be trusted for
+  // the first: a folded window's scroller keeps whatever padding a host
+  // gives it. No gate (the thread page): always engaged.
   engaged() {
-    return !this.gate || this.gate.dataset.chatsActive !== "false"
+    if (!this.gate) return true
+
+    return this.gate.dataset.chatsActive !== "false" && !this.gate.hasAttribute("data-chats-minimized")
   }
 
   // A read that waited for the thread to be seen happens the moment it is:

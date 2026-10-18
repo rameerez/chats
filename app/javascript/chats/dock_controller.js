@@ -55,6 +55,7 @@ const UNREAD = "chats-window--unread"
 const FRONT = "chats-window--front"
 const ENTERING = "chats-window--entering"
 const POPPED = "chats-window--popped"
+const SQUEEZED = "chats-window--squeezed" // folded to make room: narrow, compact header
 const NO_REPOP_MS = 5 * 60_000
 const ANNOUNCE_EVERY_MS = 30_000
 const DRAFT_TTL_MS = 7 * 24 * 60 * 60_000
@@ -222,6 +223,7 @@ export default class extends Controller {
     const frame = document.createElement("turbo-frame")
     frame.id = this.domId("window", id)
     frame.className = minimized ? `chats-window ${MINIMIZED}` : "chats-window"
+    if (minimized) frame.setAttribute("data-chats-minimized", "")
     frame.setAttribute("target", "_top")
     frame.setAttribute("data-chats--dock-target", "window")
     frame.dataset.conversationId = id
@@ -233,15 +235,27 @@ export default class extends Controller {
     return frame
   }
 
-  // Make room for one more window (or, with +keeping+, for that one): close
-  // the least recently used window that doesn't have the focus. Without
-  // `force`, gives up rather than close one that does.
+  // Make room for one more window (or, with +keeping+, for that one):
+  // close the least recently used window that isn't IN USE. A window in use
+  // — it has the focus, or unsent text — is never closed to make room. When
+  // only such windows are left, a window the viewer is opening (`force`)
+  // folds them instead (minimized, kept, beside the new one; chats.css lets
+  // folded windows narrow so the row still fits), and a pop-up gives up.
   makeRoom(keeping, { force = false } = {}) {
     const limit = keeping ? this.fit : this.fit - 1
     while (this.windowTargets.length > limit) {
-      const victim = this.leastRecentlyUsed(keeping) || (force && this.oldest(keeping))
-      if (!victim) return false
-      this.removeWindow(victim)
+      const victim = this.leastRecentlyUsed(keeping)
+      if (victim) {
+        this.removeWindow(victim)
+        continue
+      }
+      if (!force) return false
+
+      this.windowTargets.filter((frame) => frame !== keeping).forEach((frame) => {
+        this.setMinimized(frame, true)
+        frame.classList.add(SQUEEZED)
+      })
+      return true
     }
     return true
   }
@@ -455,6 +469,7 @@ export default class extends Controller {
     if (this.minimized(frame) === minimized) return
 
     frame.classList.toggle(MINIMIZED, minimized)
+    if (!minimized) frame.classList.remove(SQUEEZED)
     this.syncControls(frame)
     this.save()
   }
@@ -464,6 +479,8 @@ export default class extends Controller {
   // tab order, the waiting count.
   syncControls(frame) {
     const minimized = this.minimized(frame)
+    // What the thread controller reads to know it mustn't mark anything read.
+    frame.toggleAttribute("data-chats-minimized", minimized)
     frame.querySelector(".chats-window__title")?.setAttribute("aria-expanded", String(!minimized))
     frame.querySelectorAll(".chats-thread--window > :not(.chats-window__header), .chats-window__status")
       .forEach((part) => { part.inert = minimized })
@@ -725,11 +742,22 @@ export default class extends Controller {
     document.documentElement.classList.toggle("chats-dock-sheet-open", open)
     if (open) {
       if (this.inerted.length) return
-      this.inerted = Array.from(document.body.children).filter((node) => node !== this.element && !node.inert)
+      this.inerted = this.pageAround().filter((node) => !node.inert)
       this.inerted.forEach((node) => { node.inert = true })
     } else {
       this.releaseSheet()
     }
+  }
+
+  // Everything on the page but the dock: the siblings of the dock and of
+  // each of its ancestors, up to <body>. A host may render the dock inside
+  // a layout wrapper, and inerting the wrapper would inert the sheet too.
+  pageAround() {
+    const around = []
+    for (let node = this.element; node?.parentElement && node !== document.body; node = node.parentElement) {
+      around.push(...Array.from(node.parentElement.children).filter((sibling) => sibling !== node))
+    }
+    return around
   }
 
   releaseSheet() {
@@ -762,12 +790,14 @@ export default class extends Controller {
 
   leastRecentlyUsed(keeping) {
     return this.windowTargets
-      .filter((frame) => frame !== keeping && !frame.contains(document.activeElement))
+      .filter((frame) => frame !== keeping && !this.inUse(frame))
       .sort((a, b) => Number(a.dataset.usedAt || 0) - Number(b.dataset.usedAt || 0))[0]
   }
 
-  oldest(keeping) {
-    return this.windowTargets.find((frame) => frame !== keeping)
+  // Being typed in, or holding words not yet sent.
+  inUse(frame) {
+    return frame.contains(document.activeElement) ||
+      Boolean(frame.querySelector(".chats-composer__input")?.value?.trim())
   }
 
   // Whether the page itself (not one of our windows) renders this thread.

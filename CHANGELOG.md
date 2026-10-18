@@ -54,13 +54,19 @@ reads a thread, and the thread body moved into a partial.
 - **What fits.** `min(windows, floor((viewport − 312) / 344))` windows beside
   the panel: two at 1280px, one at 768px, three from 1344px. Opening one
   more, or narrowing the viewport, closes the least recently used window
-  that doesn't have the focus, and saves what was typed in it.
+  that isn't in use. A window in use (it has the focus, or unsent text) is
+  never closed to make room: when only those are left, opening another
+  folds them to their headers beside it (folded windows may narrow so the
+  row still fits), and a pop-up doesn't open at all. A window the viewer
+  closes keeps its unsent text for when it comes back.
 - **Reading waits for the viewer.** A window never reads on render. A
   minimized window never marks anything read, and a window that popped
   open, or came back after a reload, marks messages read only once the
   viewer focuses it, presses in it or scrolls it: the dock sets
-  `data-chats-active` on the window and the thread controller obeys it,
-  checking again when its delayed read fires. A window the viewer opened
+  `data-chats-minimized` and `data-chats-active` on the window and the
+  thread controller obeys them, checking again when its delayed read fires
+  (state, not geometry: a folded window's scroller also loses its padding,
+  but a size check alone is never trusted). A window the viewer opened
   is engaged from the start. The thread page has no gate and is unchanged.
 - **Live, server-driven.** A new per-messager stream,
   **`[messager, :chats_dock]`**, gets one render per participant per event
@@ -92,7 +98,8 @@ reads a thread, and the thread body moved into a partial.
   launcher, the open panel a full-screen sheet, and a conversation one
   full-screen window with ← back to the list, sized to the visual viewport
   so the composer sits on the keyboard. The sheet makes the rest of the page
-  `inert` and stops it scrolling. Inputs are 16px, so iOS doesn't zoom.
+  `inert` (the siblings of the dock and of each of its ancestors, so a
+  layout that wraps the dock never inerts the sheet) and stops it scrolling. Inputs are 16px, so iOS doesn't zoom.
   Messages never pop a window on a phone. The layout is one media query, so
   it applies before JavaScript connects and without it; the controller reads
   the same query.
