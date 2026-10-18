@@ -36,9 +36,6 @@ import { Controller } from "@hotwired/stimulus"
 const MINIMIZED = "chats-window--minimized"
 const UNREAD = "chats-window--unread"
 const COMPACT = "chats-dock--compact"
-// Must agree with dom_id(conversation, …) for Chats::Conversation.
-const WINDOW_ID = (id) => `window_chats_conversation_${id}`
-const MESSAGES_ID = (id) => `messages_chats_conversation_${id}`
 
 export default class extends Controller {
   static targets = ["windows", "window", "panel", "list", "badge"]
@@ -46,6 +43,10 @@ export default class extends Controller {
     windows: { type: Number, default: 3 },
     storageKey: String,
     windowUrl: String,
+    // dom_id's record key for a conversation, from the server: inside the
+    // isolated engine it is "conversation", not "chats_conversation", and
+    // nothing here should have to know that.
+    recordKey: { type: String, default: "conversation" },
     loading: String
   }
 
@@ -81,7 +82,7 @@ export default class extends Controller {
     if (this.renderedOnPage(id)) {
       // Already on the page: go to it rather than open a second copy.
       this.panelTarget.open = false
-      document.getElementById(`composer_chats_conversation_${id}`)?.querySelector("textarea")?.focus()
+      document.getElementById(this.domId("composer", id))?.querySelector("textarea")?.focus()
       return
     }
 
@@ -118,7 +119,7 @@ export default class extends Controller {
 
   buildWindow(id, { minimized, focus }) {
     const frame = document.createElement("turbo-frame")
-    frame.id = WINDOW_ID(id)
+    frame.id = this.domId("window", id)
     frame.className = minimized ? `chats-window ${MINIMIZED}` : "chats-window"
     frame.setAttribute("target", "_top")
     frame.setAttribute("data-chats--dock-target", "window")
@@ -396,7 +397,12 @@ export default class extends Controller {
 
   // Whether the page itself (not one of our windows) renders this thread.
   renderedOnPage(id) {
-    return Array.from(document.querySelectorAll(`[id="${CSS.escape(MESSAGES_ID(id))}"]`))
+    return Array.from(document.querySelectorAll(`[id="${CSS.escape(this.domId("messages", id))}"]`))
       .some((element) => !this.element.contains(element))
+  }
+
+  // dom_id(conversation, prefix), as the server writes it.
+  domId(prefix, id) {
+    return `${prefix}_${this.recordKeyValue}_${id}`
   }
 }

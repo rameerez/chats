@@ -25,6 +25,7 @@
         "chats--dock-windows-value": windows,
         "chats--dock-storage-key-value": "chats:dock:#{Chats.messager_key(viewer)}",
         "chats--dock-window-url-value": chats_routes.conversation_path("__id__", window: 1),
+        "chats--dock-record-key-value": Chats::Conversation.model_name.param_key,
         "chats--dock-loading-value": t("chats.thread.loading"),
         action: "keydown.esc->chats--dock#escape " \
                 "turbo:frame-missing->chats--dock#frameMissing " \

@@ -43,6 +43,11 @@ class MessagingDockTest < ActionDispatch::IntegrationTest
     assert_equal "chats:dock:#{Chats.messager_key(@alice)}", dock["data-chats--dock-storage-key-value"]
     assert_equal "/messages/__id__?window=1", dock["data-chats--dock-window-url-value"]
     assert_equal "3", dock["data-chats--dock-windows-value"]
+    # The controller builds window and thread ids from it: it must be what
+    # dom_id writes inside the engine, which is NOT "chats_conversation".
+    record_key = dock["data-chats--dock-record-key-value"]
+    assert_equal dom_id(@conversation, :window), "window_#{record_key}_#{@conversation.id}"
+    assert_equal dom_id(@conversation, :messages), "messages_#{record_key}_#{@conversation.id}"
   end
 
   test "the dock never renders on the engine's own pages" do
