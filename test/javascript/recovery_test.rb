@@ -340,6 +340,45 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "renderStreamFrom resolves only once Turbo has applied what it rendered" do
+    # Turbo adds each <turbo-stream> to <html>, performs it a repaint later,
+    # and removes it.
+    run_recovery(<<~JAVASCRIPT)
+      (async () => {
+        const streams = []
+        document.documentElement.querySelectorAll = (selector) =>
+          (selector === ":scope > turbo-stream" ? streams.filter((stream) => stream.isConnected) : [])
+        window.Turbo.renderStreamMessage = () => streams.push({ isConnected: true })
+
+        let resolved = null
+        renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => { resolved = rendered })
+        page.respond(page.requests[0])
+        await page.settle()
+        page.advance(16); await page.settle()
+        assert.strictEqual(resolved, null, "not while the stream waits to be performed")
+
+        streams[0].isConnected = false              // performed, and removed
+        page.advance(16); await page.settle()
+        assert.strictEqual(resolved, true)
+      })().catch((error) => { console.error(error); process.exit(1) })
+    JAVASCRIPT
+  end
+
+  test "renderStreamFrom drops an answer no longer wanted when it arrives" do
+    run_recovery(<<~JAVASCRIPT)
+      (async () => {
+        let wanted = true
+        let resolved = null
+        renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
+        wanted = false
+        page.respond(page.requests[0])
+        await page.settle()
+        assert.strictEqual(resolved, false)
+        assert.strictEqual(page.rendered.length, 0)
+      })().catch((error) => { console.error(error); process.exit(1) })
+    JAVASCRIPT
+  end
+
   test "renderStreamFrom renders a Turbo Stream, makes the same request once at a time, and ignores anything else" do
     run_recovery(<<~JAVASCRIPT)
       (async () => {

@@ -67,21 +67,53 @@ export function recoverMissedBroadcasts(element, catchUp, { sources = SOURCE } =
   return () => recovery.stop()
 }
 
-// GET +url+ as a Turbo Stream and render it. The same request made twice at
-// once is made once. Anything but a Turbo Stream (a sign-in page after the
+// GET +url+ as a Turbo Stream and render it, unless `when` says by then it
+// is no longer wanted (its page re-rendered meanwhile). Resolves once Turbo
+// has APPLIED it — Turbo performs each <turbo-stream> a repaint after it is
+// added — to true if it was rendered. The same request made twice at once
+// is made once. Anything but a Turbo Stream (a sign-in page after the
 // session expired, an error page) is ignored: the next catch-up tries again.
 const requests = new Map()
+const APPLY_WITHIN_MS = 2_000
 
-export function renderStreamFrom(url) {
+export function renderStreamFrom(url, { when = () => true } = {}) {
   if (!requests.has(url)) {
     const request = fetch(url, { headers: { Accept: "text/vnd.turbo-stream.html" }, credentials: "same-origin" })
       .then((response) => (isTurboStream(response) ? response.text() : ""))
-      .then((html) => { if (html) window.Turbo?.renderStreamMessage(html) })
-      .catch(() => {})
+      .then((html) => (html && when() ? renderAndApply(html) : false))
+      .catch(() => false)
       .finally(() => requests.delete(url))
     requests.set(url, request)
   }
   return requests.get(url)
+}
+
+async function renderAndApply(html) {
+  if (!window.Turbo?.renderStreamMessage) return false
+
+  const waiting = new Set(pendingStreams())
+  window.Turbo.renderStreamMessage(html)
+  const ours = pendingStreams().filter((stream) => !waiting.has(stream))
+
+  // A stream element removes itself once performed.
+  const giveUpAt = Date.now() + APPLY_WITHIN_MS
+  while (ours.some((stream) => stream.isConnected) && Date.now() < giveUpAt) await nextRepaint()
+  return true
+}
+
+function pendingStreams() {
+  return Array.from(document.documentElement.querySelectorAll?.(":scope > turbo-stream") || [])
+}
+
+// Turbo's own: a frame when the page is visible, a task when it isn't.
+function nextRepaint() {
+  return new Promise((resolve) => {
+    if (document.visibilityState === "visible" && typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => resolve())
+    } else {
+      setTimeout(resolve, 0)
+    }
+  })
 }
 
 function isTurboStream(response) {
