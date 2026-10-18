@@ -635,7 +635,13 @@ export default class extends Controller {
 
     // Resolves once Turbo has applied the answer, so `last` is gone by then
     // if the history was re-rendered.
-    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, { when: current, key: this.element }).then((rendered) => {
+    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, {
+      when: current,
+      key: this.element,
+      // Given up while a page render that ran past its bound had the thread
+      // away, and asked again once that render ended with it back: catch up anew.
+      retry: () => this.refreshThread()
+    }).then((rendered) => {
       if (!rendered || !last || last.isConnected) return
 
       this.element.dataset.chatsRender = newRender() // the re-rendered history is a new render

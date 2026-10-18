@@ -93,7 +93,7 @@ const answers = new Map() // key → the answer still being applied
 const REQUEST_WITHIN_MS = 15_000
 const APPLY_WITHIN_MS = 2_000
 
-export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
+export function renderStreamFrom(url, { when = () => true, key = url, retry = null } = {}) {
   watchPageRenders()
   if (requests.has(url)) return requests.get(url)
 
@@ -108,10 +108,10 @@ export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
     .then((response) => (isTurboStream(response) ? response.text() : ""))
     .then(async (html) => {
       clearTimeout(hung)
-      if (!html || !(await stillWanted(when))) return false
+      if (!html || !(await stillWanted(when, retry))) return false
 
       setTimeout(release, APPLY_WITHIN_MS)
-      return apply(html, when, key)
+      return apply(html, when, key, retry)
     })
     .catch(() => false)
     .finally(() => {
@@ -125,7 +125,7 @@ export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
 // Drops what is left of +key+'s answer: streams Turbo hasn't applied yet
 // never will be.
 export function cancelStreamsFor(key) {
-  answers.get(key)?.cancel()
+  answers.get(key)?.cancel({ unwanted: true })
 }
 
 // --- Page renders ------------------------------------------------------------
@@ -135,13 +135,21 @@ export function cancelStreamsFor(key) {
 // once the new body is in. That is usually one task, but a host may render
 // asynchronously (a `turbo:before-render` listener that animates, or uses a
 // view transition), and the element is then off the page for as long as
-// that takes. So "off the page" means "gone" only once the page render is
-// over: between `turbo:before-render` and `turbo:render` (or `turbo:load`)
-// nothing is decided, and afterRendering() resolves a task after it ends.
-// (A render that never finishes holds nothing for longer than
-// RENDER_WITHIN_MS.)
+// that takes. So "off the page" means "gone" only once page rendering is
+// over: from each `turbo:before-render` to its `turbo:render`, counted one
+// by one (a second render may start before the first ends), nothing is
+// decided, and afterRendering() resolves a task after the last one ends.
+//
+// A render that hasn't ended after RENDER_WITHIN_MS stops holding things
+// up. What is given up while it is still out (an answer, streams waiting)
+// may belong to a window it will yet bring back, so it is remembered with
+// its way to catch up again (`retry:`), and asked again when that render,
+// late, does end: a window that is back and still wanted catches up anew.
 const RENDER_WITHIN_MS = 10_000
-let rendering = null
+const inFlight = [] // renders between turbo:before-render and their turbo:render, oldest first
+let overdue = 0 // renders past RENDER_WITHIN_MS that haven't ended
+let idle = null // { finished, resolve } while any render is in flight
+const givenUp = [] // { when, retry } dropped while an overdue render was out
 let watchingRenders = false
 
 function watchPageRenders() {
@@ -149,20 +157,38 @@ function watchPageRenders() {
   watchingRenders = true
 
   document.addEventListener("turbo:before-render", () => {
-    if (rendering) return
-    let done
-    const render = { finished: new Promise((resolve) => { done = resolve }) }
-    render.finish = () => {
-      if (rendering !== render) return
-      rendering = null
-      setTimeout(done, 0)
+    if (!inFlight.length) {
+      let resolve
+      idle = { finished: new Promise((done) => { resolve = done }) }
+      idle.resolve = resolve
     }
-    rendering = render
-    setTimeout(render.finish, RENDER_WITHIN_MS)
+    const render = {}
+    render.timer = setTimeout(() => {
+      inFlight.splice(inFlight.indexOf(render), 1)
+      overdue++
+      settleIfIdle()
+    }, RENDER_WITHIN_MS)
+    inFlight.push(render)
   })
-  const finish = () => rendering?.finish()
-  document.addEventListener("turbo:render", finish)
-  document.addEventListener("turbo:load", finish)
+
+  document.addEventListener("turbo:render", () => {
+    const render = inFlight.shift()
+    if (render) {
+      clearTimeout(render.timer)
+    } else if (overdue) {
+      overdue--
+    }
+    settleIfIdle()
+    if (givenUp.length) afterRendering().then(askAgain)
+  })
+}
+
+function settleIfIdle() {
+  if (inFlight.length || !idle) return
+
+  const { resolve } = idle
+  idle = null
+  setTimeout(resolve, 0)
 }
 
 // Resolves once no page render is in progress, a task after the last one
@@ -170,17 +196,34 @@ function watchPageRenders() {
 export async function afterRendering() {
   watchPageRenders()
   do {
-    await (rendering ? rendering.finished : new Promise((resolve) => setTimeout(resolve, 0)))
-  } while (rendering)
+    await (idle ? idle.finished : new Promise((resolve) => setTimeout(resolve, 0)))
+  } while (idle)
 }
 
 // Whether +when+ holds — or, if it doesn't while a page is rendering, once
-// the render is over.
-async function stillWanted(when) {
+// the render is over. Given up while an overdue render is out: remembered.
+async function stillWanted(when, retry) {
   if (when()) return true
-  if (!rendering) return false
-  await afterRendering()
-  return when()
+  if (idle) {
+    await afterRendering()
+    if (when()) return true
+  }
+  giveUp(when, retry)
+  return false
+}
+
+function giveUp(when, retry) {
+  if (overdue && retry) givenUp.push({ when, retry })
+}
+
+function askAgain() {
+  for (const entry of givenUp.splice(0)) {
+    if (entry.when()) {
+      entry.retry()
+    } else if (overdue) {
+      givenUp.push(entry) // a render still out may bring it back
+    }
+  }
 }
 
 // Every stream of an answer carries its mark (data-chats-answer), so the
@@ -188,7 +231,7 @@ async function stillWanted(when) {
 // rendered at the same moment, is none of its business.
 let answerCount = 0
 
-function apply(html, when, key) {
+function apply(html, when, key, retry) {
   if (!window.Turbo?.renderStreamMessage) return Promise.resolve(false)
   guardStreams()
   cancelStreamsFor(key)
@@ -197,6 +240,7 @@ function apply(html, when, key) {
   return new Promise((resolve) => {
     const answer = {
       when,
+      retry,
       applied: false,
       cancelled: false,
       settle(result) {
@@ -205,9 +249,10 @@ function apply(html, when, key) {
         marked.delete(mark)
         resolve(result)
       },
-      cancel() {
+      cancel({ unwanted = false } = {}) {
         this.cancelled = true
         streamsMarked(mark).forEach((stream) => stream.remove())
+        if (unwanted) giveUp(when, retry)
         this.settle(false)
       }
     }
@@ -225,7 +270,7 @@ function apply(html, when, key) {
     const check = () => {
       if (answer.cancelled) return
       if (!streamsMarked(mark).length) return answer.settle(answer.applied || !waited)
-      afterRendering().then(() => { if (!answer.cancelled && !when()) answer.cancel() })
+      afterRendering().then(() => { if (!answer.cancelled && !when()) answer.cancel({ unwanted: true }) })
     }
     answer.observer = new MutationObserver(check)
     answer.observer.observe(document.documentElement, { childList: true })
@@ -246,7 +291,7 @@ function guardStreams() {
     if (!answer || typeof render !== "function") return
 
     event.detail.render = async (stream) => {
-      if (answer.cancelled || !(await stillWanted(answer.when)) || answer.cancelled) return
+      if (answer.cancelled || !(await stillWanted(answer.when, answer.retry)) || answer.cancelled) return
       answer.applied = true
       await render(stream)
     }

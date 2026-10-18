@@ -268,6 +268,37 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
     assert page.evaluate_script("window.__thread.isConnected"), "the same thread, carried along"
   end
 
+  test "a window a render keeps away past the 10s bound catches up anew once it is back" do
+    sign_in
+    window = open_dock_window
+    missed = "missed during a render longer than the bound"
+    @bob.message!(@conversation, missed)
+    hold_catch_up_answers
+
+    catch_up(window)
+    wait_until_answered(1)
+    page.execute_script(<<~JS, window)
+      window.__thread = document.querySelector(arguments[0]).querySelector(".chats-thread")
+      document.addEventListener("turbo:before-render", (event) => {
+        event.detail.render = async (current, next) => {
+          current.replaceWith(next)
+          await new Promise((resolve) => setTimeout(resolve, 11_500)) // past chats/recovery's 10s bound
+        }
+      }, { once: true })
+      Turbo.visit("/")
+    JS
+    Timeout.timeout(Capybara.default_max_wait_time) do
+      sleep 0.01 while page.evaluate_script("window.__thread.isConnected")
+    end
+    release_answers # arrives while the window is away; given up when the bound passes
+
+    using_wait_time(20) do
+      assert_selector "#{window} [data-chats--thread-target='message']", text: missed
+    end
+    assert page.evaluate_script("window.__thread.isConnected"), "the same thread, carried along"
+    assert_equal 2, refreshes.size, "the answer given up, then a fresh catch-up once the render ended"
+  end
+
   # Starting a browser once tells whether this machine can run these.
   def self.chrome?
     return @chrome if defined?(@chrome)

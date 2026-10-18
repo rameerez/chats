@@ -484,6 +484,77 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "overlapping page renders: nothing is decided until every one of them has ended" do
+    run_streams(<<~JAVASCRIPT)
+      let wanted = true
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
+      answer(0)
+      await page.settle()
+
+      page.documentEvents.dispatch("turbo:before-render")   // a first asynchronous render…
+      page.documentEvents.dispatch("turbo:before-render")   // …and a second, before the first ends
+      wanted = false
+      page.mutate(document.documentElement)
+      page.documentEvents.dispatch("turbo:render")          // the first ends; the second still has the window away
+      page.advance(1_000); await page.settle()
+      assert.strictEqual(turbo.pending().length, 2, "kept: a render is still out")
+
+      let after = false
+      afterRendering().then(() => { after = true })
+      page.advance(0); await page.settle()
+      assert.strictEqual(after, false, "still rendering")
+
+      wanted = true
+      page.documentEvents.dispatch("turbo:render")          // the second ends with the window back
+      page.advance(0); await page.settle()
+      assert.strictEqual(after, true)
+      await turbo.applyStreams(); await page.settle()
+      assert.strictEqual(resolved, true)
+    JAVASCRIPT
+  end
+
+  test "what a render past its bound made give up is caught up anew when that render ends with the window back" do
+    run_streams(<<~JAVASCRIPT)
+      let wanted = true
+      const retries = []
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted, retry: () => retries.push("again") })
+      answer(0)
+      await page.settle()
+
+      page.documentEvents.dispatch("turbo:before-render")
+      wanted = false                                       // the window is away…
+      page.mutate(document.documentElement)
+      page.advance(10_001); await page.settle()            // …longer than the bound
+      assert.strictEqual(turbo.pending().length, 0, "given up")
+      assert.deepStrictEqual(retries, [])
+
+      wanted = true                                        // the render, late, brings it back
+      page.documentEvents.dispatch("turbo:render")
+      page.advance(0); await page.settle()
+      assert.deepStrictEqual(retries, ["again"], "and it catches up anew")
+
+      page.documentEvents.dispatch("turbo:before-render")
+      page.documentEvents.dispatch("turbo:render")
+      page.advance(0); await page.settle()
+      assert.deepStrictEqual(retries, ["again"], "once")
+    JAVASCRIPT
+  end
+
+  test "an answer given up for a window a late render never brings back is not retried" do
+    run_streams(<<~JAVASCRIPT)
+      const retries = []
+      page.documentEvents.dispatch("turbo:before-render")
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => false, retry: () => retries.push("again") })
+      page.advance(10_001); await page.settle()            // overdue
+      answer(0)                                            // arrives with the window away
+      await page.settle(); page.advance(0); await page.settle()
+      page.documentEvents.dispatch("turbo:render")         // the late render ends; the window never came back
+      page.advance(0); await page.settle()
+      assert.deepStrictEqual(retries, [])
+    JAVASCRIPT
+  end
+
   test "at most one unapplied answer per key: a newer one, or cancelStreamsFor, drops the older's leftovers" do
     run_streams(<<~JAVASCRIPT)
       const thread = {}

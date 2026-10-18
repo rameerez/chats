@@ -109,7 +109,7 @@ class RefreshInboxControllerTest < ActiveSupport::TestCase
       // What stays is chats/recovery's, page-wide and installed once: the
       // stream guards and the watch on page renders.
       assert.strictEqual(page.documentEvents.count("turbo:before-morph-attribute"), 1)
-      assert.strictEqual(page.documentEvents.count("turbo:load"), 1)
+      assert.strictEqual(page.documentEvents.count("turbo:render"), 1)
 
       source.confirm()
       page.advance(10_000)
