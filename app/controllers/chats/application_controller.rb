@@ -55,11 +55,52 @@ module Chats
       Chats.config.layout
     end
 
-    # Conversations are ALWAYS resolved through the viewer's own inbox
-    # relation: not-a-participant, left, or blocked-counterpart threads all
-    # come back as a plain 404 — existence is never leaked to outsiders.
+    # Conversations are ALWAYS resolved through relations that only hold
+    # what this viewer may open (conversation_lookup_scopes): not a
+    # participant, left, or a blocked counterpart all come back as a plain
+    # 404, the same 404 as an id that doesn't exist — existence is never
+    # leaked to outsiders. Every engine endpoint (the thread, a dock window,
+    # sending, editing, reacting, reading) looks a conversation up here.
+    #
+    # The first scope that has it wins; later scopes are asked only on a
+    # miss. Errors a scope raises are not rescued: a broken product scope
+    # must fail loudly, never turn into a quiet 404.
     def find_conversation(id = params[:id])
-      chats_current_messager.chats.find(id)
+      conversation_lookup_scopes.each do |scope|
+        conversation = scope.find_by(id: id)
+        return conversation if conversation
+      end
+
+      raise ActiveRecord::RecordNotFound.new(
+        "Couldn't find Chats::Conversation with 'id'=#{id}", Chats::Conversation.name, "id", id
+      )
+    end
+
+    protected
+
+    # Where find_conversation looks, in order: by default the viewer's own
+    # inbox relation (`Messager#chats`: their active seats, blocks and
+    # `config.inbox_scope` applied).
+    #
+    # THE extension point for a conversation that must open although the
+    # inbox hides it. A product gem built on chats (support_desk: a
+    # requester's own ticket, which the host's inbox_scope keeps out of the
+    # inbox) prepends a module that appends its own relation:
+    #
+    #   module SupportDesk::ConversationLookup
+    #     protected
+    #
+    #     def conversation_lookup_scopes
+    #       super + [SupportDesk::Ticket.conversations_of(chats_current_messager)]
+    #     end
+    #   end
+    #   Chats::ApplicationController.prepend(SupportDesk::ConversationLookup)
+    #
+    # Each scope must hold only conversations this viewer may open: the
+    # union of the scopes IS the authorization. Nothing the scopes don't
+    # name becomes reachable.
+    def conversation_lookup_scopes
+      [chats_current_messager.chats]
     end
   end
 end
