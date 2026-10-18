@@ -228,10 +228,10 @@ class BroadcastsDurabilityTest < ActiveSupport::TestCase
   end
 
   test "a raising enqueue is reported too, once per attempt" do
-    reports = capture_error_reports(RuntimeError) do
+    reports = errors_reported do
       Chats::InboxRefreshJob.stub(:perform_later, ->(*) { raise "queue down" }) { Chats::Broadcasts.refresh_inbox_of(@bob) }
     end
-    assert_equal 2, reports.size
+    assert_equal ["queue down", "queue down"], reports.grep(RuntimeError).map(&:message)
   end
 
   test "the job discards a refresh for a messager deleted before it ran" do
@@ -254,6 +254,22 @@ class BroadcastsDurabilityTest < ActiveSupport::TestCase
     yield
   ensure
     Turbo::ThreadDebouncer.debouncer_class = immediate
+  end
+
+  # Every error reported to Rails.error while the block runs. (Rails 8.1's
+  # capture_error_reports does this; the gem is tested back to 7.1.)
+  def errors_reported
+    collector = Class.new do
+      attr_reader :errors
+
+      def initialize = @errors = []
+      def report(error, **) = @errors << error
+    end.new
+    Rails.error.subscribe(collector)
+    yield
+    collector.errors
+  ensure
+    Rails.error.unsubscribe(collector)
   end
 
   def with_cache(store)
