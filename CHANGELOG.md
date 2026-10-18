@@ -134,10 +134,12 @@ to configure, no polling.**
   restored snapshot, keeps them. Each catch-up is bound to one render of
   the thread (`render=`, echoed by the answer): an answer that arrives
   after the page or a dock window rendered the conversation again is
-  dropped unrendered, and its cursors ignored. A history re-render is
-  followed by one more catch-up from its own cursors, once Turbo has
-  actually applied it (stream actions run a repaint after they arrive),
-  so a message written while that page was being built isn't lost. An empty
+  dropped unrendered, and its cursors ignored — checked again by every
+  stream of it at the moment Turbo applies it, a repaint later, so a visit
+  or a window reload in between can't hand the old streams the new render.
+  A history re-render is followed by one more catch-up from its own
+  cursors once Turbo has actually applied it, however late that is, so a
+  message written while that page was being built isn't lost. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also
