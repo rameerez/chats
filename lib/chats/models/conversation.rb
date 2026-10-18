@@ -78,6 +78,22 @@ module Chats
     # listed, like everywhere else).
     scope :with_messages, -> { where.not(last_message_id: nil) }
 
+    # Conversations a PERSON wrote in, and their complement. A narrower
+    # question than `with_messages`, which counts every message: a system
+    # line is the app talking ("Your ride was cancelled", which the inbox
+    # rightly lists), and a tombstone no longer says anything. These count
+    # only Chats::Message.human, what is left when both are set aside. For
+    # the readers that must not count a thread holding only "Alice joined":
+    # ops walls, moderation lists, analytics.
+    #
+    # One correlated EXISTS / NOT EXISTS, so they compose with any other
+    # scope (`alice.chats`, `inbox_for`, `about`, `unread_by`,
+    # `with_messages`) and never multiply rows:
+    #   alice.chats.with_human_messages
+    #   Chats::Conversation.about(ride).without_human_messages.count   # admin-wide
+    scope :with_human_messages, -> { where(human_messages_exist) }
+    scope :without_human_messages, -> { where.not(human_messages_exist) }
+
     # A messager's inbox: every conversation they're an active participant of
     # (not left), minus direct threads with someone they're blocked with,
     # newest activity first. THE hot query — keep it composable and indexed.
@@ -208,6 +224,20 @@ module Chats
         unread_by(messager).where(chats_conversations: { id: ids })
                            .group("chats_conversations.id")
                            .count("chats_messages.id")
+      end
+
+      # EXISTS (SELECT 1 FROM chats_messages WHERE conversation_id =
+      # chats_conversations.id AND kind = 'text' AND deleted_at IS NULL),
+      # built from Chats::Message.human so the two definitions can never
+      # drift, and unscoped so a Message scope the caller happens to be inside
+      # never leaks in. Public only because scope bodies run on the relation,
+      # which cannot reach a private class method.
+      def human_messages_exist # :nodoc:
+        messages = Chats::Message.arel_table
+        Chats::Message.unscoped.human
+                      .where(messages[:conversation_id].eq(arel_table[:id]))
+                      .select(Arel.sql("1"))
+                      .arel.exists
       end
     end
 
@@ -346,6 +376,14 @@ module Chats
     #                                     action: { label: "Book another", url: "/rides/new" })
     def post_system_message!(body, action: nil)
       messages.create!(kind: "system", body: body, action: action)
+    end
+
+    # The newest thing a person said here (see `.with_human_messages`), or
+    # nil when nobody did. Unlike +last_message+ it skips system lines and
+    # tombstones, and it is a query, not the denormalized pointer: one per
+    # call. For a list, batch it with Chats::Message.last_human_in(conversations).
+    def last_human_message
+      messages.human.recent_first.first
     end
 
     # --- Read state -----------------------------------------------------------

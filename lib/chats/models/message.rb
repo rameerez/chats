@@ -81,6 +81,66 @@ module Chats
     scope :oldest_first, -> { order(created_at: :asc, id: :asc) }
     scope :visible, -> { where(deleted_at: nil) }
 
+    # What people said: text messages that still stand. A system line
+    # ("Alice joined", "Your ride was cancelled") is the app talking, and a
+    # tombstone no longer says anything. A photo with no caption is still a
+    # text message and still counts. The inbox does NOT read through this,
+    # on purpose — see README "Real conversations vs system-only threads".
+    scope :human, -> { where(kind: "text").visible }
+
+    # The newest human message of each given conversation, at most one row
+    # per conversation, in ONE query: the batch twin of
+    # Conversation#last_human_message for lists (admin walls, moderation
+    # queues). +conversations+ is a page of records, ids, a single record, or
+    # a Chats::Conversation relation — an unloaded relation is read as a
+    # subquery, never loaded first. The result is a relation, so the columns
+    # can be narrowed:
+    #
+    #   Chats::Message.last_human_in(conversations)
+    #                 .select(:id, :conversation_id, :created_at)
+    #                 .index_by(&:conversation_id)          # { id => message }
+    #
+    # A conversation nobody wrote in has no row. ROW_NUMBER works on every
+    # supported adapter (PostgreSQL, SQLite and MySQL 8), the same ranking
+    # Chats::Inbox uses for its stacks. The ranked subquery is built unscoped,
+    # so neither a scope it is called on nor a `.select` chained onto the
+    # result leaks into it.
+    scope :last_human_in, lambda { |conversations|
+      ids = Chats::Message.conversation_ids_in(conversations)
+      next none if ids.is_a?(Array) && ids.empty?
+
+      ranking = "ROW_NUMBER() OVER (PARTITION BY chats_messages.conversation_id " \
+                "ORDER BY chats_messages.created_at DESC, chats_messages.id DESC) AS human_rank"
+      ranked = Chats::Message.unscoped.human.where(conversation_id: ids)
+                             .select(Arel.sql("chats_messages.id"), Arel.sql(ranking))
+      newest = Chats::Message.unscoped.from(ranked, :ranked_messages)
+                             .where(Arel.sql("ranked_messages.human_rank = 1"))
+                             .select(Arel.sql("ranked_messages.id"))
+      where(id: newest)
+    }
+
+    # The conversation ids +last_human_in+ ranks within: an Array for records
+    # and ids (a loaded relation included, read from memory), a subquery for
+    # an unloaded relation. The subquery is a derived table because MySQL
+    # rejects LIMIT directly inside IN, and a page is usually limited; its
+    # ORDER BY is kept only when a LIMIT or OFFSET depends on it (PostgreSQL
+    # refuses `SELECT DISTINCT id … ORDER BY COALESCE(…)`, which the inbox's
+    # order would otherwise become).
+    def self.conversation_ids_in(conversations) # :nodoc:
+      unless conversations.is_a?(ActiveRecord::Relation)
+        return Array(conversations).map { |c| c.is_a?(Chats::Conversation) ? c.id : c }
+      end
+      unless conversations.klass <= Chats::Conversation
+        raise ArgumentError, "expected Chats::Conversation records, ids or a relation of them, " \
+                             "got a #{conversations.klass.name} relation"
+      end
+      return conversations.map(&:id) if conversations.loaded?
+
+      page = conversations.except(:includes, :preload, :eager_load).reselect(conversations.arel_table[:id])
+      page = page.reorder(nil) unless page.limit_value || page.offset_value
+      Chats::Conversation.unscoped.from(page, :conversation_page).select(Arel.sql("conversation_page.id"))
+    end
+
     # Keyset (cursor) pagination for infinite scroll-up. OFFSET pagination
     # drifts when new messages arrive mid-scroll; anchoring on the oldest
     # loaded message can't skip or duplicate. `(created_at, id)` because
