@@ -288,6 +288,31 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "a catch-up started while one with the same URL is on its way gets its own, later answer" do
+    # A is on its way; a broadcast is missed; B starts with the same cursors
+    # (nothing changed on screen), so the same URL. A's answer was built
+    # before the missed change: only a second request can bring it, and only
+    # its answer may say the thread is up to date.
+    run_thread(async(<<~JAVASCRIPT))
+      thread.refreshThread()                                    // A
+      await page.settle()
+      thread.refreshThread()                                    // B, same URL
+      assert.strictEqual(page.requests.length, 1)
+
+      page.respond(page.requests[0], { body: '<turbo-stream action="replace" target="a"></turbo-stream>' })
+      await page.settle()
+      assert.strictEqual(page.requests.length, 2, "a second request, after A")
+      assert.strictEqual(page.requests[1].url, page.requests[0].url)
+      assert.ok("chatsStale" in thread.element.dataset, "A's answer predates B: still behind")
+
+      page.respond(page.requests[1], { body: '<turbo-stream action="append" target="missed"></turbo-stream>' })
+      await page.settle()
+      assert.deepStrictEqual(page.rendered.map((html) => html.match(/target="([^"]+)"/)[1]), ["a", "missed"])
+      assert.ok(!("chatsStale" in thread.element.dataset), "B's answer, with the missed change, clears it")
+      assert.strictEqual(thread.element.dataset.chatsApplied, "2")
+    JAVASCRIPT
+  end
+
   test "an empty thread asks from the epoch: its first message may be the one it missed" do
     run_thread(<<~JAVASCRIPT)
       rendered([]).refreshThread()

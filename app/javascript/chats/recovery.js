@@ -87,9 +87,11 @@ export function recoverMissedBroadcasts(element, catchUp, { sources = SOURCE, st
 // answer did. Bounded everywhere a request can stall:
 //   * a request that hasn't answered within REQUEST_WITHIN_MS is aborted
 //     (a fetch can hang across a network interruption);
-//   * the same request made twice at once is made once, but an answer
-//     Turbo hasn't applied within APPLY_WITHIN_MS no longer stands in for a
-//     new one;
+//   * the same request asked twice in the same instant is made once; asked
+//     again while it is on its way, it is made once more after it settles,
+//     so every caller gets an answer from after it asked (once for all who
+//     asked meanwhile); and an answer Turbo hasn't applied within
+//     APPLY_WITHIN_MS no longer stands in for a new one;
 //   * one unapplied answer per `key` (the URL, or what the caller names —
 //     the thread names itself): a newer answer for it cancels the older
 //     one's leftover streams, and so does cancelStreamsFor(key), which the
@@ -106,14 +108,32 @@ const answers = new Map() // key → the answer still being applied
 const REQUEST_WITHIN_MS = 15_000
 const APPLY_WITHIN_MS = 2_000
 
-export function renderStreamFrom(url, { when = () => true, key = url, order = 0, applying = () => {} } = {}) {
+export function renderStreamFrom(url, options = {}) {
   watchPageRenders()
-  if (requests.has(url)) return requests.get(url)
 
+  const inFlight = requests.get(url)
+  if (inFlight) {
+    // Asked in the same instant: the same answer will do.
+    if (inFlight.sameInstant) return inFlight.request
+    // Asked once it was on its way: its answer is a snapshot from before
+    // this was asked, and may miss what this wants. One more request, once
+    // the one in flight has settled, for every caller that came meanwhile
+    // (with the newest caller's options).
+    inFlight.next = options
+    inFlight.followUp ||= inFlight.request.then(() => renderStreamFrom(url, inFlight.next))
+    return inFlight.followUp
+  }
+  return request(url, options)
+}
+
+function request(url, { when = () => true, key = url, order = 0, applying = () => {} }) {
   const abort = new AbortController()
   const hung = setTimeout(() => abort.abort(), REQUEST_WITHIN_MS)
-  const release = () => { if (requests.get(url) === request) requests.delete(url) }
-  const request = fetch(url, {
+  const entry = { sameInstant: true }
+  queueMicrotask(() => { entry.sameInstant = false })
+  const release = () => { if (requests.get(url) === entry) requests.delete(url) }
+
+  entry.request = fetch(url, {
     headers: { Accept: "text/vnd.turbo-stream.html" },
     credentials: "same-origin",
     signal: abort.signal
@@ -131,8 +151,8 @@ export function renderStreamFrom(url, { when = () => true, key = url, order = 0,
       clearTimeout(hung)
       release()
     })
-  requests.set(url, request)
-  return request
+  requests.set(url, entry)
+  return entry.request
 }
 
 // Drops what is left of +key+'s answer: streams Turbo hasn't applied yet

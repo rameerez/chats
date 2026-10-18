@@ -355,6 +355,40 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "asked twice in the same instant, the same request is made once" do
+    run_streams(<<~JAVASCRIPT)
+      const results = []
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => results.push(rendered))
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => results.push(rendered))
+      assert.strictEqual(page.requests.length, 1)
+      answer(0)
+      await page.settle(); await turbo.applyStreams(); await page.settle()
+      assert.deepStrictEqual(results, [true, true])
+      assert.strictEqual(page.requests.length, 1, "and nothing more")
+    JAVASCRIPT
+  end
+
+  test "asked again while it is on its way, the request is made once more after it settles, for all who asked" do
+    run_streams(<<~JAVASCRIPT)
+      const results = []
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => results.push(["A", rendered]))
+      await page.settle()                                       // A is on its way…
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => results.push(["B", rendered]))
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => results.push(["C", rendered]))
+      assert.strictEqual(page.requests.length, 1, "nothing more while A is out")
+
+      answer(0)                                                 // A's snapshot, from before B and C asked
+      await page.settle(); await turbo.applyStreams(); await page.settle()
+      assert.deepStrictEqual(results, [["A", true]])
+      assert.strictEqual(page.requests.length, 2, "one more request, for B and C together")
+
+      answer(1)
+      await page.settle(); await turbo.applyStreams(); await page.settle()
+      assert.deepStrictEqual(results, [["A", true], ["B", true], ["C", true]])
+      assert.strictEqual(page.requests.length, 2)
+    JAVASCRIPT
+  end
+
   test "a request that hangs (a network interruption) is aborted after 15s, and the next catch-up asks again" do
     run_streams(<<~JAVASCRIPT)
       let resolved = null
