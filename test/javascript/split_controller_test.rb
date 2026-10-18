@@ -166,6 +166,19 @@ class SplitControllerTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "the tab takes the title the pane carries; a pane without one leaves the tab's" do
+    run_split(<<~JAVASCRIPT)
+      document.title = "Carol · Messages"
+      controller.connect()
+      open("/messages/2")
+      assert.strictEqual(document.title, "Carol · Messages")
+
+      pane.dataset.title = "Bob · Messages"
+      open("/messages/2")
+      assert.strictEqual(document.title, "Bob · Messages")
+    JAVASCRIPT
+  end
+
   test "a thread that reads on screen clears its row" do
     run_split(<<~JAVASCRIPT)
       controller.connect()

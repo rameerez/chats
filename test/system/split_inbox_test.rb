@@ -140,17 +140,36 @@ class SplitInboxBrowserTest < ActionDispatch::SystemTestCase
   test "the tab takes the title of the conversation a row opens: Turbo leaves <head> alone on a frame visit" do
     sign_in_at(1280)
     visit "/messages/#{@with_carol.id}"
-    assert_equal "Carol · Dummy", page.title
+    assert_equal "Carol · Messages", page.title # the layout's yield(:title)
 
     find(".chats-split__list a", text: "Bob").click
 
     assert_selector ".chats-split__pane .chats-thread__title", text: "Bob"
-    wait_until { page.title == "Bob · Dummy" }
-    assert_equal "Bob · Dummy", page.title
+    wait_until { page.title == "Bob · Messages" }
 
     page.go_back # a restore re-fetches the page (no-cache): its own title
     assert_selector ".chats-split__pane .chats-thread__title", text: "Carol"
-    wait_until { page.title == "Carol · Dummy" }
+    wait_until { page.title == "Carol · Messages" }
+
+    page.go_forward
+    assert_selector ".chats-split__pane .chats-thread__title", text: "Bob"
+    wait_until { page.title == "Bob · Messages" }
+  end
+
+  test "a host that titles pages in its layout, on full pages only, still gets the right tab after a row click" do
+    Chats.config.layout = "titled_by_host"
+    # The host's wording, said once for the gem too.
+    Chats.config.page_title = lambda { |conversation, viewer|
+      conversation ? "Host · #{conversation.title_for(viewer)}" : "Host"
+    }
+    sign_in_at(1280)
+    visit "/messages/#{@with_carol.id}"
+    assert_equal "Host · Carol", page.title
+
+    find(".chats-split__list a", text: "Bob").click
+
+    assert_selector ".chats-split__pane .chats-thread__title", text: "Bob"
+    wait_until { page.title == "Host · Bob" }
   end
 
   test "a row opened from a stack keeps the stack: the address bar carries it, and a refresh keeps the list filtered" do

@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <%# A host that titles its pages from what they show, the way a layout
-        reading @page_title or the controller's records does. %>
-    <title><%= [@conversation&.title_for(current_user), "Dummy"].compact.join(" · ") %></title>
+    <%# The Rails default: the page's own title, else the app's. %>
+    <title><%= content_for(:title) || "Dummy" %></title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <%= csrf_meta_tags %>
     <%= action_cable_meta_tag %>

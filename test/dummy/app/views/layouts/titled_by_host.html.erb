@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <%# A host that titles its pages in its layout, from what the controller
+        loaded (the way a layout reading a @page_title does), and so only on
+        a full page: a frame's answer never renders this. %>
+    <title><%= @conversation ? "Host · #{@conversation.title_for(current_user)}" : "Host" %></title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <%= csrf_meta_tags %>
+    <%= action_cable_meta_tag %>
+    <%= javascript_importmap_tags %>
+    <%= yield :head %>
+  </head>
+  <body>
+    <%= yield %>
+  </body>
+</html>

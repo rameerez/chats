@@ -329,6 +329,21 @@ module Chats
       path.presence || chats_routes.conversations_path(with: Chats.inbox_with_sgid(messager))
     end
 
+    # The messaging page's title: the inbox's, or +conversation+'s.
+    # `config.page_title` when the host sets one, else the localized
+    # `chats.page_title.*`. ONE source for both ways a conversation opens:
+    # the bundled pages hand it to `content_for :title` on a full visit, and
+    # the two-pane page's pane carries it (`data-title`) for chats--split to
+    # give the tab when a row opens it, since Turbo leaves <head> alone then.
+    def chats_page_title(conversation = nil)
+      viewer = chats_current_messager
+      custom = Chats.config.page_title&.call(conversation, viewer)
+      return custom.to_s if custom.present?
+      return t("chats.page_title.inbox") unless conversation
+
+      t("chats.page_title.conversation", name: conversation.title_for(viewer))
+    end
+
     # The gem's bundled stylesheet (CSS-variable themed — see chats.css).
     # Called from the engine's own views; hosts that eject + restyle the
     # views with their own framework simply don't include it.

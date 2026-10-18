@@ -275,16 +275,77 @@ class SplitInboxTest < ActionDispatch::IntegrationTest
     assert_equal "-1", css_select(".chats-split__pane h2.chats-thread__title").sole["tabindex"]
   end
 
+  # --- the page's title -----------------------------------------------------------------
+
+  test "the bundled pages give the layout their title: the inbox's, the open conversation's" do
+    login_as @alice
+
+    get "/messages"
+    assert_equal "Messages", css_select("head title").sole.text
+
+    get "/messages/#{@conversation.id}"
+    assert_equal "Bob · Messages", css_select("head title").sole.text
+    assert_equal "Bob · Messages", css_select("section.chats-split__pane").sole["data-title"],
+                 "one source: the full page's title and the pane's are the same"
+
+    Chats.config.inbox_layout = :stacked
+    get "/messages/#{@conversation.id}"
+    assert_equal "Bob · Messages", css_select("head title").sole.text
+  end
+
+  test "config.page_title words both, the inbox (no conversation) and a conversation, in the viewer's terms" do
+    Chats.config.page_title = lambda { |conversation, viewer|
+      [viewer.name, conversation&.title_for(viewer)].compact.join(" ↔ ")
+    }
+    login_as @alice
+
+    get "/messages"
+    assert_equal "Alice", css_select("head title").sole.text
+
+    get "/messages/#{@conversation.id}", headers: PANE_FRAME.merge(turbo_request)
+    assert_equal "Alice ↔ Bob", css_select("section.chats-split__pane").sole["data-title"]
+  end
+
+  test "a config.page_title that answers nothing falls back to the gem's wording" do
+    Chats.config.page_title = ->(_conversation, _viewer) {}
+    login_as @alice
+
+    get "/messages/#{@conversation.id}"
+
+    assert_equal "Bob · Messages", css_select("head title").sole.text
+  end
+
+  test "the page's title is localized" do
+    login_as @alice
+
+    I18n.with_locale(:es) { get "/messages/#{@conversation.id}" }
+
+    assert_equal "Bob · Mensajes", css_select("head title").sole.text
+  end
+
+  test "a config.layout never wraps the pane's frame answer: still the frame layout" do
+    Chats.config.layout = "titled_by_host"
+    login_as @alice
+
+    get "/messages/#{@conversation.id}", headers: PANE_FRAME.merge(turbo_request)
+    assert_select "head title", 0
+
+    get "/messages/#{@conversation.id}"
+    assert_equal "Host · Bob", css_select("head title").sole.text, "the host's own title on a full page"
+  end
+
   # --- the pane's own frame ------------------------------------------------------------
 
-  test "the pane's frame gets the pane alone, in the page's own layout for its title: no list, no inbox stream" do
+  test "the pane's frame gets the pane alone, in turbo-rails' frame layout: no list, no inbox stream, no host page" do
     login_as @alice
 
     get "/messages/#{@conversation.id}", headers: PANE_FRAME.merge(turbo_request)
 
     assert_response :success
-    assert_equal "Bob · Dummy", css_select("head title").sole.text,
-                 "the host's title for /messages/:id, not turbo-rails' frame layout's"
+    assert_select "head title", 0, "turbo-rails' frame layout, not the host's"
+    assert_select "body > turbo-frame#chats_conversation", 1
+    assert_select "body > *", 1, "nothing of the host's page around it"
+    assert_select "section.chats-split__pane[data-title='Bob · Messages']", 1, "its title travels on the pane"
     assert_select "turbo-frame", 1
     assert_select "turbo-frame#chats_conversation > section.chats-split__pane", 1 do
       assert_select "> header.chats-thread__header h2", text: "Bob"

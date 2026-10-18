@@ -18,11 +18,18 @@ The package is the gem again, and three fixes to the two-pane page.
   it so. The README's screenshots still ship, since the README links them.
 - **The tab kept the previous page's title after a row click.** Turbo
   leaves `<head>` alone when it promotes a frame load to a visit, so from
-  `/messages/A` clicking B left A's title. The pane's answer is now
-  rendered inside the page's own layout (not turbo-rails' minimal frame
-  layout), and `chats--split` gives the tab its `<title>` on
-  `turbo:frame-render`: the title a reload of `/messages/:id` shows, in the
-  host's own wording.
+  `/messages/A` clicking B left A's title. The messaging page's title now
+  has one source, the new `chats_page_title` helper ("Messages", "Bob ·
+  Messages": `chats.page_title.inbox` / `.conversation`, localized), which
+  `config.page_title = ->(conversation, viewer) { … }` rewords. The bundled
+  `index` and `show` give it to `content_for :title` (a layout doing
+  `yield(:title)` shows it on a full page), and the pane carries it
+  (`data-title`), which `chats--split` gives the tab when a row opens it.
+  The pane's answer stays in turbo-rails' minimal frame layout, now even
+  under a `config.layout`. A layout that titles pages from what the
+  controller loaded keeps its title on full pages and shows
+  `chats_page_title` after a row click: say it the same way in
+  `config.page_title`.
 - **A tapped row kept its hover tint on touch screens.** Every hover rule
   on inbox rows and on the dock (rows, the bar's chevron, "See all
   messages", the window buttons) now sits inside `@media (hover: hover)`.

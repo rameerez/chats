@@ -174,6 +174,14 @@ module Chats
     # suppress the badge on some messagers without touching the models.
     attr_reader :verified_badge
 
+    # ->(conversation, viewer) { String } — the title of the messaging page:
+    # the inbox (conversation nil) or a conversation. The bundled views
+    # give it to `content_for :title` (a layout doing `yield(:title)` shows
+    # it), and the two-pane page gives the tab the conversation's when a
+    # row opens it in the pane. nil (the default) is the localized
+    # `chats.page_title.inbox` / `chats.page_title.conversation`.
+    attr_reader :page_title
+
     def initialize
       @messager_class = "User"
       @parent_controller = "::ApplicationController"
@@ -210,6 +218,7 @@ module Chats
       @messager_url = ->(_messager) { nil }
       @message_signature = nil
       @verified_badge = nil
+      @page_title = nil
 
       @messager_display_name = lambda do |messager|
         messager.try(:display_name) || messager.try(:name) ||
@@ -333,6 +342,10 @@ module Chats
 
     def verified_badge=(value)
       @verified_badge = value.nil? ? nil : ensure_callable(value, "verified_badge")
+    end
+
+    def page_title=(value)
+      @page_title = value.nil? ? nil : ensure_callable(value, "page_title")
     end
 
     def messager_display_name=(value)

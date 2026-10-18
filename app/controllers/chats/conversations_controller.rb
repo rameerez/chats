@@ -249,30 +249,15 @@ module Chats
     # other frame of the page, the search's results among them, finds its
     # own part in it).
     #
-    # The pane alone, but inside the page's own layout, not turbo-rails'
-    # minimal frame layout: the layout is where the host titles its pages
-    # (from `@conversation`, a `@page_title`, a `content_for`), and Turbo
-    # leaves <head> alone when it promotes a frame load to a visit, so the
-    # tab kept the previous page's title. chats--split takes the <title>
-    # of this answer, the one a reload of /messages/:id would show.
+    # The pane alone comes in turbo-rails' minimal frame layout, always (even
+    # under a `config.layout`): nothing of the host's page is rendered for
+    # Turbo to throw away. Its title travels on the pane (`data-title`,
+    # chats_page_title), since Turbo leaves <head> alone on a frame visit.
     def render_split_page
-      return render_in_page_layout(:pane) if pane_request?
+      return render :pane, layout: "turbo_rails/frame" if pane_request?
 
       load_inbox
       render :index
-    end
-
-    def render_in_page_layout(template)
-      @chats_page_layout = true
-      render template
-    ensure
-      @chats_page_layout = false
-    end
-
-    # turbo-rails picks its minimal frame layout for every frame request
-    # (Turbo::Frames::FrameRequest); render_in_page_layout asks for the page's.
-    def turbo_frame_request?
-      !@chats_page_layout && super
     end
 
     def pane_request?

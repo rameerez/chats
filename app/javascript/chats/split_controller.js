@@ -24,9 +24,8 @@ import { Controller } from "@hotwired/stimulus"
 //
 // The tab's title follows the pane: Turbo leaves <head> alone when it
 // promotes a frame load to a visit, so the title would stay the previous
-// page's. The server renders the pane's answer inside the page's own layout
-// (ConversationsController#render_split_page), and its <title>, the one a
-// reload of /messages/:id shows, becomes the document's.
+// page's. The pane carries the page's title with it open (`data-title`,
+// chats_page_title: the same the full page gives `content_for :title`).
 //
 // The open conversation's row stops counting it unread as soon as it is
 // read (the pane's answer says the server read it, `data-read`; or its
@@ -94,17 +93,9 @@ export default class extends Controller {
       link.closest(".chats-row")?.classList.toggle("chats-row--current", current)
     })
     const pane = this.frameTarget.querySelector(".chats-split__pane")
+    if (pane?.dataset.title) document.title = pane.dataset.title
     if (pane?.dataset.read === "true") this.markRead(pane)
     this.arrive()
-  }
-
-  // turbo:frame-render: the tab takes the title of the pane's answer.
-  async retitle(event) {
-    if (!this.hasFrameTarget || event.target !== this.frameTarget) return
-
-    const html = await event.detail?.fetchResponse?.responseHTML
-    const title = html && new DOMParser().parseFromString(html, "text/html").querySelector("title")?.textContent
-    if (title) document.title = title
   }
 
   // chats:read, from the pane's thread.
