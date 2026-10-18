@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Real conversations told from system-only threads, and a page that missed
+a broadcast is never left stale (fixes
+[#1](https://github.com/rameerez/chats/issues/1)). **No migration, nothing
+to configure, no polling.**
+
 ### Added
 - **Real conversations vs system-only threads.** `with_messages` asks whether
   a conversation holds anything at all, system lines and tombstones
@@ -56,6 +61,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and falling back to the old rule where `Intl` is unavailable. The gem's
   `en` and `es` keep `one`/`other`; a host adds the forms its languages need
   in its own locale files.
+- **Every live surface catches up on the broadcasts it missed.** Action
+  Cable has no replay, so a broadcast sent while a page's socket was down
+  (a laptop asleep, a backgrounded tab or Hotwire Native WebView, a network
+  blip) never reached it, and the inbox, a thread, the unread badge or the
+  dock could sit on old content until the next navigation. One shared
+  module, `chats/recovery` (pinned for importmap hosts, like the
+  controllers), now watches each surface's own
+  `<turbo-cable-stream-source>` and the page, and asks for what was missed
+  when the stream reconnects, when the page comes back after 10 seconds or
+  more hidden, when the network comes back online (it asks Action Cable to
+  check its socket at once instead of after its backoff) and when the page
+  is restored from the back/forward cache or from Turbo's snapshot cache (a
+  back navigation, a Hotwire Native stack pop). Never otherwise: a healthy,
+  visible page fetches nothing. A hidden page never fetches; what it missed
+  waits until it is seen. Triggers that arrive together make one catch-up,
+  and catch-ups are at least five seconds apart.
+- **A reconnect Action Cable never reported is seen.** When Action Cable
+  reopens a socket that went quiet (the half-open connection of a phone that
+  slept), it drops the old socket's handlers before its close event can
+  arrive: subscribers hear "connected" again and never "disconnected", and
+  the `reconnected: true` detail reaches only the first subscription
+  confirmed. Every confirmation after the first now counts.
+- **A page restored from Turbo's snapshot cache catches up.** It came back
+  as old as when it was left, with no request: a thread restored by a back
+  navigation missed every message sent since. Its stream sources are marked
+  as they go into the cache, and a restored one catches up once it is live.
+- **The inbox** reruns a refresh that arrived while another visit was
+  loading, which Turbo ignores (`Session#refresh` skips one while
+  `navigator.currentVisit` is set): a message landing mid-refresh was lost
+  with a healthy socket. A refresh no longer rewrites the field you're
+  typing in, no longer drops the search (see Changed), and a morph no longer
+  strips the stream source's `connected` attribute.
+- **The inbox refresh is durable.** `refresh_inbox_of` enqueues
+  `Turbo::Streams::BroadcastStreamJob` straight from the after_commit
+  instead of calling `broadcast_refresh_later_to`, which parked the refresh
+  for half a second in an in-process timer (`Turbo::Debouncer`) before
+  enqueueing it, so a deploy or a crash inside that window dropped it. Bursts
+  merge on the client instead: Turbo runs one page refresh for refreshes
+  arriving within 150 ms of each other. The refresh tag now carries
+  `method="morph" scroll="preserve"`, so the inbox morphs whatever the host
+  layout's refresh meta says.
+- **The thread's catch-up is complete.** `GET /:id/refresh` now also
+  replaces the read state (a read the stream missed left "Sent" where it
+  should say "Seen"), catches reactions (a reaction now moves its message's
+  `updated_at`, with `update_columns`, so the bubble is not broadcast twice),
+  and, under `deletion: :hard`, lists the messages that still exist from the
+  oldest rendered bubble on (`from=`), so the thread removes the ones that
+  are gone (the `chats_prune` stream action). Catching up still reads
+  nothing.
+- **The unread badge and the dock catch up.** The viewer's own
+  `chats_unread_badge` is wrapped in a `chats--unread-badge` controller (a
+  `span.chats-unread-badge-live`, `display: contents`, so it changes no
+  layout) that asks the new `GET /badge` for every unread badge on the page:
+  the nav badge and the dock's, with the count the badge streams send
+  (`unread_chats_count`). Someone else's badge stays live but doesn't catch
+  up. The dock fetches the same, and reloads its recent list; each open
+  window's thread catches up by itself. A message missed while offline
+  never pops a window open late.
+
+### Changed
+- A page now counts as having been away after 10 seconds hidden, not 60
+  (the inbox and the thread used 60).
+- A thread more than a page behind no longer gets a page refresh, which
+  cleared the composer's draft and, in a dock window, refreshed the host's
+  whole page: its history (`chats/conversations/_history`, inside
+  `#history_conversation_<id>`) is re-rendered at the latest page, the
+  composer untouched. An ejected thread whose scroller has no
+  `id="<%= dom_id(conversation, :history) %>"` keeps getting the page
+  refresh.
+- The inbox's search keeps its query in the URL (`data-turbo-action=
+  "replace"`, submitting to the inbox's own path), so a refresh re-renders
+  the same results instead of the unfiltered list. The dock's recent list
+  frame has `refresh="morph"`, so a reload keeps its scroll and its search.
+- New: the `GET /badge` collection route, the `chats--unread-badge`
+  controller, and `data-created-at-ms` on every bubble.
+- **If you wrapped the inbox in a reconciler of your own** (a
+  stream-reconciler controller around `turbo_stream_from … :chats_inbox`),
+  remove it: two on one page both fire, and the gem's covers what yours did.
+  **If you ejected the inbox**, keep the
+  `data-controller="chats--refresh-inbox"` element around its
+  `turbo_stream_from chats_current_messager, :chats_inbox` (an inbox without
+  it doesn't catch up), and add `turbo_action: "replace"` to the search
+  form's `data` and `url: request.original_fullpath.split("?").first`. An
+  ejected message partial without `data-created-at-ms` only means a hard
+  delete missed while offline stays on screen until the next load.
 
 ## [0.5.0] - 2026-10-18
 
