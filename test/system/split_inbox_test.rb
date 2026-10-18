@@ -16,7 +16,9 @@ require "selenium-webdriver"
 # Chrome is a prerequisite in CI (ENV["CI"]), as for the dock's layout tests;
 # locally they skip without it. The suite's output says how many ran.
 class SplitInboxBrowserTest < ActionDispatch::SystemTestCase
-  driven_by :selenium, using: :headless_chrome, screen_size: [1280, 900]
+  driven_by :selenium, using: :headless_chrome, screen_size: [1280, 900] do |options|
+    HeadlessChromeWithMouse.configure(options) # see test_helper: every class says so
+  end
 
   @ran = 0
   @skipped = 0
@@ -124,6 +126,7 @@ class SplitInboxBrowserTest < ActionDispatch::SystemTestCase
     sign_in_at(1280)
     visit "/messages/#{@with_bob.id}"
     row = ".chats-split__list li:not(.chats-row--current) a.chats-row__link"
+
     find(row).hover
     hovered = page.evaluate_script("getComputedStyle(document.querySelector(#{row.to_json})).backgroundColor")
     assert_not_equal "rgba(0, 0, 0, 0)", hovered, "a mouse hovering a row tints it"
