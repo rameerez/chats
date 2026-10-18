@@ -208,6 +208,30 @@ class ThreadCatchUpTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "an older catch-up that applies after a newer one failed doesn't clear the mark" do
+    run_thread(async(<<~JAVASCRIPT))
+      thread.refreshThread()                                    // A
+      live(thread, bubble(20, { createdAtUs: 20_000_000 }))     // a live bubble: the next URL differs
+      thread.refreshThread()                                    // B
+      assert.strictEqual(page.requests.length, 2)
+      assert.notStrictEqual(page.requests[0].url, page.requests[1].url)
+
+      page.requests[1].resolve(Promise.reject(new Error("offline")))   // B fails
+      await page.settle()
+      page.respond(page.requests[0])                             // A applies
+      await page.settle()
+      assert.strictEqual(page.rendered.length, 1, "A's content still renders")
+      assert.ok("chatsStale" in thread.element.dataset, "but A predates B: still behind")
+
+      thread.refreshThread()                                    // the next trigger
+      assert.strictEqual(page.requests.length, 3, "asks once")
+      page.respond(page.requests[2])
+      await page.settle()
+      assert.ok(!("chatsStale" in thread.element.dataset), "the newest answer clears it")
+      assert.strictEqual(thread.element.dataset.chatsCatchUp, "3", "numbered on the element")
+    JAVASCRIPT
+  end
+
   test "an empty thread asks from the epoch: its first message may be the one it missed" do
     run_thread(<<~JAVASCRIPT)
       rendered([]).refreshThread()

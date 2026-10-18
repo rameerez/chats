@@ -163,7 +163,9 @@ to configure, no polling.**
   forgotten while the thread exists) and catches up again when it
   connects, on its stream's confirmation and after every page render,
   through the same coalescing and 5-second spacing as every other trigger;
-  only an applied answer clears it. An empty
+  only the answer of the newest catch-up clears it (they are numbered on
+  the element, `data-chats-catch-up`), so an older answer that applies
+  after a newer one failed leaves the thread marked. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also

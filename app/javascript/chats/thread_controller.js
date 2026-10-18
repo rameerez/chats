@@ -573,6 +573,18 @@ export default class extends Controller {
     }
   }
 
+  // Every catch-up is numbered on the element (data-chats-catch-up), so the
+  // count survives the dock carrying the thread from page to page.
+  startCatchUp() {
+    const attempt = this.latestCatchUp + 1
+    this.element.dataset.chatsCatchUp = String(attempt)
+    return attempt
+  }
+
+  get latestCatchUp() {
+    return Number(this.element.dataset.chatsCatchUp || 0)
+  }
+
   // An answer carries the render it was asked from (`render`): one for an
   // earlier render of this conversation (the page or the window rendered it
   // again while the answer was on its way) would move the new render's
@@ -620,6 +632,7 @@ export default class extends Controller {
     // applied it) leaves the mark, and chats/recovery asks again on connect,
     // on the stream's confirmation and after every page render.
     this.stale = true
+    const attempt = this.startCatchUp()
     const params = new URLSearchParams()
     if (this.legacyCursor && !this.messageTargets.some((message) => message.dataset.createdAtUs)) {
       params.set("since", this.legacyCursor)
@@ -658,7 +671,10 @@ export default class extends Controller {
     // if the history was re-rendered.
     return renderStreamFrom(`${this.refreshUrlValue}?${params}`, { when: current, key: this.element }).then((rendered) => {
       if (!rendered) return
-      this.stale = false
+      // Only the newest catch-up's answer says the thread is up to date: an
+      // older one that applies after a newer one was asked (and maybe
+      // failed) still renders what it brought, and leaves the mark.
+      if (attempt === this.latestCatchUp) this.stale = false
       if (!last || last.isConnected) return
 
       this.element.dataset.chatsRender = newRender() // the re-rendered history is a new render
