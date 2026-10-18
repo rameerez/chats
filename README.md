@@ -157,7 +157,7 @@ All three are inert by default (the label falls back to the record's `to_s`, not
 - **Bubbles are broadcast viewer-agnostic** — one render shared by every subscriber. A tiny Stimulus controller aligns own-vs-other client-side by comparing sender keys. This is what makes single-render broadcasts possible at all.
 - **The inbox** receives Turbo 8 page *refreshes* (morphing, scroll-preserving) instead of surgically patched rows: inbox rows are intensely per-viewer (unread badges, bold states, ordering), so each client re-requests and gets a correct, personalized render. Refreshes are debounced and tagged so the tab that caused the change skips its own.
 - **Unread badges** get their own stream (`chats_unread_badge` helper) so any page can host a live badge without inheriting inbox refreshes.
-- **The messaging dock** has one more per-messager stream (`[messager, :chats_dock]`): the same badge moment, whose replaced badge also names the conversation that changed and whether its window should pop open. The dock reacts to that one element; no polling, no channel of its own.
+- **The messaging dock** has one more per-messager stream (`[messager, :chats_dock]`): its badges, and a signal naming the conversation that changed and whether its window may pop open. The signal only names a conversation the participant can see (blocks and `inbox_scope` applied). No polling, no channel of its own.
 - **Typing indicators** are a Turbo Stream *custom action* — ephemeral, nothing persisted, no Action Cable channel class, no connection identification requirements.
 - **Cable down?** Everything still works request/response. Real-time is an enhancement, not a requirement.
 
@@ -547,52 +547,65 @@ LinkedIn and Steam don't send you to another page to answer a message: chats liv
 
 ![The messaging dock](docs/screenshots/dock-desktop.png)
 
-*Two conversations open in floating windows (one with an action button), and the panel with the recent conversations.*
+*Two conversations in floating windows (one with an action button) and the panel of recent conversations. The rows open in a window carry the accent bar.*
 
-- **The bar** sits in the corner: your avatar, "Messages" and the live unread badge.
-- **The panel** opens from it: a search field (when `config.search` is on), your most recent conversations exactly as the inbox renders them (stacks, verified badges, previews, unread counts) and a "See all messages" link to the full inbox. It is a `<details>`, so it opens without JavaScript, and every row is a real link to its thread.
-- **A window** opens when you click a row: the same thread the full page shows (live messages, read receipts, typing, the long-press menu, attachments, action buttons, your `composer_actions`, the locked composer) under a compact header with ↗ (open the full page), – (minimize; clicking the header does it too) and × (close). The newest window sits next to the panel. Opening one more than fit closes the oldest.
-- **Live**: when a message arrives, the dock's badge and list update, and the conversation's window **pops open**. Never for your own messages, never for a conversation you muted, never over a window you're using: when the dock is full, a new conversation only takes the place of a minimized window. A minimized window that receives a message gets a highlighted header instead.
-- **Reading** happens when a window is on screen. A minimized window doesn't mark anything as read until you expand it.
-- **It stays put**: the dock is `data-turbo-permanent`, so Turbo Drive carries its open windows, drafts and scroll positions from page to page. Which windows are open, and which are minimized, is also kept in `localStorage` (one key per messager), so a full reload brings them back. If the browser refuses storage, the dock just doesn't remember.
+- **The bar** sits flush with the bottom-right corner: your avatar, "Messages" and the live unread badge (the same number as `chats_unread_badge`).
+- **The panel** opens from it: the inbox's search, your ten most recent conversations exactly as the inbox renders them (stacks, verified badges, a bell-slash on muted ones, previews, unread counts) and "See all messages". It is a `<details>`: it opens without JavaScript, and every row, the search and the link are real links and forms.
+- **A window** is the same thread the full page shows (live messages, read receipts, typing, the long-press menu, attachments, action buttons, your `composer_actions`, the locked composer) under a compact header: the name (click it to minimize, as on LinkedIn), the `conversation_header_actions` slot in a ⋯ menu, ⤢ for the full page, – and ×. As many windows open as fit beside the panel, up to three: two at 1280px, one at 768px. Opening one more closes the least recently used window that doesn't have the focus, and keeps whatever was typed in it.
+- **Live**: a new message updates the badge and the list, and opens its conversation's window without taking the focus. That never happens for your own messages, for a conversation you muted, on a phone, for one you closed in the last five minutes, or by closing a window you're using. The window waits with the accent header and its count, and "New message from …" is announced politely. Edits, deletes and your own sends from another tab keep the list in order.
+- **Reading** waits for you. A minimized window never marks anything read, and a window that popped open marks messages read once you focus it, press in it or scroll it. One you opened yourself reads right away.
+- **It stays put**: the dock is `data-turbo-permanent`, so Turbo Drive carries its windows, drafts and scroll positions from page to page. Its id names the viewer, so a visit that lands on another account's page never inherits it. Open windows, minimized ones, recently closed ones, the panel and unsent drafts are kept in `localStorage` under keys that name the viewer (`chats:dock:v1:<key>`, `chats:draft:<key>:<id>`), so a reload brings them back. A browser that refuses storage only means the dock forgets.
+- **Keyboard**: Escape unwinds from the inside out (the long-press popup, an edit, the ⋯ menu, then the window minimizes, then the panel closes). Focus rings are inset; the history scrolls with the arrow keys.
 
-On a phone (below `--chats-dock-breakpoint`, 640px) the bar becomes a round button with the badge, the panel a full-screen sheet, and a conversation **one full-screen window** with ‹ to go back to the list. The composer stays above the keyboard. Messages don't pop windows open on a phone: the badge on the button tells you.
+On a phone (under 700px wide or 500px tall) the bar becomes a round button with the badge, the panel a full-screen sheet, and a conversation **one full-screen window**, with ← back to the list. The sheet holds the focus while it's open, the page behind it doesn't scroll, and the composer sits on the keyboard. This layout is one media query, so it applies before JavaScript runs and without it.
 
 <img src="docs/screenshots/dock-phone-button.png" alt="A phone: the dock is a round button with an unread badge in the corner" width="240"> <img src="docs/screenshots/dock-phone-panel.png" alt="A phone: the dock's panel fills the screen with the recent conversations" width="240"> <img src="docs/screenshots/dock-phone-window.png" alt="A phone: one conversation fills the screen, with the composer at the bottom" width="240">
 
-**Open a window from your own pages.** `dock: true` on the Message button opens the conversation in the dock instead of navigating to it:
+**Open a window from your own pages.** `dock: true` on the Message button opens the conversation in the dock instead of navigating to it (a conversation already open in a window is focused, with its draft intact):
 
 ```erb
 <%= chat_button_to @player, dock: true %>
 ```
 
-It needs `chats_dock` on the same page: without the dock, the button's response has nowhere to go and nothing happens.
+It needs `chats_dock` on the same page: without the dock, the button's response has nowhere to go and nothing happens. Any other link can do the same, or open the panel, with two data helpers. Both stay real links when the dock isn't there:
+
+```erb
+<%= link_to "Chat", chats.conversation_path(conversation), data: chats_dock_opener(conversation) %>
+<%= link_to "Messages", chats.conversations_path, data: chats_dock_toggle %>
+```
 
 **Options:**
 
 ```erb
-<%= chats_dock windows: 2, recent: 8 %>   <%# windows open at once (3), conversations in the panel (10) %>
+<%= chats_dock windows: 2, recent: 8 %>   <%# at most this many windows (3), conversations in the panel (10) %>
+<%= chats_dock launcher: false %>         <%# no round button on phones: your nav opens the sheet (chats_dock_toggle) %>
 <%= chats_dock everywhere: true %>        <%# also on the engine's own pages (see below) %>
 ```
 
-**Not on your messaging pages.** `chats_dock` renders nothing on the engine's own pages (the inbox and the thread already are the messaging UI), and a page that renders a conversation never gets a window for it too: the live updates find a thread by its DOM ids, which must exist once. If you have messaging pages of your own, don't render the dock there. `everywhere: true` renders it on the engine's pages as well.
+**Not on your messaging pages.** `chats_dock` renders nothing on the engine's own pages (the inbox and the thread already are the messaging UI), and the dock never opens a window for a conversation the page itself shows: the live updates find a thread by its DOM ids, which must exist once. Because the element survives Turbo visits, the server can't remove it from the next page, so the dock also hides itself on any page carrying `data-chats-dock-hide`. The engine's inbox and thread carry it; add it to your own messaging pages. `everywhere: true` renders the dock on the engine's pages too and ignores the attribute.
 
-**Theme it** like the rest of chats:
+**Theme it** like the rest of chats. The variables are declared on `.chats-dock`, so re-pointing `--chats-bg` or `--chats-accent` there reaches the dock too:
 
 ```css
-:root {
-  --chats-dock-z: 50;               /* above your page, below your modals */
-  --chats-dock-width: 18rem;        /* the panel */
-  --chats-dock-panel-height: 32rem;
-  --chats-window-width: 20rem;
-  --chats-window-height: 26.25rem;
-  --chats-dock-bar-height: 3.25rem; /* the bar and every window header */
-  --chats-dock-offset: 1rem;        /* distance from the right edge */
-  --chats-dock-breakpoint: 640px;   /* below it, the phone layout */
+.chats-dock {
+  --chats-dock-z: 40;                 /* above your page, below your modals */
+  --chats-dock-offset: 0px;           /* bottom clearance: a cookie banner, a tab bar */
+  --chats-dock-inset: 16px;           /* from the right edge */
+  --chats-dock-gap: 8px;
+  --chats-dock-bar-height: 48px;      /* the bar and every window header */
+  --chats-dock-panel-width: 288px;
+  --chats-dock-panel-height: 560px;
+  --chats-dock-window-width: 336px;
+  --chats-dock-window-height: 480px;
+  --chats-dock-radius: 12px;
+  --chats-dock-hover: #f9fafb;        /* row hover: muted text stays at 4.63:1 */
+  --chats-dock-unread-bg: var(--chats-accent);   /* a window waiting to be read */
+  --chats-dock-unread-text: var(--chats-accent-contrast);
+  --chats-dock-title-font: inherit;
 }
 ```
 
-The `dock_panel_footer` [slot](#-view-slots) puts your own link next to "See all messages". `rails generate chats:views` ejects the dock's partials (`chats/dock/`) along with everything else. Escape closes the window you're typing in, or the panel; all labels are localized under `chats.dock.*`.
+The `dock_panel_footer` [slot](#-view-slots) puts your own link next to "See all messages". `rails generate chats:views` ejects the dock's partials (`chats/dock/`) along with everything else. All labels are localized under `chats.dock.*`.
 
 ## 🔗 Profile links
 
@@ -797,7 +810,9 @@ All available in the bundled views **and** in your own templates:
 |---|---|
 | `chat_button_to(other, about:, label:, dock:, **html)` | a "Message" button, only when the viewer may message them; `dock: true` opens a dock window instead of navigating |
 | `chats_unread_badge(messager = viewer)` | the live unread badge with its own stream |
-| `chats_dock(windows: 3, recent: 10, everywhere: false)` | the [messaging dock](#-messaging-dock): bar, panel and floating windows |
+| `chats_dock(windows: 3, recent: 10, launcher: true, everywhere: false)` | the [messaging dock](#-messaging-dock): bar, panel and floating windows |
+| `chats_dock_opener(conversation)` / `chats_dock_toggle` | data for your own links: open that conversation's dock window, or open the dock's panel |
+| `chats_muted?(conversation, viewer)` | whether the viewer muted it (read from the preloaded seats) |
 | `chats_messager_name(messager, css_class:)` | the name, linked through `messager_url`, badged when verified |
 | `chats_messager_avatar(messager)` / `chats_conversation_avatar(conversation, viewer)` | avatar (URL, attachment, variant or initials) |
 | `chats_verified_badge(messager)` | the official-account mark, or nil |
@@ -834,7 +849,7 @@ rails generate chats:upgrade   # 0.2.0: message authorship columns · 0.4.0: the
 rails db:migrate
 ```
 
-0.5.0 needs no migration: the messaging dock is opt-in (`chats_dock`). Two things change on their own: a conversation nobody has written in is no longer listed (it used to show as a "No messages yet" row), and the thread body moved into `chats/conversations/_thread.html.erb`; read the 0.5.0 [CHANGELOG](CHANGELOG.md) entry if you ejected `show.html.erb`. 0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
+0.5.0 needs no migration: the messaging dock is opt-in (`chats_dock`). A few things change on their own: a conversation nobody has written in is no longer listed (it used to show as a "No messages yet" row), a thread the host's policy no longer allows shows the notice in the composer's place, a Turbo hover prefetch no longer marks a thread read, and the thread body moved into `chats/conversations/_thread.html.erb`. Read the 0.5.0 [CHANGELOG](CHANGELOG.md) entry if you ejected `show.html.erb` or the unread badge. 0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
 
 ## Database support
 
