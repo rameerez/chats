@@ -4,12 +4,15 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.1] - 2026-10-18
 
-Real conversations told from system-only threads, and a page that missed
-a broadcast is never left stale (fixes
-[#1](https://github.com/rameerez/chats/issues/1)). **No migration, nothing
-to configure, no polling.**
+A page that missed a broadcast is never left stale: every live surface
+catches up on its own, without polling (fixes
+[#1](https://github.com/rameerez/chats/issues/1)). Also: the dock's unread
+count in every language's plural forms, one extension point for a
+conversation that must open although the inbox hides it
+(`conversation_lookup_scopes`), and real conversations told from
+system-only threads. **No migration, nothing to configure.**
 
 ### Added
 - **Real conversations vs system-only threads.** `with_messages` asks whether
