@@ -271,8 +271,10 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
   end
 
   test "an edit missed, then one live: the missed one comes" do
-    shown = @bob.message!(@conversation, "shown")
-    other = @bob.message!(@conversation, "other")
+    # Written before the edits: created at the real "now", they would
+    # postdate the 10:15 edit on any day after the test was written.
+    shown = travel_to(Time.zone.parse("2026-10-18 10:00")) { @bob.message!(@conversation, "shown") }
+    other = travel_to(Time.zone.parse("2026-10-18 10:01")) { @bob.message!(@conversation, "other") }
     rendered = cursor_after(other)
     travel_to(Time.zone.parse("2026-10-18 10:15")) { shown.edit!("missed edit at 10:15") }
     travel_to(Time.zone.parse("2026-10-18 10:20")) { other.edit!("live edit at 10:20") }
