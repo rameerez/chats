@@ -4,6 +4,30 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Real conversations vs system-only threads.** `with_messages` asks whether
+  a conversation holds anything at all, system lines and tombstones
+  included; ops walls, moderation lists and analytics ask whether a messager
+  wrote something there that still stands. Four additive reads answer that:
+  `Chats::Message.human` (kind `text`, not deleted: written by a messager,
+  person or not, as opposed to posted by the app, so a bot's or a headless
+  desk's text message counts and a photo with no caption counts too), `Chats::Conversation.with_human_messages` and
+  `.without_human_messages` (one correlated `EXISTS` / `NOT EXISTS` built
+  from `Message.human`, so they compose with `alice.chats`, `inbox_for`,
+  `about`, `unread_by` and `with_messages` and never multiply rows),
+  `Conversation#last_human_message` (a query, not the `last_message`
+  pointer), and its batch twin `Chats::Message.last_human_in(conversations)`:
+  the newest human message of each conversation in ONE query, for a loaded
+  page, ids, a single record, or an unloaded relation, which is read as a
+  subquery and never loaded first. It returns a relation, so a `.select` can
+  narrow the columns. Viewer-facing lists start from `alice.chats`, which
+  applies blocks and `config.inbox_scope`; the bare `Chats::Conversation`
+  scopes see every conversation and belong behind staff authorization.
+  Nothing changes by default: system messages still bump `messages_count`
+  and `last_message`, and the inbox still lists system-only threads.
+
 ## [0.5.0] - 2026-10-18
 
 The messaging dock. LinkedIn and Steam keep your conversations in small
