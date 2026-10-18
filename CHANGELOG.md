@@ -104,7 +104,10 @@ to configure, no polling.**
   every write that commits before it runs (a short-lived marker in
   `Rails.cache`, removed by the job as it starts, before it broadcasts), so
   a burst is one job per recipient. A lost marker costs an extra job, never
-  a missed refresh, and the marker expires after two seconds. Since another
+  a missed refresh, and the marker expires after two seconds. Only a
+  marker that is really there counts as "queued": a store that can't hold
+  it (RedisCacheStore answers nil when a write fails; any store may raise)
+  means the write queues its own refresh. Since another
   write may count on a refresh whose enqueue is still in flight, a failed
   enqueue is retried once, then the refresh is broadcast on the spot. Every
   refusal goes to `Rails.error` (raised, `false`, or a job the adapter
@@ -139,7 +142,14 @@ to configure, no polling.**
   or a window reload in between can't hand the old streams the new render.
   A history re-render is followed by one more catch-up from its own
   cursors once Turbo has actually applied it, however late that is, so a
-  message written while that page was being built isn't lost. An empty
+  message written while that page was being built isn't lost. Every
+  catch-up is bounded: a request with no answer after 15 seconds is
+  aborted (a fetch can hang across a network interruption, and would
+  otherwise stand in for every later one), a thread has at most one answer
+  waiting for Turbo (a newer one, or the thread going away, drops the
+  older one's leftover streams and stops watching for them), and only the
+  answer's own streams are guarded (`data-chats-answer`), never a host's
+  stream rendered at the same moment. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also
