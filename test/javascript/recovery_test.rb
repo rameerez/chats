@@ -340,26 +340,71 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
-  test "renderStreamFrom resolves only once Turbo has applied what it rendered" do
+  test "renderStreamFrom resolves only once Turbo has applied what it rendered, however long that takes" do
     # Turbo adds each <turbo-stream> to <html>, performs it a repaint later,
-    # and removes it.
+    # and removes it. However late that is, the promise waits for it: a
+    # caller that reads the page afterwards reads what the answer did.
     run_recovery(<<~JAVASCRIPT)
       (async () => {
         const streams = []
         document.documentElement.querySelectorAll = (selector) =>
           (selector === ":scope > turbo-stream" ? streams.filter((stream) => stream.isConnected) : [])
-        window.Turbo.renderStreamMessage = () => streams.push({ isConnected: true })
+        window.Turbo.renderStreamMessage = () => {
+          const stream = { isConnected: true }
+          streams.push(stream)
+          const event = page.documentEvents.dispatch("turbo:before-stream-render",
+                                                     { target: stream, detail: { render: async () => {} } })
+          stream.apply = () => event.detail.render(stream)
+        }
 
         let resolved = null
         renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => { resolved = rendered })
         page.respond(page.requests[0])
         await page.settle()
-        page.advance(16); await page.settle()
-        assert.strictEqual(resolved, null, "not while the stream waits to be performed")
+        page.advance(5_000); await page.settle()
+        assert.strictEqual(resolved, null, "not while the stream waits to be performed, even past 2s")
 
-        streams[0].isConnected = false              // performed, and removed
-        page.advance(16); await page.settle()
+        renderStreamFrom("/messages/7/refresh?after=0")
+        assert.strictEqual(page.requests.length, 2, "past 2s, an unapplied answer no longer stands in for a new request")
+
+        await streams[0].apply()                    // performed at last…
+        streams[0].isConnected = false              // …and removed
+        page.mutate(document.documentElement)
+        await page.settle()
         assert.strictEqual(resolved, true)
+      })().catch((error) => { console.error(error); process.exit(1) })
+    JAVASCRIPT
+  end
+
+  test "renderStreamFrom checks again as Turbo applies each stream, and drops them if no longer wanted" do
+    run_recovery(<<~JAVASCRIPT)
+      (async () => {
+        const performed = []
+        const streams = []
+        document.documentElement.querySelectorAll = (selector) =>
+          (selector === ":scope > turbo-stream" ? streams.filter((stream) => stream.isConnected) : [])
+        // What Turbo does: announce the stream as it joins the page, and later
+        // call whatever render the listeners left in the event.
+        window.Turbo.renderStreamMessage = () => {
+          const stream = { isConnected: true }
+          streams.push(stream)
+          const event = page.documentEvents.dispatch("turbo:before-stream-render",
+                                                     { target: stream, detail: { render: async () => performed.push(stream) } })
+          stream.apply = async () => { await event.detail.render(stream); stream.isConnected = false; page.mutate(document.documentElement) }
+        }
+
+        let wanted = true
+        let resolved = null
+        renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
+        page.respond(page.requests[0])
+        await page.settle()
+        assert.strictEqual(page.documentEvents.count("turbo:before-stream-render"), 0, "the guard is only there while rendering")
+
+        wanted = false                              // the thread rendered again before Turbo got to the stream
+        await streams[0].apply()
+        await page.settle()
+        assert.deepStrictEqual(performed, [], "the old stream did nothing")
+        assert.strictEqual(resolved, false)
       })().catch((error) => { console.error(error); process.exit(1) })
     JAVASCRIPT
   end

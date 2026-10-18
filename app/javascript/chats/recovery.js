@@ -67,53 +67,88 @@ export function recoverMissedBroadcasts(element, catchUp, { sources = SOURCE } =
   return () => recovery.stop()
 }
 
-// GET +url+ as a Turbo Stream and render it, unless `when` says by then it
-// is no longer wanted (its page re-rendered meanwhile). Resolves once Turbo
-// has APPLIED it — Turbo performs each <turbo-stream> a repaint after it is
-// added — to true if it was rendered. The same request made twice at once
-// is made once. Anything but a Turbo Stream (a sign-in page after the
-// session expired, an error page) is ignored: the next catch-up tries again.
+// GET +url+ as a Turbo Stream and render it, as long as `when` says it is
+// still wanted (its page wasn't rendered again meanwhile). Asked when the
+// answer arrives, and again by every stream of it at the moment Turbo is
+// about to apply it, a repaint later: a page visit or a frame reload in
+// that gap gives the old streams a new page to land on, and they are
+// dropped instead. Resolves once Turbo has applied all of it, to true, or
+// to false when nothing was applied — never before: a caller that reads
+// the page afterwards reads what the answer did. The same request made
+// twice at once is made once; after APPLY_WITHIN_MS a request whose answer
+// Turbo hasn't applied yet no longer stands in for a new one. Anything but
+// a Turbo Stream (a sign-in page after the session expired, an error page)
+// is ignored: the next catch-up tries again.
 const requests = new Map()
 const APPLY_WITHIN_MS = 2_000
 
 export function renderStreamFrom(url, { when = () => true } = {}) {
-  if (!requests.has(url)) {
-    const request = fetch(url, { headers: { Accept: "text/vnd.turbo-stream.html" }, credentials: "same-origin" })
-      .then((response) => (isTurboStream(response) ? response.text() : ""))
-      .then((html) => (html && when() ? renderAndApply(html) : false))
-      .catch(() => false)
-      .finally(() => requests.delete(url))
-    requests.set(url, request)
-  }
-  return requests.get(url)
+  if (requests.has(url)) return requests.get(url)
+
+  const release = () => { if (requests.get(url) === request) requests.delete(url) }
+  const request = fetch(url, { headers: { Accept: "text/vnd.turbo-stream.html" }, credentials: "same-origin" })
+    .then((response) => (isTurboStream(response) ? response.text() : ""))
+    .then((html) => {
+      if (!html || !when()) return false
+
+      setTimeout(release, APPLY_WITHIN_MS)
+      return renderWhile(html, when)
+    })
+    .catch(() => false)
+    .finally(release)
+  requests.set(url, request)
+  return request
 }
 
-async function renderAndApply(html) {
-  if (!window.Turbo?.renderStreamMessage) return false
+// Turbo announces each stream it is given (turbo:before-stream-render,
+// synchronously, as the stream joins the page) and lets the listener wrap
+// how it renders: ours renders it only if `when` still holds when Turbo
+// gets to it.
+function renderWhile(html, when) {
+  if (!window.Turbo?.renderStreamMessage) return Promise.resolve(false)
+
+  let applied = false
+  const guard = (event) => {
+    const render = event.detail?.render
+    if (typeof render !== "function") return
+
+    event.detail.render = async (stream) => {
+      if (!when()) return
+      applied = true
+      await render(stream)
+    }
+  }
 
   const waiting = new Set(pendingStreams())
-  window.Turbo.renderStreamMessage(html)
+  document.addEventListener("turbo:before-stream-render", guard)
+  try {
+    window.Turbo.renderStreamMessage(html)
+  } finally {
+    document.removeEventListener("turbo:before-stream-render", guard)
+  }
   const ours = pendingStreams().filter((stream) => !waiting.has(stream))
 
-  // A stream element removes itself once performed.
-  const giveUpAt = Date.now() + APPLY_WITHIN_MS
-  while (ours.some((stream) => stream.isConnected) && Date.now() < giveUpAt) await nextRepaint()
-  return true
+  return removed(ours).then(() => applied || !ours.length)
+}
+
+// Each stream removes itself from <html> once Turbo has performed it (or
+// skipped it).
+function removed(streams) {
+  return new Promise((resolve) => {
+    const gone = () => streams.every((stream) => !stream.isConnected)
+    if (gone()) return resolve()
+
+    const observer = new MutationObserver(() => {
+      if (!gone()) return
+      observer.disconnect()
+      resolve()
+    })
+    observer.observe(document.documentElement, { childList: true })
+  })
 }
 
 function pendingStreams() {
   return Array.from(document.documentElement.querySelectorAll?.(":scope > turbo-stream") || [])
-}
-
-// Turbo's own: a frame when the page is visible, a task when it isn't.
-function nextRepaint() {
-  return new Promise((resolve) => {
-    if (document.visibilityState === "visible" && typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => resolve())
-    } else {
-      setTimeout(resolve, 0)
-    }
-  })
 }
 
 function isTurboStream(response) {

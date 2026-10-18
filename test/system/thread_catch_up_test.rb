@@ -105,6 +105,71 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
     assert_equal fresh, thread_state(window)
   end
 
+  # --- Turbo applying the answer late ---------------------------------------------
+  #
+  # Turbo performs a stream a repaint after it joins the page. Holding the
+  # page's animation frames holds exactly that, for as long as the test
+  # likes, and lets it run other frames (a visit's render) first.
+
+  test "a re-render Turbo applies only after 2s still gets its follow-up catch-up" do
+    sign_in
+    visit "/messages/#{@conversation.id}"
+    assert_selector ".chats-thread [data-chats--thread-target='message']", text: "hola"
+    hold_catch_up_answers
+
+    (Chats.config.messages_per_page + 1).times { |index| @bob.message!(@conversation, "missed #{index}") }
+    catch_up
+    wait_until_answered(1)
+    @bob.message!(@conversation, "sent after the page was built")
+    hold_frames
+    release_answers
+    wait_for_pending_streams
+    sleep 2.5 # past renderStreamFrom's 2s: it must not claim the answer applied
+    release_frames
+
+    assert_selector ".chats-thread [data-chats--thread-target='message']", text: "sent after the page was built"
+    assert_equal 2, refreshes.size
+  end
+
+  test "an answer whose streams are still waiting when the page renders the thread again changes nothing" do
+    sign_in
+    visit "/messages/#{@conversation.id}"
+    assert_selector ".chats-thread [data-chats--thread-target='message']", text: "hola"
+    @bob.message!(@conversation, "missed") # the old answer appends it; the new render has it already
+    hold_catch_up_answers
+
+    catch_up
+    wait_until_answered(1)
+    hold_frames
+    release_answers
+    waiting = wait_for_pending_streams # inserted while the render was still current…
+    page.execute_script("Turbo.visit(location.href, { action: 'replace' })") # …then the thread renders again
+    run_frames_until_rendered_again(after: waiting)
+
+    assert_no_change_from_old_streams(waiting)
+  end
+
+  test "an answer whose streams are still waiting when a dock window loads its thread again changes nothing" do
+    sign_in
+    visit "/"
+    find(".chats-dock__bar").click
+    find("#chats_dock_list a", text: "Bob").click
+    window = "turbo-frame.chats-window[data-conversation-id='#{@conversation.id}']"
+    assert_selector "#{window} [data-chats--thread-target='message']", text: "hola"
+    @bob.message!(@conversation, "missed")
+    hold_catch_up_answers
+
+    catch_up(window)
+    wait_until_answered(1)
+    hold_frames
+    release_answers
+    waiting = wait_for_pending_streams
+    page.execute_script("document.querySelector(#{window.to_json}).reload()")
+    run_frames_until_rendered_again(within: window, after: waiting)
+
+    assert_no_change_from_old_streams(waiting, within: window)
+  end
+
   # Starting a browser once tells whether this machine can run these.
   def self.chrome?
     return @chrome if defined?(@chrome)
@@ -190,6 +255,81 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
                  bubbles: Array.from(thread.querySelectorAll("[data-chats--thread-target='message']")).map((m) => m.id) }
       })()
     JS
+  end
+
+  # Holds every animation frame the page asks for, to run when the test says.
+  def hold_frames
+    page.execute_script(<<~JS)
+      window.__frames = []
+      window.__realFrame = window.requestAnimationFrame
+      window.requestAnimationFrame = (callback) => window.__frames.push(callback)
+      window.__runFrames = (from, to) => {
+        for (let index = from; index < Math.min(to, window.__frames.length); index++) {
+          const callback = window.__frames[index]
+          window.__frames[index] = null
+          callback?.(performance.now())
+        }
+      }
+    JS
+  end
+
+  def release_frames
+    page.execute_script(<<~JS)
+      window.requestAnimationFrame = window.__realFrame
+      window.__runFrames(0, window.__frames.length)
+    JS
+  end
+
+  # The answer's streams, in <html>, waiting for their frame: how many
+  # frames were queued by then (theirs among them).
+  def wait_for_pending_streams
+    Timeout.timeout(Capybara.default_max_wait_time) do
+      sleep 0.02 until page.evaluate_script("document.querySelectorAll('html > turbo-stream').length").positive?
+    end
+    page.evaluate_script("window.__frames.length")
+  end
+
+  # Runs the frames queued after the answer's (the new render's) until the
+  # thread has rendered again, and its new controller has booted.
+  def run_frames_until_rendered_again(after:, within: "body")
+    Timeout.timeout(Capybara.default_max_wait_time) do
+      loop do
+        page.execute_script("window.__runFrames(#{after}, Infinity)")
+        break if thread_state(within)["render"] != first_render
+
+        sleep 0.02
+      end
+      sleep 0.2
+      page.execute_script("window.__runFrames(#{after}, Infinity)")
+    end
+  end
+
+  # Runs the answer's frames, watching the new render's history: not one
+  # node of it may change, and the old streams must be gone.
+  def assert_no_change_from_old_streams(frames, within: "body")
+    fresh = thread_state(within)
+    page.execute_script(<<~JS, within)
+      window.__changes = 0
+      window.__changeLog = []
+      // The history: what the answer's streams address (messages, read state).
+      // The dock may resync a window's header controls on its own meanwhile.
+      const thread = document.querySelector(arguments[0]).querySelector(".chats-thread .chats-thread__scroll")
+      new MutationObserver((records) => {
+        window.__changes += records.length
+        records.forEach((r) => window.__changeLog.push([r.type, r.target.id || r.target.className, r.attributeName, [...r.addedNodes].map((n) => n.id || n.nodeName).join(" "), [...r.removedNodes].map((n) => n.id || n.nodeName).join(" ")]))
+      })
+        .observe(thread, { childList: true, subtree: true, attributes: true, characterData: true })
+    JS
+    page.execute_script("window.__runFrames(0, #{frames})")
+    Timeout.timeout(Capybara.default_max_wait_time) do
+      sleep 0.02 until page.evaluate_script("document.querySelectorAll('html > turbo-stream').length").zero?
+    end
+    changes = page.evaluate_script("window.__changes")
+    release_frames
+
+    log = page.evaluate_script("window.__changeLog")
+    assert_equal 0, changes, "the old answer's streams touched the new render: #{log.inspect}"
+    assert_equal fresh, thread_state(within), "its bubbles and cursors are its own"
   end
 
   def count_rendered_streams

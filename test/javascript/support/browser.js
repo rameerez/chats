@@ -106,6 +106,9 @@ function install() {
 
     pendingTimers: () => timers.length,
 
+    // Tells the MutationObservers watching +target+ that it changed.
+    mutate: (target) => mutated(target),
+
     hide() {
       document.visibilityState = "hidden"
       documentEvents.dispatch("visibilitychange")
