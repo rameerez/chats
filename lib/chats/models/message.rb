@@ -81,10 +81,12 @@ module Chats
     scope :oldest_first, -> { order(created_at: :asc, id: :asc) }
     scope :visible, -> { where(deleted_at: nil) }
 
-    # What people said: text messages that still stand. A system line
-    # ("Alice joined", "Your ride was cancelled") is the app talking, and a
-    # tombstone no longer says anything. A photo with no caption is still a
-    # text message and still counts. The inbox does NOT read through this,
+    # What messagers wrote: text messages that still stand. "Human" is the
+    # gem's word for a text message, written by a messager, person or not
+    # (a bot's or a headless desk's message counts), as opposed to a system
+    # line ("Alice joined", "Your ride was cancelled"), which is the app
+    # talking. A tombstone no longer says anything. A photo with no caption
+    # is still a text message and still counts. The inbox does NOT read through this,
     # on purpose — see README "Real conversations vs system-only threads".
     scope :human, -> { where(kind: "text").visible }
 
@@ -121,11 +123,15 @@ module Chats
 
     # The conversation ids +last_human_in+ ranks within: an Array for records
     # and ids (a loaded relation included, read from memory), a subquery for
-    # an unloaded relation. The subquery is a derived table because MySQL
-    # rejects LIMIT directly inside IN, and a page is usually limited; its
-    # ORDER BY is kept only when a LIMIT or OFFSET depends on it (PostgreSQL
-    # refuses `SELECT DISTINCT id … ORDER BY COALESCE(…)`, which the inbox's
-    # order would otherwise become).
+    # an unloaded relation, as a derived table because MySQL rejects LIMIT
+    # directly inside IN, and a page is usually limited.
+    #
+    # A LIMITed or OFFSET page is its own query, word for word (its select
+    # list, DISTINCT and ORDER BY decide WHICH rows it holds, and PostgreSQL
+    # refuses a DISTINCT whose ORDER BY left the select list), so it must
+    # expose an `id` column, as the default select list does. Any other
+    # relation is just a set of ids: narrowed to `id`, unordered (the inbox's
+    # ORDER BY COALESCE(…) next to DISTINCT id is another refusal).
     def self.conversation_ids_in(conversations) # :nodoc:
       unless conversations.is_a?(ActiveRecord::Relation)
         return Array(conversations).map { |c| c.is_a?(Chats::Conversation) ? c.id : c }
@@ -136,8 +142,8 @@ module Chats
       end
       return conversations.map(&:id) if conversations.loaded?
 
-      page = conversations.except(:includes, :preload, :eager_load).reselect(conversations.arel_table[:id])
-      page = page.reorder(nil) unless page.limit_value || page.offset_value
+      page = conversations.except(:includes, :preload, :eager_load)
+      page = page.reselect(page.arel_table[:id]).reorder(nil) unless page.limit_value || page.offset_value
       Chats::Conversation.unscoped.from(page, :conversation_page).select(Arel.sql("conversation_page.id"))
     end
 

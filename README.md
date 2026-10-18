@@ -119,7 +119,7 @@ Two deliberate design decisions worth knowing:
 A system message is a message: `post_system_message!` bumps `messages_count`, moves `last_message` and re-sorts the inbox like a human one, and a deleted message stays behind as a tombstone. That is on purpose: "Your ride was cancelled" matters to the passenger, so the inbox lists a thread only your app has spoken in. Two questions, two scopes:
 
 - **`with_messages`** asks *is there anything here?*: any message, system lines and tombstones included. Every list the gem renders reads through it, so a thread that was opened and never used is not listed.
-- **`with_human_messages`** asks *did a person say something here that still stands?*: at least one `text` message that isn't deleted (a photo with no caption counts). It is for ops walls, moderation lists and "conversations started this week" charts, which must not count a thread holding only "Alice joined".
+- **`with_human_messages`** asks *did a messager write something here that still stands?*: at least one `text` message that isn't deleted. "Human" is the gem's word for a `text` message: written by a messager, person or not, as opposed to posted by the app. So a bot's or a headless desk's message counts, and so does a photo with no caption. It is for ops walls, moderation lists and "conversations started this week" charts, which must not count a thread holding only "Alice joined".
 
 ```ruby
 # What a viewer sees: start from alice.chats, so blocks and config.inbox_scope apply
@@ -136,7 +136,7 @@ Chats::Message.last_human_in(page)                 # page: records, ids, or a re
               .index_by(&:conversation_id)         # { id => message }; no key means nobody wrote
 ```
 
-Both conversation scopes are a single correlated `EXISTS` built from `Chats::Message.human` (kind `text`, not deleted), so they compose with anything (`about`, `unread_by`, `with_messages`) and never multiply rows. Counting what people wrote per conversation is the plain `Chats::Message.human.where(conversation_id: ids).group(:conversation_id).count`. None of this changes the inbox, unread counts, `messages_count` or `last_message`.
+Both conversation scopes are a single correlated `EXISTS` built from `Chats::Message.human` (kind `text`, not deleted), so they compose with anything (`about`, `unread_by`, `with_messages`) and never multiply rows. Counting what messagers wrote per conversation is the plain `Chats::Message.human.where(conversation_id: ids).group(:conversation_id).count`. None of this changes the inbox, unread counts, `messages_count` or `last_message`.
 
 ## 🧩 The macros
 
@@ -730,7 +730,7 @@ alice.message!(bob, "hi", about: ride)        # send (resolves the thread)
 alice.message!(conversation, "hi", files: []) # send into a conversation
 alice.chats                                   # every conversation she's in (what she may open), newest first
 alice.chats.with_messages                     # ...the ones with a message: what lists show
-alice.chats.with_human_messages               # ...the ones a PERSON wrote in (system lines and tombstones don't count)
+alice.chats.with_human_messages               # ...the ones a messager wrote in (system lines and tombstones don't count)
 alice.unread_chats_count                      # conversations with unread messages
 alice.message!(bob, "hi", author: lucia)      # written by lucia, sent from alice's seat
 alice.message!(bob, "Let's play!",            # with one button under it
@@ -780,7 +780,7 @@ Chats::Conversation.group!(alice, [bob, carol], title: "Trip")
 Chats::Conversation.direct .groups .about(ride) .recent_first
 Chats::Conversation.inbox_for(alice) .excluding_blocked_for(alice) .unread_by(alice)
 Chats::Conversation.with_messages                              # has at least one message, system messages and tombstones included (`last_message_id` set); every list reads through this
-Chats::Conversation.with_human_messages .without_human_messages # a person wrote / only system lines, tombstones or nothing
+Chats::Conversation.with_human_messages .without_human_messages # a messager wrote / only system lines, tombstones or nothing
 conversation.last_human_message                                # newest text, non-deleted message, or nil (a query)
 Chats::Conversation.unread_counts_for(alice, conversations)    # { id => count } in one query
 conversation.direct? / conversation.group?
@@ -794,7 +794,7 @@ message.attachments?
 message.sent_by?(alice)  message.sender_key
 Chats::Message.visible .oldest_first .recent_first .before_message(message)   # keyset pagination
 Chats::Message.created_since(time) .updated_since(time)                       # what the stale-thread catch-up reads
-Chats::Message.human                                                          # kind text, not deleted: what people said
+Chats::Message.human                                                          # kind text, not deleted: what messagers wrote
 Chats::Message.last_human_in(conversations)                                   # newest human message per conversation, one query
 
 # Participants — reading

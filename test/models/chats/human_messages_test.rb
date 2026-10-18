@@ -51,6 +51,16 @@ module Chats
       assert_equal({ @empty.id => photo }, Message.last_human_in([@empty]).index_by(&:conversation_id))
     end
 
+    test "human means written by a messager, person or not: a headless desk's message counts" do
+      desk = create_desk(name: "Soporte")
+      ticket = @alice.chat_with(desk, about: create_listing)
+      reply = desk.message!(ticket, "¿En qué podemos ayudarte?")
+
+      assert_includes Message.human, reply
+      assert_includes Conversation.with_human_messages, ticket
+      assert_equal reply, ticket.last_human_message
+    end
+
     test "human composes with the other message scopes" do
       later = @bob.message!(@talked, "¿a qué hora?")
 
@@ -233,6 +243,20 @@ module Chats
 
       assert_equal [expected], Message.last_human_in(page.reset).to_a
       assert_equal [expected], Message.last_human_in(page.offset(0)).to_a
+    end
+
+    test "a limited page is read exactly as written: its own select list, DISTINCT and ORDER BY" do
+      other = @carol.message!(@empty, "hola Bob")
+      @empty.update_columns(created_at: 1.day.ago)
+
+      # Valid on PostgreSQL only while the ORDER BY column stays in the
+      # DISTINCT select list; a page narrowed to `id` would be refused.
+      narrowed = Conversation.with_human_messages.select(:id, :created_at).distinct.order(:created_at).limit(1)
+      everything = Conversation.with_human_messages.distinct.order(:created_at).limit(1)
+
+      assert_equal [other], Message.last_human_in(narrowed).to_a
+      assert_equal [other], Message.last_human_in(everything).to_a
+      assert_equal [@hello], Message.last_human_in(everything.offset(1)).to_a
     end
 
     test "last_human_in takes the relations an inbox builds: includes, joins, distinct" do

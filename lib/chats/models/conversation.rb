@@ -78,7 +78,7 @@ module Chats
     # listed, like everywhere else).
     scope :with_messages, -> { where.not(last_message_id: nil) }
 
-    # Conversations a PERSON wrote in, and their complement. A narrower
+    # Conversations a messager wrote in, and their complement. A narrower
     # question than `with_messages`, which counts every message: a system
     # line is the app talking ("Your ride was cancelled", which the inbox
     # rightly lists), and a tombstone no longer says anything. These count
@@ -378,8 +378,8 @@ module Chats
       messages.create!(kind: "system", body: body, action: action)
     end
 
-    # The newest thing a person said here (see `.with_human_messages`), or
-    # nil when nobody did. Unlike +last_message+ it skips system lines and
+    # The newest thing a messager wrote here (see `.with_human_messages`), or
+    # nil when none did. Unlike +last_message+ it skips system lines and
     # tombstones, and it is a query, not the denormalized pointer: one per
     # call. For a list, batch it with Chats::Message.last_human_in(conversations).
     def last_human_message

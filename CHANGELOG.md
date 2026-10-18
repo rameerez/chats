@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Real conversations vs system-only threads.** `with_messages` asks whether
   a conversation holds anything at all, system lines and tombstones
-  included; ops walls, moderation lists and analytics ask whether a person
-  said something there that still stands. Four additive reads answer that:
-  `Chats::Message.human` (kind `text`, not deleted; a photo with no caption
-  counts), `Chats::Conversation.with_human_messages` and
+  included; ops walls, moderation lists and analytics ask whether a messager
+  wrote something there that still stands. Four additive reads answer that:
+  `Chats::Message.human` (kind `text`, not deleted: written by a messager,
+  person or not, as opposed to posted by the app, so a bot's or a headless
+  desk's text message counts and a photo with no caption counts too), `Chats::Conversation.with_human_messages` and
   `.without_human_messages` (one correlated `EXISTS` / `NOT EXISTS` built
   from `Message.human`, so they compose with `alice.chats`, `inbox_for`,
   `about`, `unread_by` and `with_messages` and never multiply rows),
