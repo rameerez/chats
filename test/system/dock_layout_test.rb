@@ -291,8 +291,13 @@ class DockLayoutTest < ActionDispatch::SystemTestCase
 
   def open_row(name)
     find("#chats_dock_list a", text: name).click
-    assert_selector ".chats-window .chats-window__name", text: name
-    assert_selector "#{window_selector(name)} .chats-composer__input"
+    # The window loads its thread in a frame: under a full suite's load that
+    # can take longer than Capybara's default two seconds (one CI lane in
+    # fourteen saw it), as open_dock_window already allows for.
+    using_wait_time(10) do
+      assert_selector ".chats-window .chats-window__name", text: name
+      assert_selector "#{window_selector(name)} .chats-composer__input"
+    end
   end
 
   def type_into(name, text)
