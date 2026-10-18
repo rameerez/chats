@@ -16,7 +16,7 @@ class RecoveryTest < ActiveSupport::TestCase
   def run_recovery(script)
     run_node(<<~JAVASCRIPT)
       const page = browser.install()
-      const { cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom } = loader.loadRecovery()
+      const { afterRendering, cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom } = loader.loadRecovery()
       function watch(sources, options) {
         const caught = { count: 0 }
         caught.stop = recoverMissedBroadcasts(page.element({ sources }), () => caught.count++, options)
@@ -433,6 +433,54 @@ class RecoveryTest < ActiveSupport::TestCase
       await turbo.applyStreams(); await page.settle()
       assert.strictEqual(resolved, true)
       assert.strictEqual(turbo.performed.length, 2)
+    JAVASCRIPT
+  end
+
+  test "an answer that arrives while a page render has its element off the page waits for the render to end" do
+    # A host's turbo:before-render may render asynchronously, so a permanent
+    # element can be away for many tasks.
+    run_streams(<<~JAVASCRIPT)
+      let wanted = true
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
+      page.documentEvents.dispatch("turbo:before-render")
+      wanted = false                                  // the dock is off the page…
+      answer(0)                                       // …when the answer arrives
+      page.advance(3_000); await page.settle()
+      assert.strictEqual(turbo.streams.length, 0, "nothing rendered yet")
+      assert.strictEqual(resolved, null, "and nothing decided")
+
+      wanted = true                                   // the render puts it back…
+      page.documentEvents.dispatch("turbo:render")    // …and ends
+      page.advance(0); await page.settle()
+      assert.strictEqual(turbo.pending().length, 2)
+      await turbo.applyStreams(); await page.settle()
+      assert.strictEqual(resolved, true)
+    JAVASCRIPT
+  end
+
+  test "streams waiting through a page render are decided once it ends, and a render that never ends is bounded" do
+    run_streams(<<~JAVASCRIPT)
+      let wanted = true
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
+      answer(0)
+      await page.settle()
+
+      page.documentEvents.dispatch("turbo:before-render")
+      wanted = false
+      page.mutate(document.documentElement)           // the body goes…
+      page.advance(5_000); await page.settle()
+      assert.strictEqual(turbo.pending().length, 2, "kept while the render runs")
+
+      page.advance(5_001); await page.settle()        // a render that never ended stops holding after 10s
+      assert.strictEqual(turbo.pending().length, 0, "then decided: the element is gone")
+      assert.strictEqual(resolved, false)
+
+      let after = false
+      afterRendering().then(() => { after = true })
+      page.advance(0); await page.settle()
+      assert.ok(after, "with no render running, a task later")
     JAVASCRIPT
   end
 

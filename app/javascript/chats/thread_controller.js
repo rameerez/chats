@@ -1,5 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
-import { cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
+import { afterRendering, cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
 
 // Stale-thread catch-up + DOM budget (both patterns from Basecamp's
 // Campfire, https://github.com/basecamp/once-campfire — its
@@ -150,12 +150,13 @@ export default class extends Controller {
     clearTimeout(this.readTimer)
     this.stopRecovery?.()
     // What this render asked for is not wanted any more — once it is really
-    // gone. A Turbo visit carries the dock from page to page by detaching it
-    // and attaching it again in the same task: a window's thread is off the
-    // page for an instant and keeps everything, its answer on the way
-    // included. Off the page by the next task is a thread that went away
-    // (another page, a window reloaded or closed).
-    setTimeout(() => { if (!this.element.isConnected) cancelStreamsFor(this.element) }, 0)
+    // gone. A Turbo visit carries the dock from page to page by taking it
+    // off the page and putting it back once the new body is in: a window's
+    // thread is away for the length of that render and keeps everything,
+    // its answer on the way included. Still off the page once the render is
+    // over is a thread that went away (another page, a window reloaded or
+    // closed).
+    afterRendering().then(() => { if (!this.element.isConnected) cancelStreamsFor(this.element) })
     this.element.removeEventListener("chats:prune", this.prune)
     this.element.removeEventListener("chats:caught-up", this.caughtUp)
     this.presenceObserver?.disconnect()

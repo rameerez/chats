@@ -94,6 +94,7 @@ const REQUEST_WITHIN_MS = 15_000
 const APPLY_WITHIN_MS = 2_000
 
 export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
+  watchPageRenders()
   if (requests.has(url)) return requests.get(url)
 
   const abort = new AbortController()
@@ -105,9 +106,9 @@ export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
     signal: abort.signal
   })
     .then((response) => (isTurboStream(response) ? response.text() : ""))
-    .then((html) => {
+    .then(async (html) => {
       clearTimeout(hung)
-      if (!html || !when()) return false
+      if (!html || !(await stillWanted(when))) return false
 
       setTimeout(release, APPLY_WITHIN_MS)
       return apply(html, when, key)
@@ -125,6 +126,61 @@ export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
 // never will be.
 export function cancelStreamsFor(key) {
   answers.get(key)?.cancel()
+}
+
+// --- Page renders ------------------------------------------------------------
+//
+// A Turbo visit carries a permanent element (the dock, its windows, their
+// threads) to the next page by taking it off the page and putting it back
+// once the new body is in. That is usually one task, but a host may render
+// asynchronously (a `turbo:before-render` listener that animates, or uses a
+// view transition), and the element is then off the page for as long as
+// that takes. So "off the page" means "gone" only once the page render is
+// over: between `turbo:before-render` and `turbo:render` (or `turbo:load`)
+// nothing is decided, and afterRendering() resolves a task after it ends.
+// (A render that never finishes holds nothing for longer than
+// RENDER_WITHIN_MS.)
+const RENDER_WITHIN_MS = 10_000
+let rendering = null
+let watchingRenders = false
+
+function watchPageRenders() {
+  if (watchingRenders) return
+  watchingRenders = true
+
+  document.addEventListener("turbo:before-render", () => {
+    if (rendering) return
+    let done
+    const render = { finished: new Promise((resolve) => { done = resolve }) }
+    render.finish = () => {
+      if (rendering !== render) return
+      rendering = null
+      setTimeout(done, 0)
+    }
+    rendering = render
+    setTimeout(render.finish, RENDER_WITHIN_MS)
+  })
+  const finish = () => rendering?.finish()
+  document.addEventListener("turbo:render", finish)
+  document.addEventListener("turbo:load", finish)
+}
+
+// Resolves once no page render is in progress, a task after the last one
+// (a render that starts within that task is waited for too).
+export async function afterRendering() {
+  watchPageRenders()
+  do {
+    await (rendering ? rendering.finished : new Promise((resolve) => setTimeout(resolve, 0)))
+  } while (rendering)
+}
+
+// Whether +when+ holds — or, if it doesn't while a page is rendering, once
+// the render is over.
+async function stillWanted(when) {
+  if (when()) return true
+  if (!rendering) return false
+  await afterRendering()
+  return when()
 }
 
 // Every stream of an answer carries its mark (data-chats-answer), so the
@@ -169,7 +225,7 @@ function apply(html, when, key) {
     const check = () => {
       if (answer.cancelled) return
       if (!streamsMarked(mark).length) return answer.settle(answer.applied || !waited)
-      setTimeout(() => { if (!answer.cancelled && !when()) answer.cancel() }, 0)
+      afterRendering().then(() => { if (!answer.cancelled && !when()) answer.cancel() })
     }
     answer.observer = new MutationObserver(check)
     answer.observer.observe(document.documentElement, { childList: true })
@@ -190,7 +246,7 @@ function guardStreams() {
     if (!answer || typeof render !== "function") return
 
     event.detail.render = async (stream) => {
-      if (answer.cancelled || !answer.when()) return
+      if (answer.cancelled || !(await stillWanted(answer.when)) || answer.cancelled) return
       answer.applied = true
       await render(stream)
     }
@@ -240,6 +296,7 @@ class Recovery {
   }
 
   start() {
+    watchPageRenders()
     watchPage()
     this.hiddenAt = document.visibilityState === "visible" ? null : Date.now()
 

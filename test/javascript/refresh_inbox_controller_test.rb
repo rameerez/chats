@@ -100,13 +100,16 @@ class RefreshInboxControllerTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
-  test "disconnecting stops catching up and removes every listener" do
+  test "disconnecting stops catching up and removes every listener of its own" do
     run_inbox(<<~JAVASCRIPT)
       controller.disconnect()
-      for (const name of ["turbo:visit", "turbo:load", "turbo:before-stream-render", "visibilitychange"]) {
+      for (const name of ["turbo:visit", "turbo:before-stream-render", "visibilitychange"]) {
         assert.strictEqual(page.documentEvents.count(name), 0, name)
       }
-      assert.strictEqual(page.documentEvents.count("turbo:before-morph-attribute"), 1, "only chats/recovery's page-wide stream guard stays")
+      // What stays is chats/recovery's, page-wide and installed once: the
+      // stream guards and the watch on page renders.
+      assert.strictEqual(page.documentEvents.count("turbo:before-morph-attribute"), 1)
+      assert.strictEqual(page.documentEvents.count("turbo:load"), 1)
 
       source.confirm()
       page.advance(10_000)

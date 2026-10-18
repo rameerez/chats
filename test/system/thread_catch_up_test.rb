@@ -197,6 +197,77 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
     assert_selector "#{window} [data-chats--thread-target='message']", text: "missed while the dock moved"
   end
 
+  test "a dock window carried across a visit by a host's asynchronous render still gets the answer" do
+    sign_in
+    window = open_dock_window
+    @bob.message!(@conversation, "missed during a slow render")
+    hold_catch_up_answers
+
+    catch_up(window)
+    wait_until_answered(1)
+    # The host animates its page renders: the new body goes in, then the
+    # render takes 1.5s more (an entrance animation) before Turbo moves the
+    # permanent dock into it — across many tasks, the dock off the page.
+    page.execute_script(<<~JS, window)
+      window.__thread = document.querySelector(arguments[0]).querySelector(".chats-thread")
+      document.addEventListener("turbo:before-render", (event) => {
+        event.detail.render = async (current, next) => {
+          current.replaceWith(next)
+          await new Promise((resolve) => setTimeout(resolve, 1500))
+        }
+      }, { once: true })
+      document.body.dataset.before = "visit"
+      Turbo.visit("/")
+    JS
+    Timeout.timeout(Capybara.default_max_wait_time) do
+      sleep 0.01 while page.evaluate_script("window.__thread.isConnected")
+    end
+    sleep 0.3 # well past the task a fixed deferral would have waited
+    release_answers # the answer arrives while the window is off the page
+
+    assert_selector "#{window} [data-chats--thread-target='message']", text: "missed during a slow render"
+    assert_nil page.evaluate_script("document.body.dataset.before"), "on the new page"
+    assert page.evaluate_script("window.__thread.isConnected"), "the same thread, carried along"
+  end
+
+  test "streams waiting while a host's asynchronous render has the dock off the page still apply to it" do
+    sign_in
+    window = open_dock_window
+    missed = "missed, its stream waiting through a slow render"
+    @bob.message!(@conversation, missed)
+    hold_catch_up_answers
+
+    catch_up(window)
+    wait_until_answered(1)
+    hold_frames
+    release_answers
+    waiting = wait_for_pending_streams # the answer's streams wait for their frame
+    page.execute_script(<<~JS, window)
+      window.__thread = document.querySelector(arguments[0]).querySelector(".chats-thread")
+      document.addEventListener("turbo:before-render", (event) => {
+        event.detail.render = async (current, next) => {
+          current.replaceWith(next)
+          await new Promise((resolve) => setTimeout(resolve, 1500))
+        }
+      }, { once: true })
+      Turbo.visit("/")
+    JS
+    Timeout.timeout(Capybara.default_max_wait_time) do
+      loop do
+        page.execute_script("window.__runFrames(#{waiting}, Infinity)") # the visit's frames, not the streams'
+        break unless page.evaluate_script("window.__thread.isConnected")
+
+        sleep 0.01
+      end
+    end
+    sleep 0.3 # the window is off the page, past any fixed one-task deferral
+    assert_operator answer_streams_waiting, :>, 0, "its answer still waits"
+    release_frames # Turbo gets to the streams while the dock is still away
+
+    assert_selector "#{window} [data-chats--thread-target='message']", text: missed
+    assert page.evaluate_script("window.__thread.isConnected"), "the same thread, carried along"
+  end
+
   # Starting a browser once tells whether this machine can run these.
   def self.chrome?
     return @chrome if defined?(@chrome)
