@@ -14,8 +14,10 @@
 //   2. the page comes BACK after being hidden for 10 seconds or more (an
 //      app foregrounded, a tab returned to);
 //   3. the network comes back ONLINE: Action Cable is asked to check its
-//      socket now instead of after its backoff, and a dead one reconnects,
-//      which is trigger 1;
+//      socket now instead of after its backoff (a dead one reconnects, which
+//      is trigger 1), and the surface catches up anyway: after a short
+//      outage the socket can still look open while what was sent during it
+//      is gone;
 //   4. the browser RESTORES the page from its back/forward cache.
 //
 // Never otherwise. While the socket is healthy and the page is on screen
@@ -173,7 +175,8 @@ class Recovery {
   }
 
   online = () => {
-    if (!this.checkSocket()) this.request()
+    this.checkSocket()
+    this.request()
   }
 
   pageShown = (event) => {
@@ -186,13 +189,10 @@ class Recovery {
   // Action Cable checks its socket when the page becomes visible
   // (ConnectionMonitor#visibilityDidChange): stale or closed, it reopens it
   // at once instead of waiting out its reconnect backoff. Ask for the same
-  // check now. False when there is no monitor to ask.
+  // check now, when there is a monitor to ask.
   checkSocket() {
     const monitor = this.sources[0]?.subscription?.consumer?.connection?.monitor
-    if (typeof monitor?.visibilityDidChange !== "function") return false
-
-    monitor.visibilityDidChange()
-    return true
+    if (typeof monitor?.visibilityDidChange === "function") monitor.visibilityDidChange()
   }
 
   // --- Catching up ----------------------------------------------------------------

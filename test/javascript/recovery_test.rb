@@ -209,7 +209,9 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
-  test "the network coming back asks Action Cable to check its socket now, and that reconnect catches up" do
+  test "the network coming back asks Action Cable to check its socket now, and catches up anyway" do
+    # After a short outage the socket can still look open (so the check
+    # leaves it alone) while what was sent during the outage is gone.
     run_recovery(<<~JAVASCRIPT)
       const source = page.streamSource()
       const caught = watch([source])
@@ -217,16 +219,31 @@ class RecoveryTest < ActiveSupport::TestCase
 
       page.goOnline()
       assert.strictEqual(page.monitor.checks, 1, "ConnectionMonitor#visibilityDidChange, nudged")
-      page.advance(1_000)
-      assert.strictEqual(caught.count, 0, "a socket that survived the blip missed nothing")
-
-      source.confirm()                  // the check found it dead and reopened it
       page.advance(250)
+      assert.strictEqual(caught.count, 1)
+
+      source.confirm()                  // the check found it dead and reopened it: a new gap
+      page.advance(1_000)
+      assert.strictEqual(caught.count, 1, "within the 5s floor…")
+      page.advance(4_000)
+      assert.strictEqual(caught.count, 2, "…then once more")
+    JAVASCRIPT
+  end
+
+  test "coming online together with a reconnect is one catch-up" do
+    run_recovery(<<~JAVASCRIPT)
+      const source = page.streamSource()
+      const caught = watch([source])
+      source.confirm()
+
+      page.goOnline()
+      source.confirm()
+      page.advance(60_000)
       assert.strictEqual(caught.count, 1)
     JAVASCRIPT
   end
 
-  test "without a monitor to ask, coming online catches up by itself" do
+  test "without a monitor to ask, coming online still catches up" do
     run_recovery(<<~JAVASCRIPT)
       const caught = watch([page.streamSource({ monitored: false })])
       page.goOnline()
