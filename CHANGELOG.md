@@ -170,8 +170,10 @@ to configure, no polling.**
   apply after it, so an older answer arriving last can't put back older
   bubbles, read state or cursors. A catch-up always gets an answer built
   after it was asked: the same request asked in the same instant is made
-  once, but asked while it is already on its way, it is made once more
-  after that one settles. An empty
+  once, but asked while it is already on its way, it is made once more as
+  soon as that one has its answer from the network (never waiting on
+  Turbo to apply it), for everyone who asked meanwhile, each keeping its
+  own `when` and its own outcome. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also

@@ -389,6 +389,47 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "a follow-up never waits on Turbo: it goes out as soon as the first request has its network answer" do
+    run_streams(<<~JAVASCRIPT)
+      let b = null
+      renderStreamFrom("/messages/7/refresh?after=0")           // A
+      await page.settle()
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => { b = rendered })   // B, while A is out
+      answer(0)                                                  // A answers; Turbo never applies it
+      await page.settle()
+      assert.strictEqual(page.requests.length, 2, "B's request is out, A's streams still waiting")
+      assert.ok(turbo.pending().length > 0)
+
+      answer(1)                                                  // B's own answer, while A's never applied
+      await page.settle()
+      assert.strictEqual(b, null, "B waits for its own answer to apply")
+      await turbo.applyStreams(); await page.settle()
+      assert.strictEqual(b, true)
+
+      renderStreamFrom("/messages/7/refresh?after=0")            // D, while B's slot is still held
+      await page.settle()
+      assert.strictEqual(page.requests.length, 3, "a request whose answer is in goes out again at once")
+    JAVASCRIPT
+  end
+
+  test "callers sharing a request keep their own `when` and their own outcome" do
+    run_streams(<<~JAVASCRIPT)
+      const results = {}
+      renderStreamFrom("/messages/7/refresh?after=0")            // A
+      await page.settle()
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => true }).then((rendered) => { results.B = rendered })
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => false }).then((rendered) => { results.C = rendered })
+      answer(0)
+      await page.settle()
+      assert.strictEqual(page.requests.length, 2, "one follow-up for B and C")
+
+      answer(1)
+      await page.settle(); await turbo.applyStreams(); await page.settle()
+      assert.deepStrictEqual(results, { B: true, C: false }, "C not wanted doesn't take B's catch-up with it")
+      assert.ok(turbo.performed.length >= 2, "B's answer was applied")
+    JAVASCRIPT
+  end
+
   test "a request that hangs (a network interruption) is aborted after 15s, and the next catch-up asks again" do
     run_streams(<<~JAVASCRIPT)
       let resolved = null

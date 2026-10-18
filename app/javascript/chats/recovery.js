@@ -88,10 +88,11 @@ export function recoverMissedBroadcasts(element, catchUp, { sources = SOURCE, st
 //   * a request that hasn't answered within REQUEST_WITHIN_MS is aborted
 //     (a fetch can hang across a network interruption);
 //   * the same request asked twice in the same instant is made once; asked
-//     again while it is on its way, it is made once more after it settles,
-//     so every caller gets an answer from after it asked (once for all who
-//     asked meanwhile); and an answer Turbo hasn't applied within
-//     APPLY_WITHIN_MS no longer stands in for a new one;
+//     again while it is on its way, it is made once more as soon as the
+//     first has its answer from the network (once for all who asked
+//     meanwhile), so every caller gets an answer built after it asked,
+//     within REQUEST_WITHIN_MS of the first; and an answer Turbo hasn't
+//     applied within APPLY_WITHIN_MS no longer stands in for a new one;
 //   * one unapplied answer per `key` (the URL, or what the caller names —
 //     the thread names itself): a newer answer for it cancels the older
 //     one's leftover streams, and so does cancelStreamsFor(key), which the
@@ -108,51 +109,72 @@ const answers = new Map() // key → the answer still being applied
 const REQUEST_WITHIN_MS = 15_000
 const APPLY_WITHIN_MS = 2_000
 
-export function renderStreamFrom(url, options = {}) {
+export function renderStreamFrom(url, { when = () => true, key = url, order = 0, applying = () => {} } = {}) {
   watchPageRenders()
 
+  let resolve
+  const caller = { when, key, order, applying, answered: new Promise((done) => { resolve = done }) }
+  caller.resolve = resolve
+
   const inFlight = requests.get(url)
-  if (inFlight) {
+  if (inFlight?.sameInstant) {
     // Asked in the same instant: the same answer will do.
-    if (inFlight.sameInstant) return inFlight.request
+    inFlight.callers.push(caller)
+  } else if (inFlight) {
     // Asked once it was on its way: its answer is a snapshot from before
-    // this was asked, and may miss what this wants. One more request, once
-    // the one in flight has settled, for every caller that came meanwhile
-    // (with the newest caller's options).
-    inFlight.next = options
-    inFlight.followUp ||= inFlight.request.then(() => renderStreamFrom(url, inFlight.next))
-    return inFlight.followUp
+    // this was asked, and may miss what this wants. One more request, as
+    // soon as that one has its answer from the network (applied or not),
+    // for every caller that came meanwhile.
+    if (!inFlight.queued) {
+      inFlight.queued = []
+      inFlight.answered.then(() => send(url, inFlight.queued))
+    }
+    inFlight.queued.push(caller)
+  } else {
+    send(url, [caller])
   }
-  return request(url, options)
+  return caller.answered
 }
 
-function request(url, { when = () => true, key = url, order = 0, applying = () => {} }) {
+// One request for +callers+ (who asked for the same URL in the same
+// instant, or while the previous one was on its way). Each keeps its own
+// `when`: the answer is applied if any of them still wants it, through the
+// options of those who do, and each resolves to its own outcome.
+function send(url, callers) {
   const abort = new AbortController()
   const hung = setTimeout(() => abort.abort(), REQUEST_WITHIN_MS)
-  const entry = { sameInstant: true }
+  let networkDone
+  const entry = { callers, sameInstant: true, answered: new Promise((done) => { networkDone = done }) }
   queueMicrotask(() => { entry.sameInstant = false })
   const release = () => { if (requests.get(url) === entry) requests.delete(url) }
+  requests.set(url, entry)
 
-  entry.request = fetch(url, {
-    headers: { Accept: "text/vnd.turbo-stream.html" },
-    credentials: "same-origin",
-    signal: abort.signal
-  })
+  fetch(url, { headers: { Accept: "text/vnd.turbo-stream.html" }, credentials: "same-origin", signal: abort.signal })
     .then((response) => (isTurboStream(response) ? response.text() : ""))
+    .catch(() => "")
     .then(async (html) => {
       clearTimeout(hung)
-      if (!html || !(await stillWanted(when))) return false
+      networkDone()
+      entry.sameInstant = false
+
+      const wanted = []
+      for (const caller of entry.callers) {
+        if (html && await stillWanted(caller.when)) wanted.push(caller)
+        else caller.resolve(false)
+      }
+      if (!wanted.length) return
 
       setTimeout(release, APPLY_WITHIN_MS)
-      return apply(html, when, key, order, applying)
+      const newest = wanted.reduce((a, b) => (b.order > a.order ? b : a))
+      const applied = await apply(html, () => wanted.some((caller) => caller.when()), newest.key, newest.order,
+                                  () => wanted.forEach((caller) => caller.applying()))
+      wanted.forEach((caller) => caller.resolve(applied && caller.when()))
     })
-    .catch(() => false)
+    .catch(() => entry.callers.forEach((caller) => caller.resolve(false)))
     .finally(() => {
       clearTimeout(hung)
       release()
     })
-  requests.set(url, entry)
-  return entry.request
 }
 
 // Drops what is left of +key+'s answer: streams Turbo hasn't applied yet
