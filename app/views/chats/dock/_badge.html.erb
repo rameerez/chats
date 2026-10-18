@@ -1,27 +1,12 @@
-<%# The dock's unread badge. Fixed id: Chats::Broadcasts.update_badge_of
-    replaces it on the viewer's `[messager, :chats_dock]` stream whenever
-    their unread state changes, and that replace is ALSO the dock's signal
-    to act (the dock's controller sees the new element connect):
-
-      data-changed                 something changed: reload the recent list
-      data-latest-conversation-id  the conversation that just changed
-      data-pop-up                  a message the viewer should see arrived
-                                   there: open its window (never for your
-                                   own messages, a muted conversation or a
-                                   headless messager)
-
-    Always rendered (hidden at zero) so the replace has an element to land on. %>
-<% changed = local_assigns.fetch(:changed, false) %>
-<% conversation = local_assigns[:conversation] %>
-<%= tag.span id: "chats_dock_badge",
-      class: "chats-badge chats-dock__badge",
+<%# The dock's unread badge: the same number as the nav badge
+    (`unread_chats_count`), replaced on the viewer's dock stream with every
+    other [data-chats-unread-badge] inside the dock. No id — a page may hold
+    the nav badge too, and ids must stay unique. Not a live region: it would
+    chatter on every read; new messages are announced by the dock instead.
+    Hidden at zero, number kept. %>
+<%= tag.span class: "chats-badge chats-dock__badge",
       hidden: !count.positive?,
-      data: {
-        "chats--dock-target": "badge",
-        changed: (true if changed),
-        latest_conversation_id: conversation&.id,
-        pop_up: (true if local_assigns[:pop_up])
-      } do %>
+      data: { chats_unread_badge: true, "chats--dock-target": "badge", count: count } do %>
   <span aria-hidden="true"><%= count > 99 ? "99+" : count %></span>
-  <span class="chats-visually-hidden"><%= t("chats.dock.unread", count: count) %></span>
+  <span class="chats-visually-hidden"><%= count %> <%= t("chats.dock.unread_suffix") %></span>
 <% end %>

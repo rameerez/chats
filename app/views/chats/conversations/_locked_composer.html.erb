@@ -5,11 +5,16 @@
     composer — the host's composer_actions leave with it.
 
     The `locked_composer` slot replaces the BODY (a reopen button, a link to
-    the closed ticket…) while keeping the id contract intact. %>
+    the closed ticket…) while keeping the id contract intact.
+
+    `notice:` replaces the subject's reason: the thread renders this same
+    box, with "You can't message this person.", for a direct thread the
+    host's policy no longer allows (or whose other account is gone). %>
+<% notice = local_assigns[:notice] || conversation.locked_notice %>
 <div id="<%= dom_id(conversation, :composer) %>" class="chats-composer chats-composer--locked">
   <% if chats_slot?(:locked_composer) %>
-    <%= chats_slot :locked_composer, conversation: conversation, notice: conversation.locked_notice %>
+    <%= chats_slot :locked_composer, conversation: conversation, notice: notice %>
   <% else %>
-    <p class="chats-composer__locked-notice"><%= conversation.locked_notice %></p>
+    <p class="chats-composer__locked-notice"><%= notice %></p>
   <% end %>
 </div>

@@ -1,0 +1,10 @@
+<%# One dock update (Chats::Broadcasts.update_dock_of), rendered per
+    participant and sent on their own `[messager, :chats_dock]` stream:
+    the badges when the unread count moved, and the signal. %>
+<% if count %>
+  <%= turbo_stream.replace_all ".chats-dock [data-chats-unread-badge]",
+        partial: "chats/dock/badge", locals: { count: count } %>
+<% end %>
+<% if signal %>
+  <%= turbo_stream.replace "chats_dock_signal", partial: "chats/dock/signal", locals: { signal: signal } %>
+<% end %>

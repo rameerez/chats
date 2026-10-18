@@ -17,6 +17,11 @@ module Chats
     # Rows are Conversation | InboxGroup: stacking, search and the `?with=`
     # filter all live in Chats::Inbox, so this action stays three lines.
     def index
+      # The dock's search form posts here, so that without JavaScript it
+      # lands on the full inbox's results; from the dock's frame, the answer
+      # is the dock's own list.
+      return dock if turbo_frame_request_id == "chats_dock_list"
+
       @inbox = Chats::Inbox.for(chats_current_messager, query: params[:q], with: inbox_filter)
       @rows = @inbox.rows
       @unread_counts = @inbox.unread_counts
@@ -36,7 +41,7 @@ module Chats
       @rows = @inbox.rows
       @unread_counts = @inbox.unread_counts
 
-      render layout: false
+      render :dock, layout: false
     end
 
     # The thread. Renders the LATEST page of messages; older pages stream in
@@ -81,7 +86,7 @@ module Chats
           # swallow the unread badge. The thread controller posts #read once
           # the window is actually on screen (`read-pending`).
           render :window, layout: false
-        else
+        elsif !prefetch?
           # Opening the thread reads it. (Live appends while the thread
           # stays open are read via the thread controller's POST to #read.)
           @participant&.read!
@@ -212,6 +217,14 @@ module Chats
     # plain visit to the same URL (no frame) still gets the page.
     def dock_window?
       params[:window].present? && turbo_frame_request?
+    end
+
+    # Turbo 8 prefetches a link when the pointer rests on it, and a pointer
+    # resting on an inbox row is not somebody reading the thread. The visit
+    # itself, if it happens, reads.
+    # https://turbo.hotwired.dev/handbook/drive#prefetching-links-on-hover
+    def prefetch?
+      request.headers["X-Sec-Purpose"] == "prefetch" || request.headers["Sec-Purpose"]&.include?("prefetch")
     end
 
     def dock_recent

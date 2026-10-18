@@ -2,7 +2,8 @@
     rendered into the dock's `chats_dock_list` frame with the inbox's own row
     partials. `dock: true` makes each row open a floating window instead of
     navigating — the link stays a real link to the thread, so a modified click
-    (new tab) or a page without the dock's JavaScript still gets there.
+    (new tab) or a page without the dock's JavaScript still gets there. The
+    inbox answers a search from the dock's form with this same template.
 
     `target: "_top"`: anything else inside the frame (a stack's link, a row
     from an inbox ejected before 0.5.0) navigates the page, not the frame. %>
@@ -22,8 +23,18 @@
       <% end %>
     </ul>
   <% elsif @inbox.query %>
-    <p class="chats-dock__empty"><%= t("chats.inbox.no_results_hint", query: @inbox.query) %></p>
+    <div class="chats-empty">
+      <p class="chats-empty__title"><%= t("chats.inbox.no_results_title") %></p>
+      <p class="chats-empty__hint"><%= t("chats.inbox.no_results_hint", query: @inbox.query) %></p>
+    </div>
   <% else %>
-    <p class="chats-dock__empty"><%= t("chats.inbox.empty_title") %></p>
+    <%# The inbox's own empty state, the host's inbox_empty slot included:
+        the dock is how people find messaging, so it stays. %>
+    <div class="chats-empty">
+      <span class="chats-empty__icon" aria-hidden="true">💬</span>
+      <p class="chats-empty__title"><%= t("chats.inbox.empty_title") %></p>
+      <p class="chats-empty__hint"><%= t("chats.inbox.empty_hint") %></p>
+      <%= chats_slot :inbox_empty, viewer: chats_current_messager, inbox: @inbox %>
+    </div>
   <% end %>
 <% end %>

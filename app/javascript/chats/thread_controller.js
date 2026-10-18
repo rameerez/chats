@@ -38,12 +38,15 @@ const TRIM_LEEWAY = 20
 //   * mark-as-read              debounce a POST to #read when foreign messages
 //                               arrive while the thread is on screen — that
 //                               POST advances our read horizon and broadcasts
-//                               fresh read-state to everyone. "On screen" is
-//                               a visible tab AND a thread with room to show
-//                               itself: a minimized dock window reads when it
-//                               is expanded, not before. A dock window is
-//                               rendered unread (`readPending`) and reads the
-//                               same way.
+//                               fresh read-state to everyone. Only while the
+//                               viewer can actually be reading: a visible tab,
+//                               a thread with room to show itself (a minimized
+//                               dock window has none), and — inside a dock
+//                               window — one the viewer is engaged with (the
+//                               dock's `data-chats-active` gate; a window that
+//                               popped open by itself waits for a focus, a
+//                               press or a scroll). A dock window is rendered
+//                               unread (`readPending`) and reads the same way.
 //   * sent / seen receipts      derive per-message ticks client-side from the
 //                               broadcast read-state payload
 //   * day separators            recalculate local-calendar markers after the
@@ -85,6 +88,10 @@ export default class extends Controller {
 
   connect() {
     this.registerTypingStreamAction()
+    // The dock's engagement gate: the window frame around a dock thread.
+    // No gate (the thread page) means always engaged.
+    this.gate = this.element.closest("[data-chats-active]")
+    this.gate?.addEventListener("chats:activated", this.flushPendingRead)
 
     // targetConnected fires for every server-rendered bubble right after
     // connect; this flag keeps the initial flood from triggering N scrolls
@@ -129,6 +136,7 @@ export default class extends Controller {
     clearTimeout(this.readTimer)
     this.sourceObserver?.disconnect()
     this.presenceObserver?.disconnect()
+    this.gate?.removeEventListener("chats:activated", this.flushPendingRead)
     this.element.removeEventListener("click", this.suppressClickCapture, true)
     clearTimeout(this.pressTimer)
     this.teardownPopup()
@@ -359,7 +367,7 @@ export default class extends Controller {
   // --- Mark-as-read ------------------------------------------------------------
 
   queueRead() {
-    if (document.visibilityState !== "visible" || !this.onScreen()) {
+    if (!this.canRead()) {
       this.pendingRead = true
       return
     }
@@ -384,29 +392,47 @@ export default class extends Controller {
     }
   }
 
+  // Whether the viewer can be reading this thread right now.
+  canRead() {
+    return document.visibilityState === "visible" && this.onScreen() && this.engaged()
+  }
+
   // The thread has room to show itself. False for a minimized dock window
   // (collapsed to its header: the scroller is there, zero pixels tall).
   onScreen() {
     return !this.hasScrollerTarget || this.scrollerTarget.clientHeight > 0
   }
 
+  engaged() {
+    return !this.gate || this.gate.dataset.chatsActive !== "false"
+  }
+
   // A read that waited for the thread to be seen happens the moment it is:
-  // a minimized window expanding gives its scroller a height, and that is
-  // the signal. It lands on the newest message, which is what arrived.
+  // a minimized window expanding gives its scroller a height, and the dock
+  // says when the viewer turns to a window. It lands on the newest message,
+  // which is what arrived.
+  flushPendingRead = () => {
+    if (!this.pendingRead || !this.canRead()) return
+    this.pendingRead = false
+    this.scrollToBottom()
+    this.queueRead()
+  }
+
   watchScreenPresence() {
     if (!this.hasScrollerTarget || typeof ResizeObserver === "undefined") return
 
-    this.presenceObserver = new ResizeObserver(() => {
-      if (!this.pendingRead || !this.onScreen() || document.visibilityState !== "visible") return
-      this.pendingRead = false
-      this.scrollToBottom()
-      this.queueRead()
-    })
+    this.presenceObserver = new ResizeObserver(this.flushPendingRead)
     this.presenceObserver.observe(this.scrollerTarget)
   }
 
   postRead() {
     if (!this.readUrlValue) return
+    // Asked again when the timer fires: the window may have been minimized
+    // (or the tab hidden) in the 700ms since the message arrived.
+    if (!this.canRead()) {
+      this.pendingRead = true
+      return
+    }
     fetch(this.readUrlValue, {
       method: "POST",
       headers: { "X-CSRF-Token": csrfToken(), Accept: "application/json" }

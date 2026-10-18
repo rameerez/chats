@@ -75,26 +75,56 @@ module Chats
     # Renders nothing for a signed-out visitor, and nothing on the engine's
     # own pages (the inbox, a thread): those already ARE the messaging UI,
     # and a window there would duplicate the thread's DOM ids the live
-    # streams address. Hide it on your own messaging pages the same way —
-    # don't render it there. `everywhere: true` renders it on the engine's
-    # pages too (the dock still never opens a window for a conversation the
-    # page itself shows).
+    # streams address. The dock is permanent across Turbo visits, so the
+    # server can't take it away on the next page: it also hides ITSELF on
+    # any page carrying `data-chats-dock-hide` (the engine's pages do; put
+    # it on your own messaging pages). `everywhere: true` renders it on the
+    # engine's pages and ignores data-chats-dock-hide (it still never opens
+    # a window for a conversation the page itself shows).
     #
-    #   windows:  how many windows may be open at once (3; 1 on phones)
-    #   recent:   how many conversations the panel lists (10)
-    def chats_dock(windows: 3, recent: 10, everywhere: false)
+    #   windows:   how many windows may be open at once (3, and never more
+    #              than fit beside the panel: 2 at 1280px, 1 at 768px)
+    #   recent:    how many conversations the panel lists (10)
+    #   launcher:  false drops the phone's floating button, for a host that
+    #              opens the sheet from its own nav (see chats_dock_toggle)
+    def chats_dock(windows: 3, recent: 10, launcher: true, everywhere: false)
       viewer = chats_viewer
       return if viewer.nil?
       return if chats_engine_page? && !everywhere
 
-      render(partial: "chats/dock/dock", locals: { viewer: viewer, windows: windows, recent: recent })
+      render(partial: "chats/dock/dock",
+             locals: { viewer: viewer, windows: windows, recent: recent, launcher: launcher, everywhere: everywhere })
     end
 
-    # The data that makes a link to a conversation open its dock window
-    # instead (the recent list's rows). The link stays a real link: a
-    # modified click, or a page without the dock's JavaScript, navigates.
+    # The data that makes ANY link to a conversation — a recent-list row, a
+    # host's own link — open that conversation's dock window instead of
+    # navigating, when a dock is on the page. The link stays a real link: a
+    # modified click, a page without the dock, or no JavaScript navigates.
+    #
+    #   <%= link_to "Chat", chats.conversation_path(c), data: chats_dock_opener(c) %>
     def chats_dock_opener(conversation)
-      { action: "chats--dock#open", "chats--dock-id-param": conversation.id }
+      { chats_dock_conversation_id: conversation.id }
+    end
+
+    # The data that makes a host's own Messages link open the dock's panel
+    # (the full-screen sheet on a phone) instead of navigating, when a dock
+    # is on the page. Pair it with `chats_dock(launcher: false)` to replace
+    # the phone's floating button with your nav's. Without the dock, or
+    # without JavaScript, the link goes where its href says.
+    #
+    #   <%= link_to "Messages", chats.conversations_path, data: chats_dock_toggle %>
+    def chats_dock_toggle
+      { chats_dock_toggle: true }
+    end
+
+    # Whether +viewer+ muted +conversation+, read from the preloaded seats
+    # (the inbox loads them), so a row costs no query for it.
+    def chats_muted?(conversation, viewer)
+      return false if viewer.nil?
+
+      conversation.participants.any? do |seat|
+        seat.muted? && seat.messager_type == viewer.class.polymorphic_name && seat.messager_id == viewer.id
+      end
     end
 
     # An avatar for any messager: whatever `config.messager_avatar` returns

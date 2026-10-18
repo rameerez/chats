@@ -56,16 +56,21 @@ es:
       locked: "Esta conversación está cerrada."
     dock:
       title: "Mensajes"
+      unread_suffix: "sin leer"
       see_all: "Ver todos los mensajes"
-      search: "Buscar mensajes"
+      window_label: "Conversación con %{name}"
       open_full: "Abrir la conversación completa"
       minimize: "Minimizar"
       close: "Cerrar conversación"
       back: "Volver a los mensajes"
-      unread:
-        zero: "Ninguna conversación sin leer"
-        one: "1 conversación sin leer"
-        other: "%{count} conversaciones sin leer"
+      hello: "Saluda a %{name}."
+      load_error: "No se ha podido cargar esta conversación."
+      retry: "Reintentar"
+      new_message_from: "Nuevo mensaje de %{name}"
+      window_unread:
+        one: "%{count} mensaje nuevo"
+        other: "%{count} mensajes nuevos"
+      muted: "Silenciada"
     buttons:
       chat: "Mensaje"
     flashes:

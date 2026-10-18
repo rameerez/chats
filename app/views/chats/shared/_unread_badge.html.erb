@@ -1,6 +1,9 @@
 <%# The live unread badge (embed anywhere via the chats_unread_badge helper).
     Fixed id: it's the target Chats::Broadcasts.update_badge_of replaces.
-    Always rendered (hidden at zero) so the broadcast has an element to update. %>
+    Always rendered (hidden at zero) so the broadcast has an element to update.
+    data-chats-unread-badge marks every unread badge, the dock's included, for
+    host CSS and JS that want them all. %>
 <span id="chats_unread_badge"
       class="chats-badge chats-badge--floating"
+      data-chats-unread-badge
       <%= "hidden" unless count.positive? %>><%= count > 99 ? "99+" : count %></span>

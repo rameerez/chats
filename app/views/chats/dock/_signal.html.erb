@@ -1,0 +1,26 @@
+<%# What just changed, for the dock's controller (it acts when the replaced
+    element connects, and consumes data-changed so a Turbo Drive visit that
+    reconnects the same node never acts twice). An inert <template>: it
+    renders nothing. The dock renders it bare; Chats::Broadcasts sends it
+    with the signal:
+
+      data-changed               reload the recent list
+      data-conversation-id       the conversation it was about, when the
+                                 viewer can see it
+      data-notify                a message they'd be notified about: its
+                                 window may pop open, and it is announced
+      data-sender-name           who it is from, for the announcement
+      data-unread-count          unread there now, for the window's header
+
+    Strings for people are rendered by the dock in the VIEWER's locale
+    (Stimulus values), never here: a broadcast renders in no one's. %>
+<% signal = local_assigns[:signal] %>
+<%= tag.template id: "chats_dock_signal",
+      data: {
+        "chats--dock-target": "signal",
+        changed: (true if signal),
+        conversation_id: signal&.dig(:conversation_id),
+        notify: (true if signal&.dig(:notify)),
+        sender_name: signal&.dig(:sender_name),
+        unread_count: signal&.dig(:unread_count)
+      } %>

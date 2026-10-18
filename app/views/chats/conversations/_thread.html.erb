@@ -23,15 +23,28 @@
       more             whether older pages exist (the lazy frame chain)
       first_unread_id  where the «new messages» line goes, or nil
       counterpart      the other messager of a direct thread, or nil
-      read_pending     true when the server did NOT read this render (a dock
-                       window): the controller posts #read once it is on
-                       screen. %>
-<% read_pending = local_assigns.fetch(:read_pending, false) %>
-<%= tag.div class: "chats chats-thread", data: {
+      window           true in a dock window: rooted at .chats-thread--window
+                       (never .chats, which is the full-page shell), and the
+                       server did NOT read this render — the controller
+                       posts #read once the window is on screen and the
+                       viewer is engaged with it (`readPending`).
+
+    The page's root carries data-chats-dock-hide: the messaging dock hides
+    itself on any page that has it. %>
+<% window = local_assigns.fetch(:window, false) %>
+<% viewer = chats_current_messager %>
+<%# A direct thread nobody may write in any more says so up front, in the
+    composer's place — the host's policy turned false, or the other account
+    is gone — instead of letting a send fail. Same id as the composer, so
+    the live lock swap still finds it. %>
+<% refused = !conversation.locked? && conversation.direct? &&
+             (counterpart.nil? || !Chats.can_message?(viewer, counterpart)) %>
+<%= tag.div class: (window ? "chats-thread chats-thread--window" : "chats chats-thread"), data: {
       controller: "chats--thread",
-      "chats--thread-me-value": Chats.messager_key(chats_current_messager),
+      "chats-dock-hide": (true unless window),
+      "chats--thread-me-value": Chats.messager_key(viewer),
       "chats--thread-read-url-value": read_conversation_path(conversation),
-      "chats--thread-read-pending-value": read_pending,
+      "chats--thread-read-pending-value": window,
       "chats--thread-sent-label-value": t("chats.thread.sent"),
       "chats--thread-seen-label-value": Chats.config.read_receipts ? t("chats.thread.seen") : "",
       "chats--thread-today-label-value": t("chats.thread.today"),
@@ -54,7 +67,19 @@
 
   <%= yield %>
 
-  <div class="chats-thread__scroll" data-chats--thread-target="scroller">
+  <%# tabindex: the arrow keys scroll the history (WCAG 2.1.1). %>
+  <div class="chats-thread__scroll" data-chats--thread-target="scroller" tabindex="0">
+    <% if window && messages.empty? %>
+      <%# A window opened from a Message button, before anybody wrote: who
+          you're about to talk to. Gone with the first bubble (chats.css). %>
+      <div class="chats-window__hello">
+        <% if counterpart %>
+          <%= chats_messager_avatar(counterpart) %>
+          <strong><%= Chats.display_name_for(counterpart) %></strong>
+        <% end %>
+        <%= t("chats.dock.hello", name: conversation.title_for(viewer)) %>
+      </div>
+    <% end %>
     <% if more && messages.any? %>
       <%# Lazy frame chain for infinite scroll-up: when this frame becomes
           visible, Turbo fetches the previous keyset page (?before=oldest id),
@@ -138,6 +163,9 @@
       explain it in place. %>
   <% if conversation.locked? %>
     <%= render "chats/conversations/locked_composer", conversation: conversation %>
+  <% elsif refused %>
+    <%= render "chats/conversations/locked_composer", conversation: conversation,
+                                                      notice: t("chats.flashes.blocked") %>
   <% else %>
     <%= render "chats/messages/composer", conversation: conversation %>
   <% end %>

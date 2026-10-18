@@ -68,21 +68,24 @@ class EngineHelperTest < ActionView::TestCase
 
     html = chats_dock
 
-    assert_includes html, %(id="chats_dock")
+    assert_includes html, %(id="chats_dock_#{Chats.messager_key(@alice)}")
     assert_includes html, %(data-turbo-permanent="true")
     assert_includes html, %(id="chats_dock_windows")
-    assert_includes html, %(id="chats_dock_badge")
+    assert_includes html, %(id="chats_dock_signal")
     assert_includes html, %(id="chats_dock_list")
+    assert_includes html, "data-chats-unread-badge"
     assert_includes html, "turbo-cable-stream-source"
+    assert_not_includes html, "chats-dock--no-launcher"
   end
 
-  test "chats_dock takes its options: windows and recent" do
+  test "chats_dock takes its options: windows, recent and launcher" do
     self.stubbed_viewer = @alice
 
-    html = chats_dock(windows: 2, recent: 5)
+    html = chats_dock(windows: 2, recent: 5, launcher: false)
 
     assert_includes html, %(data-chats--dock-windows-value="2")
     assert_includes html, "recent=5"
+    assert_includes html, "chats-dock--no-launcher"
   end
 
   test "chats_dock renders nothing for a signed-out visitor" do
@@ -93,19 +96,31 @@ class EngineHelperTest < ActionView::TestCase
 
   test "chats_dock renders nothing on the engine's own pages, unless everywhere: true" do
     self.stubbed_viewer = @alice
-    engine_page = Chats::ConversationsController.new
-
-    stubs(:controller).returns(engine_page)
+    stubs(:controller).returns(Chats::ConversationsController.new)
 
     assert_nil chats_dock
-    assert_includes chats_dock(everywhere: true), %(id="chats_dock")
+    html = chats_dock(everywhere: true)
+    assert_includes html, %(class="chats-dock")
+    assert_includes html, %(data-chats--dock-everywhere-value="true"), "and it won't hide itself there"
   end
 
-  test "chats_dock_opener makes a link open the conversation's window" do
+  test "chats_dock_opener and chats_dock_toggle are plain data a host puts on its own links" do
     conversation = conversation_between(@alice, @bob)
 
-    assert_equal({ action: "chats--dock#open", "chats--dock-id-param": conversation.id },
-                 chats_dock_opener(conversation))
+    assert_equal({ chats_dock_conversation_id: conversation.id }, chats_dock_opener(conversation))
+    assert_equal({ chats_dock_toggle: true }, chats_dock_toggle)
+    assert_includes link_to("Chat", "/messages/#{conversation.id}", data: chats_dock_opener(conversation)),
+                    %(data-chats-dock-conversation-id="#{conversation.id}")
+  end
+
+  test "chats_muted? reads the viewer's own seat" do
+    conversation = conversation_between(@alice, @bob)
+
+    assert_not chats_muted?(conversation, @alice)
+    conversation.participant_for(@alice).mute!
+    assert chats_muted?(conversation.reload, @alice)
+    assert_not chats_muted?(conversation, @bob), "Alice's mute is hers"
+    assert_not chats_muted?(conversation, nil)
   end
 
   test "chats_messager_avatar falls back to initials" do

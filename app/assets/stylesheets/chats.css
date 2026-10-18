@@ -33,17 +33,11 @@
   --chats-radius: 1.1rem;
   --chats-max-width: 42rem;
 
-  /* The messaging dock (chats_dock). The breakpoint is read by the dock's
-     controller (media queries can't read custom properties), which keys the
-     phone layout on .chats-dock--compact. */
-  --chats-dock-z: 50;
-  --chats-dock-width: 18rem;
-  --chats-dock-panel-height: 32rem;
-  --chats-dock-bar-height: 3.25rem;
-  --chats-dock-offset: 1rem;
-  --chats-dock-breakpoint: 640px;
-  --chats-window-width: 20rem;
-  --chats-window-height: 26.25rem;
+  /* Safe areas, re-pointable by a host with its own source of truth. */
+  --chats-safe-top: env(safe-area-inset-top, 0px);
+  --chats-safe-right: env(safe-area-inset-right, 0px);
+  --chats-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --chats-safe-left: env(safe-area-inset-left, 0px);
 }
 
 /* --- Shell ----------------------------------------------------------------- */
@@ -1009,85 +1003,217 @@ turbo-frame[id^="chats_page_"] {
   color: var(--chats-text-muted);
 }
 
+
 /* ---------------------------------------------------------------------------
    0.5.0 — the messaging dock (chats_dock)
    ---------------------------------------------------------------------------
 
-   Fixed to the bottom-right corner: the floating windows, then the panel,
-   bottom-aligned so each grows UP from its header. The dock itself lets
-   clicks through (pointer-events: none) so the gaps between windows are the
-   page's; its children take them back.
+   Windows to the left, the recent-chats panel at the right edge, flush with
+   the bottom of the viewport. One element (`.chats-dock`, permanent across
+   Turbo visits) rendered by `chats_dock`; the chats--dock controller owns
+   the state classes:
 
-   Nothing here may give a window or the dock a transform, a filter or
-   `contain` that outlives an animation: the thread's long-press popup and
-   photo preview are position: fixed inside the window, and any of those
-   would make the window their containing block instead of the viewport. The
-   entrance animations below end with no transform at all. */
+     .chats-dock[data-mode]        "dock" or "sheet", set once JS runs (the
+                                   layout itself comes from the media query
+                                   at the end, so it holds before and without)
+     .chats-dock__panel[open]      the recent list shows (a <details>)
+     .chats-window--minimized      folded to its header
+     .chats-window--unread         something arrived the viewer hasn't seen
+     .chats-window--front          the one window a phone shows
+     .chats-window--entering       its first 200ms; --popped: opened by a message
+
+   Derived variables live on :where(.chats-dock), NOT :root: a custom
+   property that references another resolves where it is declared, so a host
+   re-pointing --chats-bg on .chats-dock would otherwise leave --chats-dock-bg
+   frozen at the :root value. :where() keeps them at zero specificity.
+
+   Never a lasting transform, filter, backdrop-filter, perspective or contain
+   on the dock or a window: each makes the window the containing block of the
+   thread's position: fixed popup and photo preview, which would then open
+   inside a 336px box. Entrance animations end at `transform: none`, and
+   minimizing changes a height, not a transform. */
+
+:where(.chats-dock) {
+  --chats-dock-z: 40;                 /* above the page, under host modals */
+  --chats-dock-offset: 0px;           /* bottom clearance (a cookie banner…) */
+  --chats-dock-inset: 16px;           /* from the right edge */
+  --chats-dock-gap: 8px;
+  --chats-dock-bar-height: 48px;      /* the bar, every window header */
+  --chats-dock-panel-width: 288px;
+  --chats-dock-panel-height: 560px;
+  --chats-dock-window-width: 336px;
+  --chats-dock-window-height: 480px;
+  --chats-dock-top-clearance: 24px;
+  --chats-dock-radius: 12px;
+  --chats-dock-bg: var(--chats-bg);
+  --chats-dock-header-bg: var(--chats-bg);
+  /* Not --chats-surface: muted text on it is 4.39:1; on this, 4.63:1. */
+  --chats-dock-hover: #f9fafb;
+  --chats-dock-edge: rgba(17, 24, 39, 0.12);
+  --chats-dock-shadow: 0 12px 40px rgba(17, 24, 39, 0.16), 0 2px 6px rgba(17, 24, 39, 0.08);
+  --chats-dock-unread-bg: var(--chats-accent);
+  --chats-dock-unread-text: var(--chats-accent-contrast);
+  --chats-dock-focus: var(--chats-accent);
+  /* --chats-dock-title-font: unset on purpose; titles inherit the host font. */
+  --chats-dock-launcher-size: 56px;
+  --chats-dock-sheet-header-height: 56px;
+  --chats-dock-duration: 200ms;
+  --chats-dock-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* --- The dock ----------------------------------------------------------------- */
 
 .chats-dock {
   position: fixed;
-  right: var(--chats-dock-offset);
-  bottom: 0;
   z-index: var(--chats-dock-z);
+  right: calc(var(--chats-dock-inset) + var(--chats-safe-right));
+  bottom: var(--chats-dock-offset);
   display: flex;
   align-items: flex-end;
-  gap: 0.5rem;
-  max-width: calc(100vw - 2 * var(--chats-dock-offset));
+  gap: var(--chats-dock-gap);
   color: var(--chats-text);
-  pointer-events: none;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  pointer-events: none; /* the gaps between surfaces never eat page clicks */
 }
+/* Fixed-size surfaces with padding: never trust the host to have a reset. */
+.chats-dock,
+.chats-dock *,
+.chats-dock *::before,
+.chats-dock *::after { box-sizing: border-box; }
+.chats-dock[hidden] { display: none; }
 .chats-dock__windows {
   display: flex;
   align-items: flex-end;
-  gap: 0.5rem;
+  gap: var(--chats-dock-gap);
 }
-.chats-dock__panel,
-.chats-window { pointer-events: auto; }
+.chats-window,
+.chats-dock__panel { pointer-events: auto; }
 
-/* --- The panel ---------------------------------------------------------------- */
+/* Inset: every surface clips (overflow: hidden), so an outside ring is cut. */
+.chats-dock :focus-visible {
+  outline: 2px solid var(--chats-dock-focus);
+  outline-offset: -2px;
+}
 
+/* --- Surfaces (panel and windows share one skin) -------------------------------- */
+
+.chats-window,
 .chats-dock__panel {
-  width: var(--chats-dock-width);
-  background: var(--chats-bg);
-  border: 1px solid var(--chats-border);
+  background: var(--chats-dock-bg);
+  border: 1px solid var(--chats-dock-edge);
   border-bottom: 0;
-  border-radius: 0.75rem 0.75rem 0 0;
-  box-shadow: 0 -2px 18px rgba(0, 0, 0, 0.12);
+  border-radius: var(--chats-dock-radius) var(--chats-dock-radius) 0 0;
+  box-shadow: var(--chats-dock-shadow);
   overflow: hidden;
 }
-.chats-dock__bar {
+
+.chats-dock__panel {
+  position: relative;
+  width: var(--chats-dock-panel-width);
+  padding-bottom: var(--chats-safe-bottom);
+}
+.chats-dock__panel[open] {
+  height: min(var(--chats-dock-panel-height),
+              calc(100dvh - var(--chats-dock-offset) - var(--chats-dock-top-clearance)));
+}
+
+.chats-window {
+  display: flex;
+  flex-direction: column;
+  width: var(--chats-dock-window-width);
+  height: min(var(--chats-dock-window-height),
+              calc(100dvh - var(--chats-dock-offset) - var(--chats-dock-top-clearance)));
+}
+/* Folded to its header (and the home-indicator strip). A height, not a
+   transform: the thread keeps its box and its scroll position, and its
+   zero-height scroller is how the thread controller knows not to read. */
+.chats-window--minimized { height: calc(var(--chats-dock-bar-height) + var(--chats-safe-bottom)); }
+.chats-window__card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- The bar (the panel's <summary>) and window headers -------------------------- */
+
+.chats-dock__bar,
+.chats-window__header {
+  flex: 0 0 var(--chats-dock-bar-height);
+  height: var(--chats-dock-bar-height);
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  height: var(--chats-dock-bar-height);
-  padding: 0 0.75rem;
+  background: var(--chats-dock-header-bg);
+  border-bottom: 1px solid var(--chats-dock-edge);
+}
+.chats-dock__toggle {
+  gap: 10px;
+  color: inherit;
+  padding: 0 8px 0 12px;
   list-style: none;
   cursor: pointer;
   user-select: none;
 }
-.chats-dock__bar::-webkit-details-marker { display: none; }
-.chats-dock__bar:focus-visible { outline: 2px solid var(--chats-accent); outline-offset: -2px; }
-.chats-dock__avatar { width: 2rem; height: 2rem; font-size: 0.75rem; }
-.chats-dock__icon { display: none; width: 1.5rem; height: 1.5rem; flex-shrink: 0; }
-.chats-dock__title { flex: 1; min-width: 0; font-weight: 750; font-size: 0.95rem; }
-.chats-dock__badge[hidden] { display: none; }
-.chats-dock__chevron {
-  width: 1.1rem;
-  height: 1.1rem;
-  flex-shrink: 0;
-  color: var(--chats-text-muted);
-  transition: transform 180ms ease;
+.chats-dock__toggle::-webkit-details-marker { display: none; }
+.chats-dock__panel:not([open]) .chats-dock__toggle { border-bottom-color: transparent; }
+.chats-dock__toggle .chats-avatar { width: 32px; height: 32px; font-size: 0.8rem; }
+.chats-dock__icon { display: none; width: 26px; height: 26px; flex-shrink: 0; }
+.chats-dock__title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--chats-dock-title-font);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.chats-dock__panel[open] .chats-dock__chevron { transform: rotate(180deg); }
+.chats-dock__chevron,
+.chats-dock__close-glyph {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--chats-text-muted);
+}
+.chats-dock__chevron svg,
+.chats-dock__close-glyph svg {
+  width: 18px;
+  height: 18px;
+  transition: transform var(--chats-dock-duration) var(--chats-dock-ease);
+}
+.chats-dock__toggle:hover .chats-dock__chevron { background: var(--chats-dock-hover); color: var(--chats-text); }
+.chats-dock__panel[open] .chats-dock__chevron svg { transform: rotate(180deg); }
+.chats-dock__close-glyph { display: none; }
+
+/* Badges in the dock: one size, a hair smaller than the inbox's. */
+.chats-dock .chats-badge {
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.3rem;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+.chats-dock .chats-badge[hidden] { display: none; }
+
+/* --- The panel body -------------------------------------------------------------- */
 
 .chats-dock__body {
+  /* Positioned, not a flex item: a <details>' content sits in a UA slot box,
+     so flex sizing from the panel never reaches it. */
+  position: absolute;
+  inset: var(--chats-dock-bar-height) 0 var(--chats-safe-bottom) 0;
   display: flex;
   flex-direction: column;
-  height: min(var(--chats-dock-panel-height), calc(100dvh - var(--chats-dock-bar-height) - 2rem));
-  border-top: 1px solid var(--chats-border);
 }
-.chats-dock__panel[open] .chats-dock__body { animation: chats-dock-rise 180ms ease-out; }
-.chats-dock__search { padding: 0.6rem 0.75rem 0.4rem; }
+.chats-dock__panel[open] .chats-dock__body {
+  animation: chats-dock-rise var(--chats-dock-duration) var(--chats-dock-ease);
+}
+.chats-dock__search { padding: 8px 12px 4px; }
+.chats-dock__search .chats-search__input { padding: 0.45rem 0.8rem; font-size: 0.8125rem; }
 .chats-dock__results {
   display: block;
   flex: 1;
@@ -1095,210 +1221,361 @@ turbo-frame[id^="chats_page_"] {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.chats-dock__list { padding: 0.15rem 0 0.5rem; }
-.chats-dock__list .chats-row__link { padding: 0.6rem 0.75rem; gap: 0.65rem; }
-.chats-dock__list .chats-avatar { width: 2.5rem; height: 2.5rem; }
-.chats-dock__empty {
-  margin: 0;
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--chats-text-muted);
-  font-size: 0.875rem;
-}
-.chats-dock__footer {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.25rem 0.75rem;
-  padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid var(--chats-border);
-  font-size: 0.85rem;
-}
-.chats-dock__see-all { color: inherit; font-weight: 650; text-decoration: none; }
-.chats-dock__see-all:hover { text-decoration: underline; }
+.chats-dock__list { list-style: none; margin: 0; padding: 4px 0; }
+.chats-dock__list .chats-row__link { padding: 9px 12px; gap: 10px; }
+.chats-dock__list .chats-row__link:hover { background: var(--chats-dock-hover); }
+.chats-dock__list .chats-avatar { width: 40px; height: 40px; font-size: 0.85rem; }
+.chats-dock__list .chats-row__title { font-size: 0.875rem; }
+.chats-dock__list .chats-row__subject { font-size: 0.6875rem; }
+.chats-dock__list .chats-row__preview { font-size: 0.8125rem; }
+.chats-dock__list .chats-row__time { font-size: 0.6875rem; }
+/* A conversation that is open in a window right now. */
+.chats-dock__list .chats-row__link[aria-current="true"] { box-shadow: inset 3px 0 0 var(--chats-accent); }
+.chats-row__muted { flex-shrink: 0; width: 14px; height: 14px; color: var(--chats-text-muted); }
 
-/* --- A window ------------------------------------------------------------------- */
-
-.chats-window {
-  display: flex;
-  flex-direction: column;
-  width: var(--chats-window-width);
-  height: min(var(--chats-window-height), calc(100dvh - 1rem));
-  background: var(--chats-bg);
-  border: 1px solid var(--chats-border);
-  border-bottom: 0;
-  border-radius: 0.75rem 0.75rem 0 0;
-  box-shadow: 0 -2px 18px rgba(0, 0, 0, 0.14);
-  overflow: hidden;
-  animation: chats-dock-rise 180ms ease-out;
-}
-/* Minimized: folded to its header. Height, not display: the thread keeps
-   its box (and its scroll position) and only has no room; that zero height
-   is also how the thread controller knows not to mark anything read. */
-.chats-window--minimized { height: var(--chats-dock-bar-height); }
-.chats-window > .chats-loader { margin: auto; }
-
-.chats-window__card {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-.chats-window .chats-thread {
-  flex: 1;
-  min-height: 0;
-  height: auto;
-  max-width: none;
-  margin: 0;
-}
-.chats-window__header {
+.chats-dock__see-all {
+  flex: 0 0 44px;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  flex: 0 0 auto;
-  box-sizing: border-box;
-  height: var(--chats-dock-bar-height);
-  padding: 0 0.35rem 0 0.7rem;
-  border-bottom: 1px solid var(--chats-border);
-  background: var(--chats-bg);
+  justify-content: center;
+  border-top: 1px solid var(--chats-dock-edge);
+  color: var(--chats-text);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+.chats-dock__see-all:hover { background: var(--chats-dock-hover); text-decoration: underline; }
+
+.chats-dock .chats-empty { padding: 40px 20px; }
+.chats-dock .chats-empty__icon { font-size: 2rem; margin-bottom: 0.5rem; }
+.chats-dock .chats-empty__title { font-size: 0.9375rem; }
+.chats-dock .chats-empty__hint { font-size: 0.8125rem; }
+
+/* The very first load: four still rows (no shimmer). */
+.chats-dock__skeleton { display: flex; gap: 10px; align-items: center; padding: 9px 12px; }
+.chats-dock__skeleton::before {
+  content: "";
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--chats-surface);
+  flex-shrink: 0;
+}
+.chats-dock__skeleton span { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.chats-dock__skeleton span::before,
+.chats-dock__skeleton span::after { content: ""; height: 10px; border-radius: 4px; background: var(--chats-surface); }
+.chats-dock__skeleton span::before { width: 45%; }
+.chats-dock__skeleton span::after { width: 80%; }
+
+/* --- Windows --------------------------------------------------------------------- */
+
+.chats-window__header { padding-right: 4px; position: relative; }
+.chats-window__title {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
-.chats-window__header .chats-avatar { width: 2rem; height: 2rem; font-size: 0.75rem; }
-.chats-window__identity { flex: 1; min-width: 0; }
-.chats-window__title {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
-  margin: 0;
-  font-size: 0.9rem;
-  font-weight: 750;
-}
+.chats-window__title .chats-avatar { width: 32px; height: 32px; font-size: 0.8rem; }
+.chats-window__identity { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chats-window__name-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .chats-window__name {
-  color: inherit;
-  text-decoration: none;
+  font-family: var(--chats-dock-title-font);
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-a.chats-window__name:hover { text-decoration: underline; }
 .chats-window__subject {
-  margin: 0;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
   color: var(--chats-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.chats-window__button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 2rem;
-  height: 2rem;
+.chats-window__title .chats-badge { margin-left: 2px; }
+.chats-window__icon {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 8px;
   background: none;
   color: var(--chats-text-muted);
   font: inherit;
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   line-height: 1;
-  text-decoration: none;
   cursor: pointer;
+  text-decoration: none;
+  list-style: none;
 }
-.chats-window__button:hover { background: var(--chats-surface); color: var(--chats-text); }
-.chats-window__button:focus-visible { outline: 2px solid var(--chats-accent); outline-offset: -2px; }
-.chats-window__back { display: none; font-size: 1.6rem; }
-/* A minimized window something new arrived in. */
-.chats-window--unread .chats-window__header { box-shadow: inset 0 3px 0 var(--chats-accent); }
-.chats-window--unread .chats-window__name { font-weight: 800; }
-
-/* The thread, sized for a window. */
-.chats-window .chats-thread__scroll { padding: 0.75rem 0.75rem 0.4rem; }
-.chats-window .chats-message { max-width: 88%; }
-.chats-window .chats-message__image { max-width: 11rem; max-height: 11rem; }
-.chats-window .chats-composer { padding: 0.5rem 0.6rem; }
-.chats-window .chats-composer__send { width: 2.3rem; height: 2.3rem; }
-
-@keyframes chats-dock-rise {
-  from { opacity: 0; transform: translateY(0.75rem); }
+.chats-window__icon::-webkit-details-marker { display: none; }
+.chats-window__icon svg { width: 18px; height: 18px; }
+.chats-window__icon:hover { background: var(--chats-dock-hover); color: var(--chats-text); }
+.chats-window__back { display: none; }
+/* The host's thread actions (conversation_header_actions). */
+.chats-window__menu { flex: 0 0 auto; }
+.chats-window__menu .chats-menu__panel { top: calc(100% - 4px); right: 4px; z-index: 30; }
+/* Touch in dock mode (a tablet): the same 48px header, fatter targets. */
+@media (pointer: coarse) {
+  .chats-dock[data-mode="dock"] .chats-window__icon { flex-basis: 40px; width: 40px; height: 40px; }
 }
 
-/* --- Phones (.chats-dock--compact, below --chats-dock-breakpoint) ---------------
-   The closed dock is one round button; the open panel and a window each
-   fill the screen — the VISIBLE screen, which the controller measures so
-   the composer stays above the keyboard. One window at a time (the
-   controller caps it); minimized ones simply aren't shown. */
+/* Focused: a 2px accent line along the top of the header. */
+.chats-window:focus-within .chats-window__header { box-shadow: inset 0 2px 0 var(--chats-dock-focus); }
 
-.chats-dock--compact {
-  right: max(1rem, env(safe-area-inset-right, 0px));
-  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
-  max-width: none;
-}
-.chats-dock--compact .chats-dock__panel:not([open]) {
-  width: 3.5rem;
-  height: 3.5rem;
-  border: 1px solid var(--chats-border);
-  border-radius: 999px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
-  overflow: visible;
-}
-.chats-dock--compact .chats-dock__panel:not([open]) .chats-dock__bar {
-  position: relative;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border-radius: 999px;
-}
-.chats-dock--compact .chats-dock__panel:not([open]) :is(.chats-dock__avatar, .chats-dock__title, .chats-dock__chevron) {
-  display: none;
-}
-.chats-dock--compact .chats-dock__panel:not([open]) .chats-dock__icon { display: block; }
-.chats-dock--compact .chats-dock__panel:not([open]) .chats-dock__badge {
-  position: absolute;
-  top: -0.2rem;
-  right: -0.2rem;
-  box-shadow: 0 0 0 2px var(--chats-bg);
-}
-
-.chats-dock--compact .chats-dock__panel[open],
-.chats-dock--compact .chats-window {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: var(--chats-dock-viewport-top, 0px);
-  width: auto;
-  height: var(--chats-dock-viewport-height, 100dvh);
-  border: 0;
-  border-radius: 0;
+/* Waiting to be seen (popped open, or minimized when something arrived): the
+   header becomes the accent pair, the one every host already tunes. */
+.chats-window--unread .chats-window__header {
+  background: var(--chats-dock-unread-bg);
+  color: var(--chats-dock-unread-text);
+  border-bottom-color: transparent;
   box-shadow: none;
 }
-.chats-dock--compact .chats-dock__panel[open] {
-  z-index: 1;
-  padding-top: env(safe-area-inset-top, 0px);
-  box-sizing: border-box;
+.chats-window--unread :is(.chats-window__subject, .chats-window__icon, .chats-verified) { color: inherit; }
+.chats-window--unread .chats-window__icon:hover { background: color-mix(in srgb, currentColor 16%, transparent); color: inherit; }
+.chats-window--unread .chats-window__header .chats-badge {
+  background: var(--chats-dock-unread-text);
+  color: var(--chats-dock-unread-bg);
 }
-.chats-dock--compact .chats-dock__body {
-  height: calc(var(--chats-dock-viewport-height, 100dvh) - var(--chats-dock-bar-height) - env(safe-area-inset-top, 0px));
+.chats-window--unread .chats-window__header :focus-visible { outline-color: var(--chats-dock-unread-text); }
+
+/* The thread, inside a window: the full page's body, compacted. Rooted at
+   .chats-thread--window, never .chats (the full-page shell). */
+.chats-thread--window {
+  --chats-radius: 0.95rem;
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--chats-dock-bg);
 }
-.chats-dock--compact .chats-window {
-  z-index: 2;
-  padding-top: env(safe-area-inset-top, 0px);
-  box-sizing: border-box;
+.chats-thread--window .chats-thread__scroll { padding: 10px 12px 6px; }
+/* A short thread sits on the composer: the eye is at the bottom. */
+.chats-thread--window .chats-thread__scroll > :first-child { margin-top: auto; }
+.chats-thread--window .chats-day-separator,
+.chats-thread--window .chats-thread__unread-line { margin: 0.5rem 0; }
+.chats-thread--window .chats-message { max-width: 88%; }
+.chats-thread--window .chats-message__avatar { width: 1.6rem; height: 1.6rem; font-size: 0.65rem; }
+.chats-thread--window .chats-message__bubble { padding: 0.4rem 0.7rem; font-size: 0.875rem; line-height: 1.35; }
+.chats-thread--window .chats-message__bubble > .chats-message__action { font-size: 0.8125rem; padding: 0.45rem 0.8rem; }
+.chats-thread--window .chats-message__image { max-width: 11rem; max-height: 11rem; }
+.chats-thread--window .chats-typing { font-size: 0.75rem; padding: 0.3rem 0.25rem; }
+.chats-thread--window .chats-composer { padding: 8px 10px calc(8px + var(--chats-safe-bottom)); }
+.chats-thread--window .chats-composer__actions { margin-bottom: 6px; }
+.chats-thread--window :where(.chats-composer__actions) :where(a, button) { font-size: 0.75rem; padding: 0.25rem 0.7rem; }
+.chats-thread--window .chats-composer__bar { gap: 8px; }
+.chats-thread--window .chats-composer__input { font-size: 0.875rem; padding: 0.45rem 0.75rem; max-height: 7.5rem; }
+.chats-thread--window .chats-composer__send { width: 2.25rem; height: 2.25rem; font-size: 0.95rem; }
+.chats-thread--window .chats-composer--locked { padding: 12px 14px calc(12px + var(--chats-safe-bottom)); }
+.chats-thread--window .chats-composer__locked-notice { font-size: 0.8125rem; }
+
+/* Before anybody wrote (opened from a Message button). */
+.chats-window__hello {
+  margin: auto 0;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--chats-text-muted);
+  font-size: 0.8125rem;
 }
-.chats-dock--compact .chats-window--minimized { display: none; }
-.chats-dock--compact .chats-window__header { cursor: default; }
-.chats-dock--compact .chats-window__back { display: inline-flex; }
-.chats-dock--compact :is(.chats-window__minimize, .chats-window__close) { display: none; }
-.chats-dock--compact .chats-window .chats-composer {
-  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+.chats-window__hello .chats-avatar { display: flex; width: 56px; height: 56px; font-size: 1.2rem; margin: 0 auto 10px; }
+.chats-window__hello strong { display: block; color: var(--chats-text); font-size: 0.9375rem; margin-bottom: 2px; }
+.chats-thread__scroll:has(.chats-message) .chats-window__hello { display: none; }
+
+/* Loading, and failure. */
+.chats-window__status {
+  margin: auto;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--chats-text-muted);
+  font-size: 0.8125rem;
+}
+.chats-window__status p { margin: 0; }
+.chats-window__retry {
+  margin-top: 10px;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--chats-border);
+  border-radius: 999px;
+  background: var(--chats-surface);
+  color: var(--chats-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .chats-window,
+/* --- Motion ---------------------------------------------------------------------- */
+
+@keyframes chats-dock-rise { from { transform: translateY(16px); opacity: 0; } }
+@keyframes chats-dock-sheet-up { from { transform: translateY(100%); } }
+@keyframes chats-dock-push { from { transform: translateX(100%); } }
+@keyframes chats-dock-bump { 50% { transform: scale(1.2); } }
+@keyframes chats-dock-flash { 50% { filter: brightness(1.18); } }
+
+.chats-window--entering { animation: chats-dock-rise var(--chats-dock-duration) var(--chats-dock-ease); }
+.chats-window--popped .chats-window__header { animation: chats-dock-flash 600ms ease-in-out 2; }
+.chats-dock .chats-badge--bumped { animation: chats-dock-bump 160ms ease-out; }
+
+/* --- Phones: the sheet ------------------------------------------------------------
+   Under 700px wide or 500px tall (one window beside the panel needs 656px;
+   a 480px window needs the height). A media query, not a class, so a phone
+   gets this layout before the controller connects and without JavaScript —
+   the panel is a <details>, so the closed bar is the launcher and opening it
+   is the sheet. The controller reads the same query for its behaviour. */
+
+@media (max-width: 699.98px), (max-height: 499.98px) {
+  .chats-dock {
+    inset: auto 0 0 auto;
+    right: 0;
+    display: block;
+  }
+
+  /* Closed: the round launcher, bottom-right above the home indicator. */
+  .chats-dock__panel:not([open]) {
+    position: fixed;
+    right: calc(16px + var(--chats-safe-right));
+    bottom: calc(16px + var(--chats-dock-offset) + var(--chats-safe-bottom));
+    width: var(--chats-dock-launcher-size);
+    height: var(--chats-dock-launcher-size);
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: var(--chats-accent);
+    color: var(--chats-accent-contrast);
+    box-shadow: 0 6px 20px rgba(17, 24, 39, 0.28);
+    overflow: visible;
+  }
+  .chats-dock__panel:not([open]) .chats-dock__toggle {
+    position: relative;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+  }
+  .chats-dock__panel:not([open]) :is(.chats-avatar, .chats-dock__chevron) { display: none; }
+  .chats-dock__panel:not([open]) .chats-dock__title {
+    /* Still read out ("Messages, 3 unread"), just not shown. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .chats-dock__panel:not([open]) .chats-dock__icon { display: block; }
+  .chats-dock__panel:not([open]) .chats-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    /* accent-on-accent would vanish: the launcher's badge is the inverse pair */
+    background: var(--chats-accent-contrast);
+    color: var(--chats-accent);
+    box-shadow: 0 0 0 2px var(--chats-accent);
+  }
+  .chats-dock--no-launcher .chats-dock__panel:not([open]) { display: none; }
+  /* Anything full-screen up: the launcher would only cover it. */
+  .chats-dock:has(.chats-window--front) .chats-dock__panel:not([open]) { display: none; }
+
+  /* Open: the full-screen sheet; a window sits on top of the list. */
+  .chats-dock__panel[open],
+  .chats-window {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--chats-vv-top, 0px);
+    width: 100%;
+    height: var(--chats-vvh, 100dvh);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: var(--chats-safe-top) var(--chats-safe-right) 0 var(--chats-safe-left);
+  }
+  .chats-dock__panel[open] {
+    z-index: 1;
+    padding-bottom: var(--chats-safe-bottom);
+    animation: chats-dock-sheet-up 260ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
   .chats-dock__panel[open] .chats-dock__body { animation: none; }
-  .chats-dock__chevron { transition: none; }
+  .chats-window { z-index: 2; }
+  .chats-window:not(.chats-window--front) { display: none; }
+  .chats-window--front.chats-window--entering { animation: chats-dock-push 260ms cubic-bezier(0.32, 0.72, 0, 1); }
+
+  .chats-dock__body {
+    inset: calc(var(--chats-safe-top) + var(--chats-dock-sheet-header-height)) var(--chats-safe-right)
+           var(--chats-safe-bottom) var(--chats-safe-left);
+  }
+  .chats-dock__panel[open] .chats-dock__bar,
+  .chats-window__header {
+    flex-basis: var(--chats-dock-sheet-header-height);
+    height: var(--chats-dock-sheet-header-height);
+    box-shadow: none;
+  }
+  .chats-dock__panel[open] .chats-dock__toggle { padding: 0 6px 0 16px; }
+  .chats-dock__panel[open] .chats-dock__title { font-size: 1.125rem; font-weight: 800; }
+  .chats-dock__panel[open] :is(.chats-dock__toggle .chats-avatar, .chats-dock__chevron) { display: none; }
+  .chats-dock__panel[open] .chats-dock__close-glyph { display: inline-grid; flex-basis: 44px; width: 44px; height: 44px; }
+  .chats-dock__panel[open] .chats-dock__close-glyph svg { width: 22px; height: 22px; }
+  .chats-dock__search { padding: 8px 16px; }
+  /* 16px or iOS Safari zooms the page on focus. */
+  .chats-dock__search .chats-search__input { font-size: 16px; padding: 0.55rem 0.9rem; }
+  .chats-dock__list .chats-row__link { padding: 10px 16px; gap: 12px; }
+  .chats-dock__list .chats-avatar { width: 48px; height: 48px; }
+  .chats-dock__list .chats-row__title { font-size: 1rem; }
+  .chats-dock__list .chats-row__preview { font-size: 0.875rem; }
+  .chats-dock__list .chats-row__time { font-size: 0.75rem; }
+  .chats-dock__see-all { flex-basis: 52px; font-size: 0.9375rem; }
+
+  .chats-window__back { display: inline-grid; }
+  .chats-window__header { padding: 0 4px; }
+  .chats-window__header :is(.chats-window__minimize, .chats-window__close) { display: none; }
+  .chats-window__icon { flex-basis: 44px; width: 44px; height: 44px; }
+  .chats-window__icon svg { width: 22px; height: 22px; }
+  .chats-window__title { cursor: default; padding-left: 2px; }
+  .chats-window__title .chats-avatar { width: 36px; height: 36px; }
+  .chats-window__name { font-size: 1rem; }
+  /* Full screen: the conversation is in front of you, nothing to flag. */
+  .chats-window--unread .chats-window__header {
+    background: var(--chats-dock-header-bg);
+    color: inherit;
+    border-bottom-color: var(--chats-dock-edge);
+  }
+  .chats-thread--window .chats-thread__scroll { padding: 12px 14px 8px; }
+  .chats-thread--window .chats-message__bubble { font-size: 1rem; padding: 0.5rem 0.8rem; }
+  .chats-thread--window .chats-composer { padding: 8px 12px calc(8px + var(--chats-safe-bottom)); }
+  .chats-thread--window .chats-composer__input { font-size: 16px; padding: 0.55rem 0.9rem; }
+  .chats-thread--window .chats-composer__send { width: 2.75rem; height: 2.75rem; }
+  /* The keyboard is up: the home-indicator strip is behind it. */
+  .chats-dock--keyboard .chats-thread--window .chats-composer { padding-bottom: 8px; }
+}
+
+html.chats-dock-sheet-open { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chats-dock,
+  .chats-dock *,
+  .chats-dock *::before,
+  .chats-dock *::after {
+    animation: none !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
 }

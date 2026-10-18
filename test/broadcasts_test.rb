@@ -81,92 +81,113 @@ class BroadcastsTest < ActiveSupport::TestCase
 
   # --- the messaging dock's stream ---------------------------------------------
 
-  test "a new message replaces the recipient's dock badge, naming the conversation and popping it up" do
-    streams = capture_turbo_stream_broadcasts([@bob, :chats_dock]) do
-      perform_enqueued_jobs { @conversation.messages.create!(sender: @alice, body: "dock me") }
-    end
+  test "a new message updates the recipient's dock: its badges, and a signal naming the conversation" do
+    streams = dock_streams(@bob) { @conversation.messages.create!(sender: @alice, body: "dock me") }
 
-    replace = streams.sole
-    assert_equal "replace", replace["action"]
-    assert_equal "chats_dock_badge", replace["target"]
-    badge = dock_badge(replace)
-    assert_equal @conversation.id.to_s, badge["data-latest-conversation-id"]
-    assert badge.key?("data-changed"), "the dock's signal to reload its list"
-    assert badge.key?("data-pop-up"), "and to open the window"
-    assert_includes badge.text, "1 unread conversation"
+    badges = streams.find { |stream| stream["targets"] }
+    assert_equal "replace", badges["action"]
+    assert_equal ".chats-dock [data-chats-unread-badge]", badges["targets"]
+    assert_includes badges.to_html, "1 unread"
+
+    signal = dock_signal(streams)
+    assert signal.key?("data-changed"), "the dock's signal to reload its list"
+    assert_equal @conversation.id.to_s, signal["data-conversation-id"]
+    assert signal.key?("data-notify"), "a message Bob would be notified about: it may pop up"
+    assert_equal "Alice", signal["data-sender-name"]
+    assert_equal "1", signal["data-unread-count"]
   end
 
-  test "the sender's own dock gets nothing for their own message" do
-    assert_no_turbo_stream_broadcasts([@alice, :chats_dock]) do
-      perform_enqueued_jobs { @conversation.messages.create!(sender: @alice, body: "mine") }
-    end
+  test "the sender's dock reorders its list, with no badge and no pop-up" do
+    streams = dock_streams(@alice) { @conversation.messages.create!(sender: @alice, body: "mine") }
+
+    assert_nil(streams.find { |stream| stream["targets"] }, "your own message never moves your badge")
+    signal = dock_signal(streams)
+    assert signal.key?("data-changed")
+    assert_equal @conversation.id.to_s, signal["data-conversation-id"]
+    assert_not signal.key?("data-notify")
   end
 
   test "a muted seat's dock badge stays truthful but never pops a window" do
     @conversation.participant_for(@bob).mute!
 
-    streams = capture_turbo_stream_broadcasts([@bob, :chats_dock]) do
-      perform_enqueued_jobs { @conversation.messages.create!(sender: @alice, body: "shh") }
-    end
+    streams = dock_streams(@bob) { @conversation.messages.create!(sender: @alice, body: "shh") }
 
-    badge = dock_badge(streams.sole)
-    assert_includes badge.text, "1 unread conversation", "muting silences, it doesn't hide"
-    assert_equal @conversation.id.to_s, badge["data-latest-conversation-id"]
-    assert_not badge.key?("data-pop-up")
+    assert_includes streams.find { |stream| stream["targets"] }.to_html, "1 unread", "muting silences, it doesn't hide"
+    signal = dock_signal(streams)
+    assert_equal @conversation.id.to_s, signal["data-conversation-id"]
+    assert_not signal.key?("data-notify")
   end
 
-  test "a system message pops every seat's window, and a headless seat's never" do
+  test "a system message may pop every seat's window, and a headless seat's never" do
     desk = create_desk(name: "Soporte")
     support = @alice.chat_with(desk)
 
-    alice_streams = capture_turbo_stream_broadcasts([@alice, :chats_dock]) do
-      desk_streams = capture_turbo_stream_broadcasts([desk, :chats_dock]) do
-        perform_enqueued_jobs { support.post_system_message!("Ticket opened") }
-      end
-      assert_not dock_badge(desk_streams.sole).key?("data-pop-up"), "a desk is never notified"
+    desk_streams = nil
+    alice_streams = dock_streams(@alice) do
+      desk_streams = dock_streams(desk) { support.post_system_message!("Ticket opened") }
     end
 
-    assert dock_badge(alice_streams.sole).key?("data-pop-up")
+    assert dock_signal(alice_streams).key?("data-notify")
+    assert_not dock_signal(desk_streams).key?("data-notify"), "a desk is never notified"
   end
 
-  test "reading replaces the reader's dock badge without naming anything to open" do
-    perform_enqueued_jobs { @conversation.messages.create!(sender: @bob, body: "read me") }
+  test "a blocked recipient's dock is told nothing about the conversation" do
+    perform_enqueued_jobs { @conversation.messages.create!(sender: @alice, body: "before") }
+    block_pair!(@alice, @bob)
 
-    streams = capture_turbo_stream_broadcasts([@alice, :chats_dock]) do
-      perform_enqueued_jobs { @conversation.mark_read_by!(@alice) }
-    end
+    # A system message still lands in a blocked pair's thread (blocks stop
+    # people, not the app); Bob's inbox doesn't show it, so his dock mustn't.
+    streams = dock_streams(@bob) { @conversation.post_system_message!("Your ride was cancelled") }
 
-    badge = dock_badge(streams.sole)
-    assert badge.key?("data-changed"), "the list reloads: the row is no longer bold"
-    assert_nil badge["data-latest-conversation-id"]
-    assert_not badge.key?("data-pop-up")
-    assert badge.key?("hidden"), "nothing unread left"
+    assert_nil dock_signal(streams), "no conversation id, no pop-up, no announcement"
+    assert(streams.find { |stream| stream["targets"] }, "the badge itself still renders (and counts nothing hidden)")
   end
 
-  test "the dock badge counts exactly what the nav badge counts" do
+  test "a scoped-out recipient's dock is told nothing about the conversation" do
     hidden = conversation_between(@alice, @bob, about: create_listing(title: "Hidden"))
     Chats.config.inbox_scope = ->(relation, _viewer) { relation.where(subject_id: nil) }
 
-    streams = capture_turbo_stream_broadcasts([@bob, :chats_dock]) do
-      perform_enqueued_jobs { hidden.messages.create!(sender: @alice, body: "out of scope") }
-    end
+    streams = dock_streams(@bob) { hidden.messages.create!(sender: @alice, body: "out of scope") }
 
-    assert dock_badge(streams.sole).key?("hidden"), "a conversation the inbox hides never lights it"
+    assert_nil dock_signal(streams)
+    assert_not_includes streams.find { |stream| stream["targets"] }.to_html, "1 unread",
+                        "a conversation the inbox hides never lights the badge"
   end
 
-  test "edits and deletes never touch the dock" do
+  test "reading updates the reader's dock badges and reloads the list, naming nothing" do
+    perform_enqueued_jobs { @conversation.messages.create!(sender: @bob, body: "read me") }
+
+    streams = dock_streams(@alice) { @conversation.mark_read_by!(@alice) }
+
+    badge = Nokogiri::HTML5.fragment(streams.find { |stream| stream["targets"] }.at_css("template").inner_html)
+                           .at_css("[data-chats-unread-badge]")
+    assert badge.key?("hidden"), "nothing unread left"
+    signal = dock_signal(streams)
+    assert signal.key?("data-changed")
+    assert_nil signal["data-conversation-id"]
+    assert_not signal.key?("data-notify")
+  end
+
+  test "edits and deletes refresh every seat's list, with no badge and no pop-up" do
     message = perform_enqueued_jobs { @conversation.messages.create!(sender: @alice, body: "v1") }
 
-    # capture, not assert_no_…: that one counts every broadcast the stream
-    # ever had, the create's included.
-    streams = capture_turbo_stream_broadcasts([@bob, :chats_dock]) do
-      perform_enqueued_jobs do
-        message.edit!("v2")
-        message.soft_delete!
-      end
+    [@alice, @bob].each do |messager|
+      streams = dock_streams(messager) { message.edit!("v#{rand(100)}") }
+
+      assert_nil(streams.find { |stream| stream["targets"] })
+      signal = dock_signal(streams)
+      assert_equal @conversation.id.to_s, signal["data-conversation-id"]
+      assert_not signal.key?("data-notify")
+    end
+  end
+
+  test "the nav badge keeps its id and is marked as an unread badge" do
+    streams = capture_turbo_stream_broadcasts([@bob, :chats_badge]) do
+      perform_enqueued_jobs { @conversation.messages.create!(sender: @alice, body: "nav") }
     end
 
-    assert_empty streams
+    assert_equal "chats_unread_badge", streams.sole["target"]
+    assert_includes streams.sole.to_html, "data-chats-unread-badge"
   end
 
   test "editing and soft-deleting replace the bubble in place" do
@@ -250,8 +271,14 @@ class BroadcastsTest < ActiveSupport::TestCase
 
   private
 
-  # The badge element a dock stream's replace carries.
-  def dock_badge(stream)
-    stream.at_css("template").inner_html.then { |html| Nokogiri::HTML5.fragment(html) }.at_css("#chats_dock_badge")
+  # Everything +messager+'s dock stream received while the block ran.
+  def dock_streams(messager, &block)
+    capture_turbo_stream_broadcasts([messager, :chats_dock]) { perform_enqueued_jobs(&block) }
+  end
+
+  # The signal template a dock update carried, or nil.
+  def dock_signal(streams)
+    stream = streams.find { |candidate| candidate["target"] == "chats_dock_signal" }
+    stream && Nokogiri::HTML5.fragment(stream.at_css("template").inner_html).at_css("template#chats_dock_signal")
   end
 end

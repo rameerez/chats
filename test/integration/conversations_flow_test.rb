@@ -55,6 +55,18 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "avatar.png"
   end
 
+  test "a prefetch of the thread (Turbo 8, on hover) never marks it read" do
+    @bob.message!(@conversation, "unread")
+    login_as @alice
+
+    get "/messages/#{@conversation.id}", headers: { "X-Sec-Purpose" => "prefetch" }
+    assert_response :success
+    assert_equal 1, @alice.unread_chats_count, "a pointer resting on a row is not somebody reading"
+
+    get "/messages/#{@conversation.id}"
+    assert_equal 0, @alice.unread_chats_count, "the visit itself reads"
+  end
+
   test "a conversation nobody has written in is not listed, and still opens" do
     # @conversation was opened in setup and nobody wrote: no "No messages
     # yet" row, and no empty-state lie either — there is nothing to show.

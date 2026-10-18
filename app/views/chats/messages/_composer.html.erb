@@ -71,7 +71,8 @@
             autocomplete: "off",
             data: {
               "chats--composer-target": "input",
-              action: "input->chats--composer#typed keydown.enter->chats--composer#enterSend"
+              action: "input->chats--composer#typed keydown.enter->chats--composer#enterSend " \
+                      "keydown.esc->chats--composer#escape"
             } %>
 
       <%# pointerdown/mousedown keepFocus: keeps the textarea focused (and the

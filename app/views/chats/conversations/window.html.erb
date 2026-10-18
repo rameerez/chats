@@ -1,15 +1,15 @@
 <%# A floating dock window's content (GET /:id?window=1 from inside the
-    window's turbo frame — see chats/dock/_window for the frame itself and
-    ConversationsController#show). The SAME thread body the page renders,
-    with the window's compact header: avatar, name, subject, and the three
-    window buttons. Clicking the header (anywhere but a link or a button)
-    minimizes or expands the window, LinkedIn-style.
+    window's turbo frame — see chats/dock/_window for the frame and
+    ConversationsController#show): the SAME thread body the page renders,
+    rooted at .chats-thread--window, under the window's compact header.
 
-    The chats--dock actions below reach the dock's controller because the
-    window lives inside the dock element. %>
+    The header's chats--dock actions reach the dock's controller because the
+    window lives inside the dock element. The title is a button: it
+    minimizes and expands the window (LinkedIn's header click), and says
+    which way with aria-expanded. %>
+<% title = @conversation.title_for(chats_current_messager) %>
 <%= turbo_frame_tag dom_id(@conversation, :window) do %>
-  <% title = @conversation.title_for(chats_current_messager) %>
-  <section class="chats-window__card" aria-label="<%= title %>">
+  <section class="chats-window__card" role="region" aria-label="<%= t("chats.dock.window_label", name: title) %>">
     <%= render layout: "chats/conversations/thread",
                locals: {
                  conversation: @conversation,
@@ -17,53 +17,10 @@
                  more: @more_messages,
                  first_unread_id: @first_unread_id,
                  counterpart: chats_counterpart,
-                 read_pending: true
+                 window: true
                } do %>
-      <header class="chats-window__header" data-action="click->chats--dock#toggleWindow">
-        <%# Phones show one full-screen window: back returns to the list. %>
-        <button type="button"
-                class="chats-window__button chats-window__back"
-                aria-label="<%= t("chats.dock.back") %>"
-                data-action="chats--dock#back">‹</button>
-
-        <% if chats_counterpart %>
-          <%= chats_messager_avatar(chats_counterpart) %>
-        <% else %>
-          <%= chats_conversation_avatar(@conversation, chats_current_messager) %>
-        <% end %>
-
-        <div class="chats-window__identity">
-          <p class="chats-window__title">
-            <% if chats_counterpart %>
-              <%= chats_messager_name(chats_counterpart, css_class: "chats-window__name") %>
-              <%= chats_verified_badge(chats_counterpart) %>
-            <% else %>
-              <span class="chats-window__name"><%= title %></span>
-            <% end %>
-          </p>
-          <% if @conversation.subject_label %>
-            <p class="chats-window__subject"><%= @conversation.subject_label %></p>
-          <% end %>
-        </div>
-
-        <%= link_to "↗", conversation_path(@conversation),
-              class: "chats-window__button chats-window__expand",
-              title: t("chats.dock.open_full"),
-              "aria-label": t("chats.dock.open_full"),
-              data: { turbo_frame: "_top" } %>
-        <button type="button"
-                class="chats-window__button chats-window__minimize"
-                aria-label="<%= t("chats.dock.minimize") %>"
-                title="<%= t("chats.dock.minimize") %>"
-                aria-expanded="true"
-                data-chats-dock-minimize
-                data-action="chats--dock#minimize">–</button>
-        <button type="button"
-                class="chats-window__button chats-window__close"
-                aria-label="<%= t("chats.dock.close") %>"
-                title="<%= t("chats.dock.close") %>"
-                data-action="chats--dock#close">×</button>
-      </header>
+      <%= render "chats/dock/window_header", conversation: @conversation, title: title,
+                                             counterpart: chats_counterpart %>
     <% end %>
   </section>
 <% end %>

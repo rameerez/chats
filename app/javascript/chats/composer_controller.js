@@ -115,6 +115,16 @@ export default class extends Controller {
     this.inputTarget.setSelectionRange(this.inputTarget.value.length, this.inputTarget.value.length)
   }
 
+  // Escape while editing cancels the edit, and only that: the dock (if the
+  // composer is in one of its windows) sees the event handled and leaves
+  // the window alone.
+  escape(event) {
+    if (!this.editing) return
+
+    event.preventDefault()
+    this.cancelEdit()
+  }
+
   cancelEdit(event) {
     event?.preventDefault()
     this.exitEdit()

@@ -2,61 +2,89 @@
     bottom-right corner, LinkedIn / Steam style. Left to right, the floating
     conversation WINDOWS (newest nearest the panel), then the PANEL: its
     header is the collapsed bar (avatar, "Messages", unread badge), and open
-    it holds search, the recent list and the way to the full inbox.
+    it holds search, the recent list and the way to the full inbox. On a
+    phone (chats.css: under 700px wide or 500px tall) the closed bar is a
+    round button, the open panel a full-screen sheet.
 
     data-turbo-permanent: Turbo Drive carries this element from page to page
     as it is — open windows, scroll positions, drafts and cable
-    subscriptions included — as long as the next page renders a dock too
-    (same id). The panel is a <details>: it opens and closes with no
-    JavaScript at all, and its links are real links.
+    subscriptions included — as long as the next page renders a dock with
+    the same id. The id names the VIEWER, so a visit that lands on another
+    account's page (sign out and in, an account switcher) never matches and
+    never carries one person's windows into another's page.
 
-    The chats--dock controller (dock_controller.js) does the rest: windows
-    open, close, minimize and are capped; they are remembered per messager in
-    localStorage; live messages pop them open; phones get one full-screen
-    window at a time. Its live signal is the badge on the viewer's own
-    `[messager, :chats_dock]` stream (see chats/dock/_badge). %>
+    The panel is a <details>: it opens and closes with no JavaScript at all,
+    and its rows, search and links are real links and forms. The chats--dock
+    controller (dock_controller.js) does the rest. Its live signal is the
+    template on the viewer's own `[messager, :chats_dock]` stream (see
+    chats/dock/_signal and Chats::Broadcasts). %>
+<% key = Chats.messager_key(viewer) %>
 <%= chats_styles %>
-<%= tag.aside id: "chats_dock",
-      class: "chats-dock",
+<%= tag.aside id: "chats_dock_#{key}",
+      class: ["chats-dock", ("chats-dock--no-launcher" unless launcher)],
       "aria-label": t("chats.dock.title"),
       data: {
         turbo_permanent: true,
+        chats_messager: key,
         controller: "chats--dock",
         "chats--dock-windows-value": windows,
-        "chats--dock-storage-key-value": "chats:dock:#{Chats.messager_key(viewer)}",
+        "chats--dock-messager-value": key,
+        "chats--dock-everywhere-value": everywhere,
         "chats--dock-window-url-value": chats_routes.conversation_path("__id__", window: 1),
         "chats--dock-record-key-value": Chats::Conversation.model_name.param_key,
-        "chats--dock-loading-value": t("chats.thread.loading"),
-        action: "keydown.esc->chats--dock#escape " \
+        "chats--dock-announcement-value": t("chats.dock.new_message_from", name: "%{name}"),
+        # Plural forms uninterpolated: the controller fills %{count} in.
+        "chats--dock-window-unread-value": I18n.t("chats.dock.window_unread").to_json,
+        action: "keydown->chats--dock#keydown " \
+                "focusin->chats--dock#engage pointerdown->chats--dock#engage wheel->chats--dock#engage " \
+                "touchstart->chats--dock#engage " \
                 "turbo:frame-missing->chats--dock#frameMissing " \
                 "turbo:frame-load->chats--dock#frameLoaded " \
+                "turbo:fetch-request-error->chats--dock#frameFailed " \
                 "turbo:submit-end->chats--dock#sent " \
-                "turbo:load@document->chats--dock#pageChanged"
+                "input->chats--dock#typed " \
+                "click@document->chats--dock#delegate " \
+                "turbo:before-stream-render@document->chats--dock#beforeStreamRender " \
+                "turbo:load@document->chats--dock#pageChanged turbo:render@document->chats--dock#pageChanged"
       } do %>
   <%= turbo_stream_from viewer, :chats_dock %>
+  <%= render "chats/dock/signal" %>
 
   <div id="chats_dock_windows" class="chats-dock__windows" data-chats--dock-target="windows"></div>
+
+  <%# What a window shows before its thread arrives, and if it can't. %>
+  <template data-chats--dock-target="loadingShell"><%= render "chats/dock/window_shell", state: :loading %></template>
+  <template data-chats--dock-target="failedShell"><%= render "chats/dock/window_shell", state: :failed %></template>
 
   <details class="chats-dock__panel"
            data-chats--dock-target="panel"
            data-action="toggle->chats--dock#panelToggled">
-    <summary class="chats-dock__bar">
-      <%= chats_messager_avatar(viewer, css_class: "chats-avatar chats-dock__avatar") %>
+    <%# The summary reads "Messages, 3 unread" from its own text; on a phone
+        the closed one is the round launcher (chats.css). %>
+    <summary class="chats-dock__bar chats-dock__toggle">
+      <%= chats_messager_avatar(viewer) %>
       <svg class="chats-dock__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
         <path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3Z" />
       </svg>
       <span class="chats-dock__title"><%= t("chats.dock.title") %></span>
       <%= render "chats/dock/badge", count: viewer.unread_chats_count %>
-      <svg class="chats-dock__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-        <path d="m6 15 6-6 6 6" />
-      </svg>
+      <span class="chats-dock__chevron" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+             stroke-linejoin="round" focusable="false"><path d="m6 15 6-6 6 6" /></svg>
+      </span>
+      <span class="chats-dock__close-glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+             focusable="false"><path d="M6 6l12 12M18 6 6 18" /></svg>
+      </span>
     </summary>
 
     <div class="chats-dock__body">
       <% if Chats.config.search %>
-        <%= form_with url: chats_routes.dock_conversations_path,
+        <%# The inbox's own search: with JavaScript the results land in the
+            dock's frame (the inbox answers that frame with the dock's list);
+            without it, on the full inbox. %>
+        <%= form_with url: chats_routes.conversations_path,
               method: :get,
               class: "chats-search chats-dock__search",
               role: "search",
@@ -69,28 +97,33 @@
           <%= hidden_field_tag :recent, recent, id: nil %>
           <%= search_field_tag :q, nil,
                 id: "chats_dock_q",
-                placeholder: t("chats.dock.search"),
-                "aria-label": t("chats.dock.search"),
+                placeholder: t("chats.inbox.search_placeholder"),
+                "aria-label": t("chats.inbox.search_placeholder"),
                 class: "chats-search__input",
                 autocomplete: "off" %>
         <% end %>
       <% end %>
 
-      <%# Lazy: nothing is fetched until the panel first opens. The
-          controller reloads it when the badge says something changed. %>
+      <%# Lazy: nothing is fetched until the panel first opens; until then,
+          four still rows. The controller reloads it when the signal says. %>
       <%= turbo_frame_tag "chats_dock_list",
             src: chats_routes.dock_conversations_path(recent: recent),
             loading: :lazy,
             target: "_top",
             class: "chats-dock__results",
-            data: { "chats--dock-target": "list" } do %>
-        <div class="chats-loader"><%= t("chats.thread.loading") %></div>
+            # A click here opens a window, never the page: hovering a row
+            # must not prefetch it.
+            data: { "chats--dock-target": "list", turbo_prefetch: false } do %>
+        <div aria-busy="true" aria-label="<%= t("chats.thread.loading") %>">
+          <% 4.times do %><div class="chats-dock__skeleton"><span></span></div><% end %>
+        </div>
       <% end %>
 
-      <footer class="chats-dock__footer">
-        <%= link_to t("chats.dock.see_all"), chats_routes.conversations_path, class: "chats-dock__see-all" %>
-        <%= chats_slot :dock_panel_footer, viewer: viewer %>
-      </footer>
+      <%= link_to t("chats.dock.see_all"), chats_routes.conversations_path, class: "chats-dock__see-all" %>
+      <%= chats_slot :dock_panel_footer, viewer: viewer %>
     </div>
   </details>
+
+  <%# "New message from …": polite, one at a time. The badge is not live. %>
+  <div class="chats-visually-hidden" aria-live="polite" aria-atomic="true" data-chats--dock-target="announcer"></div>
 <% end %>
