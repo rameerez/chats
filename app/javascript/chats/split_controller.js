@@ -22,6 +22,17 @@ import { Controller } from "@hotwired/stimulus"
 // update of the list) would disable it again on a wide screen; the frame
 // keeps what the screen says.
 //
+// The tab's title follows the pane: Turbo leaves <head> alone when it
+// promotes a frame load to a visit, so the title would stay the previous
+// page's. The server renders the pane's answer inside the page's own layout
+// (ConversationsController#render_split_page), and its <title>, the one a
+// reload of /messages/:id shows, becomes the document's.
+//
+// The open conversation's row stops counting it unread as soon as it is
+// read (the pane's answer says the server read it, `data-read`; or its
+// thread reads it on screen, `chats:read`), without waiting for the list's
+// live refresh, which may be seconds away or not come at all.
+//
 // When the pane opens a conversation, its row becomes the current one
 // (aria-current="page", .chats-row--current) at once, exactly as the server
 // renders /messages/:id, instead of when the list next refreshes. And the
@@ -82,7 +93,39 @@ export default class extends Controller {
       }
       link.closest(".chats-row")?.classList.toggle("chats-row--current", current)
     })
+    const pane = this.frameTarget.querySelector(".chats-split__pane")
+    if (pane?.dataset.read === "true") this.markRead(pane)
     this.arrive()
+  }
+
+  // turbo:frame-render: the tab takes the title of the pane's answer.
+  async retitle(event) {
+    if (!this.hasFrameTarget || event.target !== this.frameTarget) return
+
+    const html = await event.detail?.fetchResponse?.responseHTML
+    const title = html && new DOMParser().parseFromString(html, "text/html").querySelector("title")?.textContent
+    if (title) document.title = title
+  }
+
+  // chats:read, from the pane's thread.
+  threadRead(event) {
+    const pane = event.target?.closest?.(".chats-split__pane")
+    if (pane) this.markRead(pane)
+  }
+
+  // The conversation's row, read: no count, no bold, as the next refresh
+  // will render it.
+  markRead(pane) {
+    if (!this.hasListTarget || !pane.dataset.path) return
+
+    const path = new URL(pane.dataset.path, document.baseURI).pathname
+    this.listTarget.querySelectorAll(`a[data-turbo-frame="${this.frameTarget.id}"]`).forEach((link) => {
+      if (new URL(link.getAttribute("href"), document.baseURI).pathname !== path) return
+
+      const row = link.closest(".chats-row")
+      row?.classList.remove("chats-row--unread")
+      row?.querySelector(".chats-row__bottom .chats-badge")?.remove()
+    })
   }
 
   arrive() {

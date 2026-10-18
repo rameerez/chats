@@ -277,13 +277,14 @@ class SplitInboxTest < ActionDispatch::IntegrationTest
 
   # --- the pane's own frame ------------------------------------------------------------
 
-  test "the pane's frame gets the pane alone: no layout, no list, no inbox stream" do
+  test "the pane's frame gets the pane alone, in the page's own layout for its title: no list, no inbox stream" do
     login_as @alice
 
     get "/messages/#{@conversation.id}", headers: PANE_FRAME.merge(turbo_request)
 
     assert_response :success
-    assert_not_includes response.body, "<html"
+    assert_equal "Bob · Dummy", css_select("head title").sole.text,
+                 "the host's title for /messages/:id, not turbo-rails' frame layout's"
     assert_select "turbo-frame", 1
     assert_select "turbo-frame#chats_conversation > section.chats-split__pane", 1 do
       assert_select "> header.chats-thread__header h2", text: "Bob"

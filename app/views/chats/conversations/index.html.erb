@@ -149,6 +149,8 @@
                 controller: "chats--split",
                 action: "turbo:before-prefetch->chats--split#prefetch " \
                         "turbo:frame-load->chats--split#opened " \
+                        "turbo:frame-render->chats--split#retitle " \
+                        "chats:read->chats--split#threadRead " \
                         "turbo:before-morph-attribute->chats--split#keepEnabled"
               } do %>
     <nav class="chats-split__list" aria-label="<%= t("chats.inbox.title") %>" data-chats--split-target="list">
