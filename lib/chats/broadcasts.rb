@@ -20,9 +20,8 @@ module Chats
   #      broadcast would force per-viewer renders of per-viewer partials;
   #      a refresh makes each client re-request the page and get a correct,
   #      personalized render with morphing + scroll preservation for free.
-  #      Turbo debounces refreshes per stream and tags them with the
-  #      originating request id so the tab that caused the change skips its
-  #      own refresh. https://turbo.hotwired.dev/handbook/streams
+  #      Each refresh is tagged with the originating request id, so the tab
+  #      that caused the change skips its own. https://turbo.hotwired.dev/handbook/streams
   #
   #   3. The per-messager BADGE stream (`[messager, :chats_badge]`,
   #      subscribable from ANY page via the `chats_unread_badge` helper —
@@ -49,7 +48,16 @@ module Chats
   #
   # Everything uses the `_later` variants (rendering happens in background
   # jobs, never inline in the request) except `message_destroyed`, where the
-  # record is gone and can't be serialized for a job.
+  # record is gone and can't be serialized for a job. Every job is enqueued
+  # from an after_commit callback, so a broadcast never announces a write
+  # that could still roll back, and never waits in memory: once the write
+  # has committed, its broadcast is in the job queue.
+  #
+  # A broadcast can still be missed — Action Cable has no replay, and a
+  # client whose socket is down when it is sent never gets it. The client
+  # side catches up (chats/recovery.js: on reconnect, on return to a hidden
+  # page, on network-online, on a back/forward-cache restore), so every
+  # surface fed by these streams heals without polling.
   module Broadcasts
     extend ActionView::RecordIdentifier # dom_id
 
@@ -125,8 +133,21 @@ module Chats
         )
       end
 
+      # Straight into the job queue, NOT `broadcast_refresh_later_to`: that
+      # one first parks the refresh for half a second in an in-process
+      # timer (Turbo::Debouncer, a Concurrent::ScheduledTask) and only then
+      # enqueues the job, so a deploy or a crash inside that half second
+      # drops the refresh with nothing left to retry it. Its debounce only
+      # ever merged refreshes from the same thread anyway. Bursts merge on
+      # the client instead: Turbo runs one page refresh for refreshes that
+      # arrive within 150 ms of each other (Session#pageRefreshDebouncePeriod),
+      # and chats--refresh-inbox reruns one that landed mid-visit, which
+      # Turbo would otherwise ignore.
+      #
+      # `method: morph, scroll: preserve` ride on the tag, so the inbox
+      # morphs in place whatever the host layout's refresh meta says.
       def refresh_inbox_of(messager)
-        Turbo::StreamsChannel.broadcast_refresh_later_to(messager, :chats_inbox)
+        Turbo::Streams::BroadcastStreamJob.perform_later([messager, :chats_inbox], content: inbox_refresh_tag)
       end
 
       # The unread badges of +messager+: the nav badge (stream 3) and the
@@ -168,6 +189,12 @@ module Chats
       end
 
       private
+
+      # The inbox stream's whole payload: a page refresh, tagged with the
+      # request that caused it.
+      def inbox_refresh_tag
+        Turbo::StreamsChannel.turbo_stream_refresh_tag(method: :morph, scroll: :preserve).to_str
+      end
 
       # New activity: every active participant's inbox refreshes (including
       # the sender's — their OTHER tabs/devices need the new ordering; the
