@@ -47,7 +47,42 @@ class ThreadRefreshTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "typo, fixed"
   end
 
-  test "refresh answers a deep backlog with a full page refresh instead of splicing" do
+  test "a deep backlog re-renders the history at its latest page, and touches nothing else" do
+    anchor = @bob.message!(@conversation, "anchor")
+    cursor = cursor_after(anchor)
+    burst = Array.new(Chats.config.messages_per_page + 1) { |i| @bob.message!(@conversation, "burst #{i}") }
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: { since: cursor, history: 1 },
+                                                 headers: { "Accept" => "text/vnd.turbo-stream.html" }
+
+    assert_response :success
+    assert_equal "text/vnd.turbo-stream.html", response.media_type
+    streams = css_select("turbo-stream")
+    targets = streams.map { |stream| [stream["action"], stream["target"]] }
+    assert_equal [["update", dom_id(@conversation, :history)], ["chats_caught_up", dom_id(@conversation, :messages)]],
+                 targets,
+                 "the history only, and where it leaves the cursors: never a page refresh, which would clear " \
+                 "the composer's draft (and, in a dock window, refresh the host's whole page)"
+
+    # Exactly the latest page, in order, with the scroll-up chain anchored at
+    # its oldest message, so nothing between it and what was rendered is lost.
+    latest = burst.last(Chats.config.messages_per_page)
+    html = streams.first.to_html
+    rendered = css_select(streams.first, "[data-chats--thread-target='message']").map { |node| node["id"] }
+    assert_equal latest.map { |message| dom_id(message) }, rendered
+    assert_includes html, %(src="/messages/#{@conversation.id}?before=#{latest.first.id}")
+    assert_includes html, dom_id(@conversation, :messages)
+    assert_includes html, dom_id(@conversation, :read_state)
+    assert_includes html, dom_id(@conversation, :typing)
+
+    # Catching up is not reading: the «new messages» line marks where the
+    # unread start, and they stay unread until the viewer sees them.
+    assert_includes html, "chats-thread__unread-line"
+    assert @conversation.participant_for(@alice).reload.unread?
+  end
+
+  test "a thread view ejected before its history had an id still gets the page refresh it always got" do
     anchor = @bob.message!(@conversation, "anchor")
     cursor = cursor_after(anchor)
     (Chats.config.messages_per_page + 1).times { |i| @bob.message!(@conversation, "burst #{i}") }
@@ -57,13 +92,8 @@ class ThreadRefreshTest < ActionDispatch::IntegrationTest
                                                  headers: { "Accept" => "text/vnd.turbo-stream.html" }
 
     assert_response :success
-    assert_includes response.body, %(<turbo-stream action="refresh">)
-    assert_not_includes response.body, "burst 0"
-    # The content type is the contract: a body that says <turbo-stream> but
-    # arrives as text/html is not a stream to anything that checks, and this
-    # is the recovery path — when it silently does nothing, the symptom is
-    # exactly the staleness it exists to fix.
-    assert_equal "text/vnd.turbo-stream.html", response.media_type
+    assert_equal %(<turbo-stream action="refresh"></turbo-stream>), response.body.strip,
+                 "no request-id: the client must never skip its own catch-up"
   end
 
   test "refresh without a cursor is a no-op, and outsiders get a 404" do

@@ -11,6 +11,36 @@ module Chats
       @message = @conversation.messages.create!(sender: @alice, body: "react to me")
     end
 
+    # A thread catching up on missed broadcasts asks for messages updated
+    # since its cursor (Message.updated_since): a reaction made or taken
+    # back while it wasn't listening must count as one.
+    test "adding or removing a reaction moves its message's updated_at, and broadcasts the bubble once" do
+      before = @message.reload.updated_at
+
+      travel 1.second do
+        assert_enqueued_jobs 1, only: Turbo::Streams::ActionBroadcastJob do
+          Reaction.toggle!(message: @message, reactor: @bob, emoji: "👍")
+        end
+      end
+      added = @message.reload.updated_at
+      assert_operator added, :>, before
+      assert_includes Message.updated_since(before), @message
+
+      travel 2.seconds do
+        Reaction.toggle!(message: @message, reactor: @bob, emoji: "👍")
+      end
+      assert_operator @message.reload.updated_at, :>, added
+    end
+
+    test "a message destroyed with its reactions isn't updated on its way out" do
+      Reaction.toggle!(message: @message, reactor: @bob, emoji: "👍")
+      Reaction.toggle!(message: @message, reactor: @alice, emoji: "❤️")
+
+      updates = capture_sql { @message.destroy! }.grep(/\AUPDATE [`"]?chats_messages\b/i)
+      assert_empty updates
+      assert_equal 0, Reaction.where(message_id: @message.id).count
+    end
+
     test "toggle! adds then removes" do
       reaction = Reaction.toggle!(message: @message, reactor: @bob, emoji: "👍")
       assert reaction.persisted?

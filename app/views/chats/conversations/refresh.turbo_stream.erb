@@ -1,7 +1,7 @@
-<%# Stale-thread catch-up payload (ConversationsController#refresh):
-    append what arrived while the client slept, replace what changed.
-    Appends are idempotent by dom_id, so a message that raced in through
-    the live stream during the fetch can't duplicate. %>
+<%# Stale-thread catch-up payload (ConversationsController#refresh): what the
+    stream would have delivered while the client wasn't listening. Appends
+    are idempotent by dom_id, so a message that raced in through the live
+    stream during the fetch can't duplicate. %>
 <%= turbo_stream.append dom_id(@conversation, :messages) do %>
   <%= render partial: "chats/messages/message", collection: @new_messages, as: :message %>
 <% end if @new_messages.any? %>
@@ -10,4 +10,24 @@
   <%= turbo_stream.replace dom_id(message),
         partial: "chats/messages/message",
         locals: { message: message } %>
+<% end %>
+
+<%# Who has read what: a read the stream missed would leave "Sent" where it
+    should say "Seen". %>
+<%= turbo_stream.replace dom_id(@conversation, :read_state),
+      partial: "chats/conversations/read_state",
+      locals: { conversation: @conversation } %>
+
+<%# `deletion: :hard` only: every message from the client's oldest bubble on
+    that still exists (the chats_prune action, registered by the thread
+    controller, removes the rest). %>
+<%# Where the client stands now (ConversationsController#caught_up_cursors):
+    its cursors move only when an answer like this one arrives. %>
+<%= @caught_up %>
+
+<% if @present %>
+  <%= turbo_stream_action_tag :chats_prune,
+        target: dom_id(@conversation, :history),
+        "data-ids": @present[:ids].join(" "),
+        "data-until": @present[:until] %>
 <% end %>

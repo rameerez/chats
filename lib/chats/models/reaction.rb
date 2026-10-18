@@ -27,6 +27,15 @@ module Chats
     # Rails behavior: https://guides.rubyonrails.org/active_record_callbacks.html#using-both-after-create-commit-and-after-update-commit
     after_commit :broadcast_change, on: %i[create destroy]
 
+    # A reaction changes how its message renders, so it moves the message's
+    # updated_at: that is what a thread catching up on missed broadcasts asks
+    # for (Message.updated_after). update_columns, not touch: the
+    # broadcast above already re-renders the bubble, and touch would run the
+    # message's own update callbacks and broadcast it a second time. Not when
+    # the message itself is being destroyed and takes its reactions with it.
+    after_create :stamp_message
+    after_destroy :stamp_message, unless: :destroyed_by_association
+
     # Add the reaction if absent, remove it if present (the universal
     # tap-to-toggle semantic). Returns the created reaction, or false when
     # toggled off. Race-safe: a concurrent double-tap resolves through the
@@ -66,6 +75,10 @@ module Chats
       return if message.nil? || reactor.nil?
 
       errors.add(:reactor, :not_a_participant) unless message.conversation.participant?(reactor)
+    end
+
+    def stamp_message
+      message.update_columns(updated_at: Time.current)
     end
 
     def broadcast_change

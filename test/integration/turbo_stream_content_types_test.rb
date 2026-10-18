@@ -78,14 +78,35 @@ class TurboStreamContentTypesTest < ActionDispatch::IntegrationTest
     assert_stream_response
     assert_includes response.body, "while you were away"
 
-    # …and the deep-backlog path, which answers with a page refresh.
+    # …and the deep-backlog path (`render turbo_stream:`), which re-renders
+    # the history at its latest page.
     (Chats.config.messages_per_page + 1).times { |index| @bob.message!(@conversation, "burst #{index}") }
-    get "/messages/#{@conversation.id}/refresh", params: { since: cursor },
+    get "/messages/#{@conversation.id}/refresh", params: { since: cursor, history: 1 },
                                                  headers: { "Accept" => TURBO_STREAM }
     assert_response :success
     assert_stream_response
+    assert_includes response.body, %(<turbo-stream action="update" target="history_conversation_#{@conversation.id}">)
+  end
+
+  test "an ejected thread's deep catch-up, a page refresh, answers as a stream too" do
+    anchor = @bob.message!(@conversation, "anchor")
+    cursor = (anchor.created_at.to_f * 1000).ceil
+    (Chats.config.messages_per_page + 1).times { |index| @bob.message!(@conversation, "burst #{index}") }
+
+    get "/messages/#{@conversation.id}/refresh", params: { since: cursor }, headers: { "Accept" => TURBO_STREAM }
+    assert_response :success
+    assert_stream_response
     assert_includes response.body, %(<turbo-stream action="refresh">)
-    assert_not_includes response.body, "request-id", "the client must never skip its own catch-up refresh"
+  end
+
+  test "the badge catch-up answers as a stream, whatever the request asked for" do
+    get "/messages/badge", headers: { "Accept" => TURBO_STREAM }
+    assert_response :success
+    assert_stream_response
+
+    get "/messages/badge"
+    assert_response :success
+    assert_stream_response
   end
 
   private

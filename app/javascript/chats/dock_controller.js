@@ -1,4 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
+import { recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
 
 // chats--dock: the messaging dock (`chats_dock`) — LinkedIn / Steam style
 // floating conversation windows in the bottom-right corner.
@@ -30,6 +31,13 @@ import { Controller } from "@hotwired/stimulus"
 //                  its window pops open (in dock mode only, never stealing
 //                  focus, never for one closed in the last five minutes,
 //                  never over a window in use) and is announced politely.
+//   * catching up  what the dock's stream missed (chats/recovery: a
+//                  reconnect, a return after 10 seconds hidden, the
+//                  network back, a restored page) reloads the recent list,
+//                  morphed in place so its scroll and search stay, and
+//                  fetches the badges again. Each open window's thread
+//                  catches up by itself. A missed message never pops a
+//                  window open late: the badge and the list say it.
 //   * memory       per viewer in localStorage (`chats:dock:v1:<key>`):
 //                  which windows, minimized or not, recently closed ones,
 //                  and the panel; drafts under `chats:draft:<key>:<id>`.
@@ -75,7 +83,8 @@ export default class extends Controller {
     // isolated engine it is "conversation", not "chats_conversation".
     recordKey: { type: String, default: "conversation" },
     announcement: String,
-    windowUnread: String
+    windowUnread: String,
+    badgeUrl: String
   }
 
   // Stimulus runs the target callbacks (windowTargetConnected…) BEFORE
@@ -103,6 +112,10 @@ export default class extends Controller {
     this.layout()
     this.restore()
     this.pageChanged()
+
+    // Its own stream only: each window's thread watches its own.
+    this.stopRecovery = recoverMissedBroadcasts(this.element, () => this.catchUp(),
+                                                { sources: ":scope > turbo-cable-stream-source" })
   }
 
   disconnect() {
@@ -111,6 +124,7 @@ export default class extends Controller {
     window.visualViewport?.removeEventListener("resize", this.fitViewport)
     window.visualViewport?.removeEventListener("scroll", this.fitViewport)
     this.releaseSheet()
+    this.stopRecovery?.()
   }
 
   // --- Opening ---------------------------------------------------------------
@@ -457,6 +471,11 @@ export default class extends Controller {
     requestAnimationFrame(() => {
       this.announcerTarget.textContent = this.announcementValue.replace("%{name}", name)
     })
+  }
+
+  catchUp() {
+    this.refreshList()
+    if (this.badgeUrlValue) renderStreamFrom(this.badgeUrlValue)
   }
 
   badgeTargetConnected(badge) {

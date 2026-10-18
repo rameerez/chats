@@ -13,12 +13,26 @@ class EngineTest < ActiveSupport::TestCase
       "controllers/chats/composer_controller" => "chats/composer_controller.js",
       "controllers/chats/debounced_submit_controller" => "chats/debounced_submit_controller.js",
       "controllers/chats/refresh_inbox_controller" => "chats/refresh_inbox_controller.js",
-      "controllers/chats/dock_controller" => "chats/dock_controller.js"
+      "controllers/chats/dock_controller" => "chats/dock_controller.js",
+      "controllers/chats/unread_badge_controller" => "chats/unread_badge_controller.js"
     }.each do |name, path|
       pin = packages[name]
 
       assert pin, "expected #{name} to be pinned (stimulus-loading auto-registration depends on it)"
       assert_equal path, pin.path
+    end
+  end
+
+  test "pins the module its controllers share outside controllers/, where the eager loader never registers it" do
+    pin = Rails.application.importmap.packages["chats/recovery"]
+
+    assert pin, "the inbox, thread, badge and dock controllers import chats/recovery"
+    assert_equal "chats/recovery.js", pin.path
+    assert_empty Rails.application.importmap.packages.keys.grep(%r{\Acontrollers/.*recovery})
+
+    %w[thread_controller refresh_inbox_controller unread_badge_controller dock_controller].each do |controller|
+      source = File.read(Chats::Engine.root.join("app/javascript/chats/#{controller}.js"))
+      assert_match(/^import \{ [^}]+ \} from "chats\/recovery"$/, source, controller)
     end
   end
 

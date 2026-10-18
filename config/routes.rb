@@ -9,6 +9,9 @@ Chats::Engine.routes.draw do
     # frame. A collection route, so it is drawn before /:id and never read as
     # a conversation id.
     get :dock, on: :collection
+    # Every unread badge on the page, fresh (`chats_unread_badge` and the
+    # dock's), for a page that may have missed the badge streams.
+    get :badge, on: :collection
 
     member do
       post :read    # advance the viewer's read horizon (mark as read)

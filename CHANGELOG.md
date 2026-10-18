@@ -4,7 +4,15 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.1] - 2026-10-18
+
+A page that missed a broadcast is never left stale: every live surface
+catches up on its own, without polling (fixes
+[#1](https://github.com/rameerez/chats/issues/1)). Also: the dock's unread
+count in every language's plural forms, one extension point for a
+conversation that must open although the inbox hides it
+(`conversation_lookup_scopes`), and real conversations told from
+system-only threads. **No migration, nothing to configure.**
 
 ### Added
 - **Real conversations vs system-only threads.** `with_messages` asks whether
@@ -56,6 +64,176 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and falling back to the old rule where `Intl` is unavailable. The gem's
   `en` and `es` keep `one`/`other`; a host adds the forms its languages need
   in its own locale files.
+- **Every live surface catches up on the broadcasts it missed.** Action
+  Cable has no replay, so a broadcast sent while a page's socket was down
+  (a laptop asleep, a backgrounded tab or Hotwire Native WebView, a network
+  blip) never reached it, and the inbox, a thread, the unread badge or the
+  dock could sit on old content until the next navigation. One shared
+  module, `chats/recovery` (pinned for importmap hosts, like the
+  controllers), now watches each surface's own
+  `<turbo-cable-stream-source>` and the page, and asks for what was missed
+  when the stream reconnects, when the page comes back after 10 seconds or
+  more hidden, when the network comes back online (it asks Action Cable to
+  check its socket at once instead of after its backoff, and catches up
+  anyway: after a short outage the socket can look open while what was
+  sent during it is gone) and when the page
+  is restored from the back/forward cache or from Turbo's snapshot cache (a
+  back navigation, a Hotwire Native stack pop). Never otherwise: a healthy,
+  visible page fetches nothing. A hidden page never fetches; what it missed
+  waits until it is seen. Triggers that arrive together make one catch-up,
+  and catch-ups are at least five seconds apart.
+- **A reconnect Action Cable never reported is seen.** When Action Cable
+  reopens a socket that went quiet (the half-open connection of a phone that
+  slept), it drops the old socket's handlers before its close event can
+  arrive: subscribers hear "connected" again and never "disconnected", and
+  the `reconnected: true` detail reaches only the first subscription
+  confirmed. Every confirmation after the first now counts.
+- **A page restored from Turbo's snapshot cache catches up.** It came back
+  as old as when it was left, with no request: a thread restored by a back
+  navigation missed every message sent since. Its stream sources are marked
+  as they go into the cache, and a restored one catches up once it is live.
+- **The inbox** reruns a refresh that arrived while another visit was
+  loading, which Turbo ignores (`Session#refresh` skips one while
+  `navigator.currentVisit` is set): a message landing mid-refresh was lost
+  with a healthy socket. A refresh no longer rewrites the field you're
+  typing in, no longer drops the search (see Changed), and a morph no longer
+  strips the stream source's `connected` attribute.
+- **The inbox refresh is durable.** `refresh_inbox_of` enqueues
+  `Chats::InboxRefreshJob` straight from the after_commit instead of calling
+  `broadcast_refresh_later_to`, which parked the refresh for half a second
+  in an in-process timer (`Turbo::Debouncer`) before enqueueing it, so a
+  deploy or a crash inside that window dropped it. At most one is queued
+  per recipient: while one is queued and hasn't started, it stands for
+  every write that commits before it runs (a short-lived marker in
+  `Rails.cache`, removed by the job as it starts, before it broadcasts), so
+  a burst is one job per recipient. A lost marker costs an extra job, never
+  a missed refresh, and the marker expires after two seconds. Only a
+  marker that is really there counts as "queued": a store that can't hold
+  it (RedisCacheStore answers nil when a write fails; any store may raise)
+  means the write queues its own refresh. Since another
+  write may count on a refresh whose enqueue is still in flight, a failed
+  enqueue is retried once, then the refresh is broadcast on the spot. Every
+  refusal goes to `Rails.error` (raised, `false`, or a job the adapter
+  declined), never up through the write that committed. The refresh
+  tag carries `method="morph" scroll="preserve"`, so the inbox morphs
+  whatever the host layout's refresh meta says, and no request id, since
+  it may stand for several requests' writes.
+- **The thread's catch-up asks on two cursors.** It sent only the newest
+  `updated_at` it had rendered and the server appended what was created
+  after it, so a message created at 10:15 and missed, while a bubble on
+  screen was edited at 10:20, never came. Now `after=` (the newest creation
+  on screen) decides what is appended and `changed=` (the newest change)
+  what is replaced, and both scopes split on the same creation cursor
+  (`created_after` / `created_through(…).updated_after(…)`). Each cursor is
+  a moment to the microsecond plus the ids on screen at it (`after_ids=`,
+  `changed_ids=`): a message missed in the very instant of one on screen,
+  or a change missed inside the same millisecond as one on screen (the old
+  cursor rounded up to the millisecond), is no longer lost. The cursors
+  are reconciled moments: a complete render sets them (the page, a window,
+  a history re-render), and so does a catch-up that arrived (its
+  `chats_caught_up` action); a live bubble never moves them, since it can
+  arrive after one that was missed (a message missed at 10:15, then one
+  live at 10:20). What arrived live is named instead, at most 200 ids
+  (`after_ids`, `changed_ids`, each id at most 64 characters); past that,
+  or with `full=1`, the history is re-rendered. Kept on the element
+  (`data-chats-reconciled`), so a dock window moved by a Turbo visit, or a
+  restored snapshot, keeps them. Each catch-up is bound to one render of
+  the thread (`render=`, echoed by the answer): an answer that arrives
+  after the page or a dock window rendered the conversation again is
+  dropped unrendered, and its cursors ignored — checked again by every
+  stream of it at the moment Turbo applies it, a repaint later, so a visit
+  or a window reload in between can't hand the old streams the new render.
+  A history re-render is followed by one more catch-up from its own
+  cursors once Turbo has actually applied it, however late that is, so a
+  message written while that page was being built isn't lost. Every
+  catch-up is bounded: a request with no answer after 15 seconds is
+  aborted (a fetch can hang across a network interruption, and would
+  otherwise stand in for every later one), a thread has at most one answer
+  waiting for Turbo (a newer one, or the thread going away, drops the
+  older one's leftover streams and stops watching for them — going away
+  for good: a dock window Turbo carries across a visit is off the page
+  until that render ends, which a host's asynchronous `turbo:before-render`
+  can make last many tasks, and keeps its answer, decided only once every
+  `turbo:before-render` has had its `turbo:render`, paired first in, first
+  out; a render that runs past 10 seconds stops holding things up but stays
+  paired until its own end, and one that never ends is forgotten after a
+  minute), and only the
+  answer's own streams are guarded (`data-chats-answer`), never a host's
+  stream rendered at the same moment. A thread whose catch-up didn't apply,
+  for any reason (its page rendered it away, the request failed, Turbo
+  never got to it), is marked behind (`data-chats-stale`, on the thread
+  element itself, so the mark travels with the dock and can't be
+  forgotten while the thread exists) and catches up again when it
+  connects, on its stream's confirmation and after every page render,
+  through the same coalescing and 5-second spacing as every other trigger;
+  only the answer of the newest catch-up clears it (they are numbered on
+  the element, `data-chats-catch-up`), so an older answer that applies
+  after a newer one failed leaves the thread marked; and nothing older
+  than the newest catch-up that has applied (`data-chats-applied`) may
+  apply after it, so an older answer arriving last can't put back older
+  bubbles, read state or cursors. A catch-up always gets an answer built
+  after it was asked: the same request asked in the same instant is made
+  once, but asked while it is already on its way, it is made once more as
+  soon as that one has its answer from the network (never waiting on
+  Turbo to apply it), for everyone who asked meanwhile, each keeping its
+  own `when` and its own outcome. An answer Turbo hasn't applied 10
+  seconds after it joined the page is cancelled (its callers settle, and a
+  thread stays marked behind), and neither a caller's hook that throws nor
+  a stream that fails to render can leave an answer half-applied or its
+  callers waiting. An empty
+  thread, which used to ask nothing, asks from the epoch: its first message
+  may be the one it missed.
+- **The thread's catch-up is complete.** `GET /:id/refresh` now also
+  replaces the read state (a read the stream missed left "Sent" where it
+  should say "Seen"), catches reactions (a reaction now moves its message's
+  `updated_at`, with `update_columns`, so the bubble is not broadcast twice),
+  and, under `deletion: :hard`, lists the messages that still exist from the
+  oldest rendered bubble on (`from=`), so the thread removes the ones that
+  are gone (the `chats_prune` stream action). Catching up still reads
+  nothing.
+- **The unread badge and the dock catch up.** The viewer's own
+  `chats_unread_badge` is wrapped in a `chats--unread-badge` controller (a
+  `span.chats-unread-badge-live`, `display: contents`, so it changes no
+  layout) that asks the new `GET /badge` for every unread badge on the page:
+  the nav badge and the dock's, with the count the badge streams send
+  (`unread_chats_count`). Someone else's badge stays live but doesn't catch
+  up. The dock fetches the same, and reloads its recent list; each open
+  window's thread catches up by itself. A message missed while offline
+  never pops a window open late.
+
+- **Both search forms are search landmarks.** `form_with … role: "search"`
+  rendered no `role` at all (`form_with` drops HTML attributes it doesn't
+  know unless they go through `html:`), on the inbox and in the dock.
+
+### Changed
+- A page now counts as having been away after 10 seconds hidden, not 60
+  (the inbox and the thread used 60).
+- A thread more than a page behind no longer gets a page refresh, which
+  cleared the composer's draft and, in a dock window, refreshed the host's
+  whole page: its history (`chats/conversations/_history`, inside
+  `#history_conversation_<id>`) is re-rendered at the latest page, the
+  composer untouched. An ejected thread whose scroller has no
+  `id="<%= dom_id(conversation, :history) %>"` keeps getting the page
+  refresh.
+- The inbox's search keeps its query in the URL (`data-turbo-action=
+  "replace"`, submitting to the inbox's own path), so a refresh re-renders
+  the same results instead of the unfiltered list. The dock's recent list
+  frame has `refresh="morph"`, so a reload keeps its scroll and its search.
+- New: the `GET /badge` collection route, the `chats--unread-badge`
+  controller, `Chats::InboxRefreshJob`, and `data-message-id`,
+  `data-created-at-us` and `data-updated-at-us` on every bubble, which no
+  longer carries `data-updated-at-ms`.
+- **If you wrapped the inbox in a reconciler of your own** (a
+  stream-reconciler controller around `turbo_stream_from … :chats_inbox`),
+  remove it: two on one page both fire, and the gem's covers what yours did.
+  **If you ejected the inbox**, keep the
+  `data-controller="chats--refresh-inbox"` element around its
+  `turbo_stream_from chats_current_messager, :chats_inbox` (an inbox without
+  it doesn't catch up), and add `turbo_action: "replace"` to the search
+  form's `data` and `url: request.original_fullpath.split("?").first`. An
+  ejected message partial (with only `data-updated-at-ms`) keeps the one
+  cursor it had (`since=`), and a hard delete missed while offline stays on
+  screen until the next load.
 
 ## [0.5.0] - 2026-10-18
 

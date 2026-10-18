@@ -24,6 +24,10 @@ class ThreadReadGateTest < ActiveSupport::TestCase
         let sourceText = fs.readFileSync(process.argv[2], "utf8")
         sourceText = sourceText
           .replace('import { Controller } from "@hotwired/stimulus"', "class Controller {}")
+          // Catching up is chats/recovery's, tested on its own (recovery_test.rb).
+          .replace('import { afterRendering, cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"',
+                   "const afterRendering = () => Promise.resolve(), cancelStreamsFor = () => {}, " +
+                   "recoverMissedBroadcasts = () => () => {}, renderStreamFrom = () => Promise.resolve()")
           .replace("export default class extends Controller", "return class ThreadController extends Controller")
 
         // Timers we fire by hand, and every fetch the controller makes.

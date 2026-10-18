@@ -20,9 +20,8 @@ module Chats
   #      broadcast would force per-viewer renders of per-viewer partials;
   #      a refresh makes each client re-request the page and get a correct,
   #      personalized render with morphing + scroll preservation for free.
-  #      Turbo debounces refreshes per stream and tags them with the
-  #      originating request id so the tab that caused the change skips its
-  #      own refresh. https://turbo.hotwired.dev/handbook/streams
+  #      At most one is queued per messager at a time (see
+  #      refresh_inbox_of). https://turbo.hotwired.dev/handbook/streams
   #
   #   3. The per-messager BADGE stream (`[messager, :chats_badge]`,
   #      subscribable from ANY page via the `chats_unread_badge` helper —
@@ -49,7 +48,16 @@ module Chats
   #
   # Everything uses the `_later` variants (rendering happens in background
   # jobs, never inline in the request) except `message_destroyed`, where the
-  # record is gone and can't be serialized for a job.
+  # record is gone and can't be serialized for a job. Every job is enqueued
+  # from an after_commit callback, so a broadcast never announces a write
+  # that could still roll back, and never waits in memory: once the write
+  # has committed, its broadcast is in the job queue.
+  #
+  # A broadcast can still be missed — Action Cable has no replay, and a
+  # client whose socket is down when it is sent never gets it. The client
+  # side catches up (chats/recovery.js: on reconnect, on return to a hidden
+  # page, on network-online, on a back/forward-cache restore), so every
+  # surface fed by these streams heals without polling.
   module Broadcasts
     extend ActionView::RecordIdentifier # dom_id
 
@@ -57,6 +65,10 @@ module Chats
     BADGE_PARTIAL = "chats/shared/unread_badge"
     DOCK_UPDATE_PARTIAL = "chats/dock/update"
     READ_STATE_PARTIAL = "chats/conversations/read_state"
+    # The inbox stream's whole payload. Built once, with no request id.
+    INBOX_REFRESH = %(<turbo-stream action="refresh" method="morph" scroll="preserve"></turbo-stream>)
+    # How long a queued inbox refresh stands for the writes after it.
+    INBOX_REFRESH_PENDING = 2.seconds
 
     class << self
       def message_created(message)
@@ -125,8 +137,60 @@ module Chats
         )
       end
 
+      # Straight into the job queue, NOT `broadcast_refresh_later_to`: that
+      # one first parks the refresh for half a second in an in-process
+      # timer (Turbo::Debouncer, a Concurrent::ScheduledTask) and only then
+      # enqueues the job, so a deploy or a crash inside that half second
+      # drops the refresh with nothing left to retry it.
+      #
+      # One job per messager at a time. A refresh carries no data — the
+      # client re-requests its inbox — so while one is queued and hasn't
+      # started, it covers every write that commits before it runs: a burst
+      # (five messages in a 100-person group) is one job per participant,
+      # not five. A marker in Rails.cache says one is queued; the job removes
+      # it as it STARTS, before it broadcasts, so a write that still finds
+      # the marker has committed before that broadcast, and a write after
+      # it queues the next job. Every way the marker can go wrong costs an
+      # extra job, never a missed refresh: a cache without it (null store,
+      # a per-process memory store, an eviction) just doesn't coalesce, and
+      # the marker expires after INBOX_REFRESH_PENDING, so a job lost from
+      # the queue holds nothing back for longer than that.
+      # Refreshes that still arrive close together merge on the client:
+      # Turbo runs one page refresh for refreshes within 150 ms of each
+      # other (Session#pageRefreshDebouncePeriod), and chats--refresh-inbox
+      # reruns one that landed mid-visit, which Turbo would ignore.
+      #
+      # The marker goes up BEFORE the enqueue, so another write can find it
+      # while the enqueue is still in flight and count on that refresh. An
+      # enqueue that fails is therefore tried once more, and if the queue
+      # refuses again the refresh is broadcast right here: the writes that
+      # counted on it are never left without one. The failure is reported to
+      # Rails.error, not raised: the write has committed, and the refresh is
+      # out.
+      #
+      # Only a marker that is really there means a refresh is queued. A store
+      # that can't hold it (RedisCacheStore answers nil when the write
+      # fails, any store may raise) means nothing about the queue, so this
+      # write queues its own refresh.
       def refresh_inbox_of(messager)
-        Turbo::StreamsChannel.broadcast_refresh_later_to(messager, :chats_inbox)
+        return if inbox_refresh_queued?(inbox_refresh_marker(messager))
+        return if 2.times.any? { enqueue_inbox_refresh(messager) } # once more if the first fails
+
+        refresh_inbox_now(messager)
+      end
+
+      # The job's half (Chats::InboxRefreshJob): take the marker down, then
+      # broadcast. `method: morph, scroll: preserve` ride on the tag, so the
+      # inbox morphs in place whatever the host layout's refresh meta says.
+      # No request id: one refresh may answer writes from several requests,
+      # and a tab that skipped it as "its own" would miss the others'.
+      def refresh_inbox_now(messager)
+        begin
+          Rails.cache.delete(inbox_refresh_marker(messager))
+        rescue StandardError => e
+          Rails.error.report(e, handled: true) # the marker expires on its own; the refresh goes out regardless
+        end
+        Turbo::StreamsChannel.broadcast_stream_to(messager, :chats_inbox, content: INBOX_REFRESH)
       end
 
       # The unread badges of +messager+: the nav badge (stream 3) and the
@@ -169,9 +233,40 @@ module Chats
 
       private
 
+      # Whether the queue took the job. A refusal is reported to Rails.error
+      # however the adapter says it: perform_later raises, or returns false
+      # (a callback aborted it), or a job that wasn't enqueued.
+      def enqueue_inbox_refresh(messager)
+        job = Chats::InboxRefreshJob.perform_later(messager)
+        job = nil unless job.is_a?(ActiveJob::Base) # false: a callback aborted it
+        return true if job&.successfully_enqueued?
+
+        Rails.error.report(job&.enqueue_error || ActiveJob::EnqueueError.new("Chats::InboxRefreshJob was not enqueued"),
+                           handled: true)
+        false
+      rescue StandardError => e
+        Rails.error.report(e, handled: true)
+        false
+      end
+
+      # Whether a refresh is already queued for this marker's messager: the
+      # write was refused (false) AND the marker can be read back. Anything
+      # else — this write put it up, the store answered nil or raised, the
+      # marker vanished in between — is "not that we know of".
+      def inbox_refresh_queued?(marker)
+        written = Rails.cache.write(marker, true, unless_exist: true, expires_in: INBOX_REFRESH_PENDING)
+        written == false && Rails.cache.read(marker).present?
+      rescue StandardError => e
+        Rails.error.report(e, handled: true)
+        false
+      end
+
+      def inbox_refresh_marker(messager)
+        "chats:inbox-refresh:#{Chats.messager_key(messager)}"
+      end
+
       # New activity: every active participant's inbox refreshes (including
-      # the sender's — their OTHER tabs/devices need the new ordering; the
-      # originating tab skips its own refresh via Turbo's request-id dedup),
+      # the sender's — their other tabs and devices need the new ordering),
       # and every participant except the sender gets a fresh unread badge.
       # Everyone else — the sender, and every seat on an edit or a delete —
       # gets the dock's list refresh alone.

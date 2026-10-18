@@ -164,17 +164,35 @@ module Chats
     }
 
     # Catch-up scopes for ConversationsController#refresh (the stale-thread
-    # recovery path — see the thread controller's refresh trigger). `since`
-    # is the newest `updated_at` the client has rendered:
-    #   created_since — messages that arrived while the tab was asleep
-    #                   (appended);
-    #   updated_since — messages the client HAS rendered that changed since
-    #                   (edits, soft-delete tombstones — replaced in place).
-    # `updated_since` excludes fresh rows so nothing renders twice — a Turbo
-    # append of an existing dom_id would otherwise also MOVE that bubble to
-    # the end (Turbo removes-then-appends on id collision).
+    # recovery path — see the thread controller's catch-up), on the client's
+    # two cursors. Each is a moment, to the microsecond, up to which the
+    # client KNOWS it has everything (a complete render, or a catch-up that
+    # succeeded — never a live bubble, which can arrive past one it missed),
+    # with the ids it has on screen from that moment on:
+    #   created_after(at, seen:)   — created at or after that moment and not
+    #                                on screen: appended;
+    #   created_through(at, seen:) — the complement: what the client has;
+    #   updated_after(at, seen:)   — changed after that moment, or at it and
+    #                                not among the ones seen in that version.
+    # Replacements are created_through(after).updated_after(changed): changes
+    # to what is on screen, never a second copy of what is appended — a Turbo
+    # append of an existing dom_id would MOVE that bubble to the end. Two
+    # cursors, because one can't answer both: a message created at 10:15 and
+    # missed is older than a 10:20 edit that did arrive.
     # Pattern from Basecamp's Campfire (Rooms::RefreshesController):
     # https://github.com/basecamp/once-campfire
+    scope :created_after, lambda { |at, seen: []|
+      where(arel_table[:created_at].gteq(at)).where.not(id: seen)
+    }
+    scope :created_through, lambda { |at, seen: []|
+      where(arel_table[:created_at].lt(at)).or(where(id: seen))
+    }
+    scope :updated_after, lambda { |at, seen: []|
+      where(arel_table[:updated_at].gt(at)).or(where(updated_at: at).where.not(id: seen))
+    }
+    # The one-cursor catch-up of bubbles ejected before they carried the
+    # cursors above (`data-updated-at-ms` alone, rounded up): what was
+    # created after it, and what was rendered by then and changed since.
     scope :created_since, ->(time) { where("chats_messages.created_at > ?", time) }
     scope :updated_since, lambda { |time|
       where("chats_messages.updated_at > ?", time).where("chats_messages.created_at <= ?", time)

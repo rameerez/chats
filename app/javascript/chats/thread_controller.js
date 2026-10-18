@@ -1,15 +1,18 @@
 import { Controller } from "@hotwired/stimulus"
+import { afterRendering, cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
 
-// Stale-thread refresh + DOM budget (both patterns from Basecamp's
+// Stale-thread catch-up + DOM budget (both patterns from Basecamp's
 // Campfire, https://github.com/basecamp/once-campfire — its
 // refresh_room_controller and message_paginator):
-//   * refresh when the tab was hidden long enough that the WebSocket was
-//     probably reaped (mobile WebViews suspend sockets aggressively), and
-//     whenever the Turbo Stream subscription reconnects after a drop;
+//   * catch up on what the stream missed whenever chats/recovery says it
+//     may have (a reconnect, a return after 10 seconds hidden, the network
+//     back, a page restored from the back/forward cache or a Turbo
+//     snapshot): GET #refresh?since= appends, replaces and removes exactly
+//     what changed, so the composer, its draft and the scroll position are
+//     never touched;
 //   * cap rendered bubbles so day-long sessions in a busy group don't
 //     grow the DOM unboundedly (trimmed history stays reachable — the
 //     pagination anchor is rebuilt to re-fetch it on scroll-up).
-const REFRESH_AFTER_HIDDEN_MS = 60_000
 // Long-press tuning: Telegram-ish. The move tolerance keeps a scroll
 // gesture from ever reading as a press.
 const LONG_PRESS_MS = 450
@@ -19,6 +22,11 @@ const PRESS_MOVE_TOLERANCE_PX = 12
 // last few pixels home. Keep this a hair ABOVE the CSS transform duration.
 const POPUP_TRANSITION_MS = 280
 const MAX_RENDERED_MESSAGES = 300
+// Keep in step with ConversationsController::CURSOR_IDS_LIMIT.
+const CURSOR_IDS = 200
+
+// A name for one render of a thread.
+const newRender = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 const TRIM_LEEWAY = 20
 
 // chats--thread: everything live about an open conversation.
@@ -88,6 +96,10 @@ export default class extends Controller {
 
   connect() {
     this.registerTypingStreamAction()
+    this.registerPruneStreamAction()
+    this.registerCaughtUpStreamAction()
+    this.element.dataset.chatsRender ||= newRender()
+    this.caughtUp({ detail: this.storedCursors() || this.cursorsOfRender() })
     // The dock's engagement gate: the window frame around a dock thread.
     // No gate (the thread page) means always engaged.
     this.gate = this.element.closest("[data-chats-active]")
@@ -124,7 +136,9 @@ export default class extends Controller {
       event.stopPropagation()
     }
     this.element.addEventListener("click", this.suppressClickCapture, true)
-    this.watchStreamSource()
+    this.element.addEventListener("chats:prune", this.prune)
+    this.element.addEventListener("chats:caught-up", this.caughtUp)
+    this.stopRecovery = recoverMissedBroadcasts(this.element, () => this.refreshThread(), { stale: () => this.stale })
     this.watchScreenPresence()
   }
 
@@ -134,7 +148,17 @@ export default class extends Controller {
     }
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
-    this.sourceObserver?.disconnect()
+    this.stopRecovery?.()
+    // What this render asked for is not wanted any more — once it is really
+    // gone. A Turbo visit carries the dock from page to page by taking it
+    // off the page and putting it back once the new body is in: a window's
+    // thread is away for the length of that render and keeps everything,
+    // its answer on the way included. Still off the page once the render is
+    // over is a thread that went away (another page, a window reloaded or
+    // closed).
+    afterRendering().then(() => { if (!this.element.isConnected) cancelStreamsFor(this.element) })
+    this.element.removeEventListener("chats:prune", this.prune)
+    this.element.removeEventListener("chats:caught-up", this.caughtUp)
     this.presenceObserver?.disconnect()
     this.gate?.removeEventListener("chats:activated", this.flushPendingRead)
     this.element.removeEventListener("click", this.suppressClickCapture, true)
@@ -149,7 +173,7 @@ export default class extends Controller {
   // --- Bubbles ---------------------------------------------------------------
 
   messageTargetConnected(element) {
-    this.trackLoadCursor(element)
+    this.trackLegacyCursor(element)
     this.classify(element)
     if (this.booting) return
     // Live appends can land out of order (multi-worker hosts broadcast from
@@ -375,20 +399,12 @@ export default class extends Controller {
     this.readTimer = setTimeout(() => this.postRead(), 700)
   }
 
+  // A read that waited for the tab to be seen happens when it is. (What the
+  // tab missed while hidden is chats/recovery's to fetch.)
   visibilityChanged = () => {
-    if (document.visibilityState === "visible") {
-      // Asleep long enough for the socket to have been reaped? Catch up on
-      // anything the missed broadcasts carried.
-      if (this.hiddenAt && Date.now() - this.hiddenAt > REFRESH_AFTER_HIDDEN_MS) {
-        this.refreshThread()
-      }
-      this.hiddenAt = null
-      if (this.pendingRead) {
-        this.pendingRead = false
-        this.queueRead()
-      }
-    } else {
-      this.hiddenAt = Date.now()
+    if (document.visibilityState === "visible" && this.pendingRead) {
+      this.pendingRead = false
+      this.queueRead()
     }
   }
 
@@ -511,45 +527,220 @@ export default class extends Controller {
 
   // --- Stale-thread refresh (catch up after sleep/disconnect) --------------------
 
-  // The `?since=` cursor: the newest data-updated-at-ms across rendered
-  // bubbles. updated_at (not created_at) so edits/tombstones made while
-  // asleep are caught by the refresh too.
-  trackLoadCursor(element) {
-    const ms = Number(element.dataset.updatedAtMs || 0)
-    if (ms > (this.lastLoadedAt || 0)) this.lastLoadedAt = ms
+  // Two cursors, because "new" and "changed" are different questions: the
+  // newest creation (`after`: anything newer is appended) and the newest
+  // change (`changed`: anything changed since is replaced). One can't
+  // answer both: a message created at 10:15 and missed, while a bubble on
+  // screen was edited at 10:20, is older than the newest change. Each is a
+  // moment to the microsecond the database keeps (an integer below 2^53,
+  // exact as a Number).
+  //
+  // They are RECONCILED moments: how far the thread knows it has
+  // everything. A complete render sets them (the page, a window, a history
+  // re-render: the server sends those with it), and so does a catch-up
+  // that arrived (the chats_caught_up action); a live bubble never moves
+  // them, because it can arrive past one that was missed (a message missed
+  // at 10:15, then one live at 10:20: a cursor at 10:20 would skip 10:15
+  // for good). What arrived live is named instead, so it isn't sent again:
+  // every bubble on screen created since `after`, and every one whose
+  // version is exactly the `changed` moment. They live on the element
+  // (data-chats-reconciled): the dock moves its windows, and a Turbo
+  // snapshot is restored, without losing them.
+  cursorsOfRender() {
+    const created = this.messageTargets.map((message) => Number(message.dataset.createdAtUs || 0))
+    const updated = this.messageTargets.map((message) => Number(message.dataset.updatedAtUs || 0))
+    const changed = Math.max(0, ...updated)
+    return {
+      after: Math.max(0, ...created),
+      changed,
+      changedIds: this.messageTargets.filter((_, index) => updated[index] === changed).map((message) => message.dataset.messageId)
+    }
   }
 
-  // Reconnect detection without a dedicated cable channel: turbo-rails
-  // toggles a `connected` attribute on <turbo-cable-stream-source> as the
-  // Action Cable subscription confirms/drops, so observing that attribute
-  // IS the heartbeat. (Campfire ran a HeartbeatChannel for this; the
-  // attribute observer gets the same signal for free.)
-  watchStreamSource() {
-    const source = this.element.querySelector("turbo-cable-stream-source")
-    if (!source || typeof MutationObserver === "undefined") return
-
-    this.sourceObserver = new MutationObserver(() => {
-      const connected = source.hasAttribute("connected")
-      if (connected && this.streamDropped) {
-        this.streamDropped = false
-        this.refreshThread()
-      } else if (!connected) {
-        this.streamDropped = true
-      }
-    })
-    this.sourceObserver.observe(source, { attributes: true, attributeFilter: ["connected"] })
+  // `data-chats-stale`: this thread is known to be behind. On the element,
+  // not the controller, because the element is what the dock carries from
+  // page to page (and what a long page render keeps away): the mark can't
+  // be forgotten while the thread exists, and goes when it does.
+  get stale() {
+    return "chatsStale" in this.element.dataset
   }
 
-  refreshThread() {
-    if (!this.refreshUrlValue || !this.lastLoadedAt) return
+  set stale(behind) {
+    if (behind) {
+      this.element.dataset.chatsStale = ""
+    } else {
+      delete this.element.dataset.chatsStale
+    }
+  }
 
-    const url = `${this.refreshUrlValue}?since=${this.lastLoadedAt}`
-    fetch(url, { headers: { Accept: "text/vnd.turbo-stream.html" } })
-      .then((response) => (response.ok ? response.text() : ""))
-      .then((html) => {
-        if (html) window.Turbo?.renderStreamMessage(html)
+  // Every catch-up is numbered on the element (data-chats-catch-up), so the
+  // count survives the dock carrying the thread from page to page.
+  startCatchUp() {
+    const attempt = this.latestCatchUp + 1
+    this.element.dataset.chatsCatchUp = String(attempt)
+    return attempt
+  }
+
+  get latestCatchUp() {
+    return Number(this.element.dataset.chatsCatchUp || 0)
+  }
+
+  // The newest catch-up whose answer has started applying
+  // (data-chats-applied): nothing older may apply after it.
+  get latestApplied() {
+    return Number(this.element.dataset.chatsApplied || 0)
+  }
+
+  // An answer carries the render it was asked from (`render`): one for an
+  // earlier render of this conversation (the page or the window rendered it
+  // again while the answer was on its way) would move the new render's
+  // cursors to the old one's, and is ignored.
+  caughtUp = (event) => {
+    const { render, ...cursors } = event.detail
+    if (render && render !== this.element.dataset.chatsRender) return
+
+    this.reconciled = cursors
+    this.element.dataset.chatsReconciled = JSON.stringify(cursors)
+  }
+
+  storedCursors() {
+    try {
+      return JSON.parse(this.element.dataset.chatsReconciled || "null")
+    } catch {
+      return null
+    }
+  }
+
+  // Bubbles ejected before they carried the cursors above: the one
+  // millisecond cursor they had, which moves with every bubble.
+  trackLegacyCursor(element) {
+    const legacy = Number(element.dataset.updatedAtMs || 0)
+    if (legacy > (this.legacyCursor || 0)) this.legacyCursor = legacy
+  }
+
+  // What the stream missed: messages created after the reconciled moment
+  // and not on screen (appended), ones on screen changed since (replaced:
+  // edits, tombstones, reactions), the read state, and — when messages are
+  // hard-deleted — which rendered bubbles still exist. An empty thread asks
+  // from the epoch: its first message may be the one it missed. `from` is
+  // the oldest rendered bubble, so the server can name every bubble that
+  // should be on screen. A thread more than a page behind, or naming more
+  // than CURSOR_IDS bubbles, gets its history re-rendered at the latest
+  // page instead (`history`: this thread's scroller has the id that takes
+  // it; one ejected before it did gets a page refresh); it then opens at
+  // the bottom, as a fresh thread does, and asks once more from there, for
+  // anything that arrived live while the history was being re-rendered.
+  refreshThread({ followUp = true } = {}) {
+    if (!this.refreshUrlValue) return
+
+    // Behind until an answer is applied: a catch-up given up for any reason
+    // (the page rendered the thread away, the request failed, Turbo never
+    // applied it) leaves the mark, and chats/recovery asks again on connect,
+    // on the stream's confirmation and after every page render.
+    this.stale = true
+    const attempt = this.startCatchUp()
+    const params = new URLSearchParams()
+    if (this.legacyCursor && !this.messageTargets.some((message) => message.dataset.createdAtUs)) {
+      params.set("since", this.legacyCursor)
+    } else {
+      const { after = 0, changed = 0, changedIds = [] } = this.reconciled || {}
+      const afterIds = this.messageTargets
+        .filter((message) => Number(message.dataset.createdAtUs || 0) >= after)
+        .map((message) => message.dataset.messageId)
+      const seenChanged = new Set(changedIds)
+      this.messageTargets.forEach((message) => {
+        if (Number(message.dataset.updatedAtUs || 0) === changed) seenChanged.add(message.dataset.messageId)
       })
-      .catch(() => {})
+
+      params.set("after", after)
+      params.set("changed", changed)
+      if (afterIds.length > CURSOR_IDS || seenChanged.size > CURSOR_IDS) {
+        params.set("full", "1")
+      } else {
+        if (afterIds.length) params.set("after_ids", afterIds.join(","))
+        if (seenChanged.size) params.set("changed_ids", [...seenChanged].join(","))
+      }
+    }
+    const oldest = this.messageTargets[0]
+    if (oldest?.dataset.createdAtUs) params.set("from", oldest.dataset.createdAtUs)
+    if (this.hasScrollerTarget && this.scrollerTarget.id) params.set("history", "1")
+    const last = this.messageTargets[this.messageTargets.length - 1]
+
+    // Bound to this render of the thread (data-chats-render, renewed by
+    // every complete render): an answer that arrives after the page or the
+    // window rendered the conversation again is dropped unrendered.
+    const render = this.element.dataset.chatsRender
+    params.set("render", render)
+    // …and to being no older than the newest catch-up applied: an answer
+    // that arrives (or reaches a stream) after a newer one has applied would
+    // put older bubbles, read state and cursors over the newer ones.
+    const current = () => this.element.isConnected && this.element.dataset.chatsRender === render &&
+      attempt >= this.latestApplied
+
+    // Resolves once Turbo has applied the answer, so `last` is gone by then
+    // if the history was re-rendered.
+    const applying = () => { if (attempt > this.latestApplied) this.element.dataset.chatsApplied = String(attempt) }
+    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, {
+      when: current, key: this.element, order: attempt, applying
+    }).then((rendered) => {
+      if (!rendered) return
+      applying() // (an answer with no stream to apply has applied all the same)
+      // Only the newest catch-up's answer says the thread is up to date: an
+      // older one that applies after a newer one was asked (and maybe
+      // failed) still renders what it brought, and leaves the mark.
+      if (attempt === this.latestCatchUp) this.stale = false
+      if (!last || last.isConnected) return
+
+      this.element.dataset.chatsRender = newRender() // the re-rendered history is a new render
+      this.scrollToBottom()
+      if (followUp) return this.refreshThread({ followUp: false })
+    })
+  }
+
+  // A hard delete the stream missed: the bubble is gone from the server, so
+  // it goes from here. Only bubbles created before `until`, which the server
+  // sets a little before it listed what exists: a message whose insert had
+  // not committed yet when it looked, and which then arrived live, is new,
+  // not deleted.
+  prune = (event) => {
+    const present = new Set(event.detail.ids)
+    this.messageTargets.forEach((message) => {
+      if (Number(message.dataset.createdAtUs || Infinity) > event.detail.until) return
+      if (!present.has(message.id)) message.remove()
+    })
+  }
+
+  // The cursors a catch-up (or a history re-render) leaves the thread at.
+  registerCaughtUpStreamAction() {
+    const Turbo = window.Turbo
+    if (!Turbo || Turbo.StreamActions.chats_caught_up) return
+
+    Turbo.StreamActions.chats_caught_up = function () {
+      const detail = {
+        render: this.getAttribute("data-render") || null,
+        after: Number(this.getAttribute("data-after") || 0),
+        changed: Number(this.getAttribute("data-changed") || 0),
+        changedIds: (this.getAttribute("data-changed-ids") || "").split(",").filter(Boolean)
+      }
+      this.targetElements.forEach((target) => {
+        target.dispatchEvent(new CustomEvent("chats:caught-up", { bubbles: true, detail }))
+      })
+    }
+  }
+
+  registerPruneStreamAction() {
+    const Turbo = window.Turbo
+    if (!Turbo || Turbo.StreamActions.chats_prune) return
+
+    Turbo.StreamActions.chats_prune = function () {
+      const detail = {
+        ids: (this.getAttribute("data-ids") || "").split(" ").filter(Boolean),
+        until: Number(this.getAttribute("data-until") || 0)
+      }
+      this.targetElements.forEach((target) => {
+        target.dispatchEvent(new CustomEvent("chats:prune", { bubbles: true, detail }))
+      })
+    }
   }
 
   // --- DOM budget -----------------------------------------------------------------

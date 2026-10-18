@@ -133,6 +133,9 @@
   flex-shrink: 0;
 }
 .chats-badge--floating[hidden] { display: none; }
+/* chats_unread_badge's wrapper (its catch-up controller): no box of its own,
+   so the badge sits in the host's layout exactly as if it weren't there. */
+.chats-unread-badge-live { display: contents; }
 
 /* --- Empty states ------------------------------------------------------------ */
 

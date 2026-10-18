@@ -43,6 +43,10 @@ module ActiveSupport
       # exercises the deprecated `config.notifier`. `assert_deprecated`
       # swaps the behavior itself, so assertions still work.
       Chats.deprecator.behavior = :silence
+      # The inbox refresh's "one is queued" markers live in Rails.cache
+      # (Chats::Broadcasts.refresh_inbox_of): one left by the last test
+      # would swallow this one's refresh.
+      Rails.cache.clear
     end
 
     teardown do
