@@ -1038,6 +1038,9 @@ turbo-frame[id^="chats_page_"] {
    page sets what is left: calc(100dvh - 4rem)). */
 .chats-split {
   max-width: calc(var(--chats-list-width) + var(--chats-max-width));
+  /* The list alone (a phone): at least what is left of the screen, never
+     the shell's whole 100dvh, which would run past it under a host header. */
+  min-height: var(--chats-split-height, 100dvh);
 }
 .chats-split__list { display: flex; flex-direction: column; min-width: 0; }
 .chats-split__conversation {

@@ -151,6 +151,22 @@ class SplitInboxBrowserTest < ActionDispatch::SystemTestCase
     visit "/messages/#{@with_bob.id}"
     assert_selector ".chats-split__pane .chats-thread__back", visible: true
     assert_fits_under_the_header
+
+    visit "/messages" # the list alone
+    assert_selector ".chats-split__list li.chats-row", count: 2
+    assert_fits_under_the_header(composer: false)
+  end
+
+  test "under a host's own header, a phone's empty inbox fits what is left of the screen too" do
+    Chats.config.layout = "with_header"
+    sign_in_at(390, mobile: true, viewer: create_user(name: "Nobody"))
+
+    visit "/messages"
+
+    assert_selector ".chats-split__empty--inbox", visible: true
+    assert_fits_under_the_header(composer: false)
+    assert_equal page.evaluate_script("window.innerHeight") - 56, rect(".chats-split")["height"].round,
+                 "the list page still fills the rest of the screen"
   end
 
   test "a refresh of the list leaves the open conversation alone: draft, scroll, focus, the thread itself" do
@@ -390,11 +406,13 @@ class SplitInboxBrowserTest < ActionDispatch::SystemTestCase
     JS
   end
 
-  def assert_fits_under_the_header
+  def assert_fits_under_the_header(composer: true)
     viewport = page.evaluate_script("window.innerHeight")
     assert_equal 56, rect(".chats-split")["top"].round, "the page starts under the header"
     assert_operator page.evaluate_script("document.documentElement.scrollHeight"), :<=, viewport,
                     "the page doesn't scroll"
+    return unless composer
+
     assert_operator rect(".chats-thread--pane .chats-composer")["bottom"].round, :<=, viewport,
                     "the composer is in view"
   end

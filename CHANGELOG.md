@@ -23,7 +23,8 @@ the old pages everywhere.**
   `inbox_empty` slot (rendered once, in the pane, no longer in the list
   too). Both panes are as tall as `--chats-split-height` (the screen,
   `100dvh`, by default; a host with its own header above the page sets what
-  is left, `calc(100dvh - 4rem)`) and scroll on their own; the page is as
+  is left, `calc(100dvh - 4rem)`, which a phone's list page also takes as
+  its least height) and scroll on their own; the page is as
   wide as the list plus a thread page (`--chats-max-width`).
   Below 700px it is one column, exactly the separate pages: `/messages` is
   the list, `/messages/:id` the thread with its back link. One media query
