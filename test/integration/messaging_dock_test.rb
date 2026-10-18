@@ -329,6 +329,11 @@ class MessagingDockTest < ActionDispatch::IntegrationTest
     end
     assert_empty css_select(".chats-thread__header"), "the page's header stays on the page"
     assert_empty css_select(".chats"), "a window is never rooted at .chats, the full-page shell"
+    # Several composers share a page: their fields' ids are per conversation
+    # (Turbo restores focus by id after every stream it renders).
+    assert_select "textarea##{dom_id(@conversation, :message_body)}"
+    assert_select "input[type='file']##{dom_id(@conversation, :message_files)}"
+    assert_empty css_select("#message_body, #message_files")
     assert_empty css_select("[data-chats-dock-hide]"), "a window must not hide the dock it lives in"
   end
 

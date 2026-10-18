@@ -13,6 +13,6 @@
 
     <%# What the README tells a host to add: the dock renders for signed-in
         viewers, and on none of the engine's own pages. %>
-    <%= chats_dock %>
+    <%= chats_dock(**@dock_options.to_h) %>
   </body>
 </html>

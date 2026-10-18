@@ -26,6 +26,8 @@ group :test do
   gem "mysql2"
   gem "pg"
   gem "sqlite3"
+  gem "capybara", require: false
+  gem "selenium-webdriver", require: false
   gem "bootsnap", require: false
   gem "importmap-rails"
   gem "propshaft"

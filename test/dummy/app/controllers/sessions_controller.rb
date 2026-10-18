@@ -13,6 +13,8 @@ class SessionsController < ApplicationController
   # A host page (not one of the engine's): what the dock is for.
   def home
     @people = current_user ? User.where.not(id: current_user.id).order(:id).limit(5) : []
+    # The browser tests try the dock's options (`?dock_windows=4`).
+    @dock_options = params[:dock_windows].present? ? { windows: params[:dock_windows].to_i } : {}
   end
 
   # The same page in a layout that wraps the dock in a shell element.

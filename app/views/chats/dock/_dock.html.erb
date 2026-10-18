@@ -38,6 +38,7 @@
         action: "keydown->chats--dock#keydown " \
                 "focusin->chats--dock#engage pointerdown->chats--dock#engage wheel->chats--dock#engage " \
                 "touchstart->chats--dock#engage " \
+                "turbo:before-fetch-response->chats--dock#frameResponded " \
                 "turbo:frame-missing->chats--dock#frameMissing " \
                 "turbo:frame-load->chats--dock#frameLoaded " \
                 "turbo:fetch-request-error->chats--dock#frameFailed " \

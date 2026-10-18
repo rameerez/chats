@@ -57,6 +57,7 @@
       <% if Chats.config.attachments %>
         <label class="chats-composer__attach" aria-label="<%= t("chats.composer.attach") %>">
           <%= form.file_field :files, multiple: true, hidden: true,
+                id: dom_id(conversation, :message_files),
                 accept: (Chats.config.attachments == :images ? "image/*" : nil),
                 data: { "chats--composer-target": "files", action: "change->chats--composer#filesChanged" } %>
           <span aria-hidden="true">📎</span>
@@ -64,7 +65,12 @@
         </label>
       <% end %>
 
+      <%# Ids per conversation, not form_with's `message_body`: a page can
+          hold several composers (the dock's windows), and Turbo restores
+          focus BY ID after rendering a stream — a shared id sent the cursor
+          into another window's composer. %>
       <%= form.text_area :body,
+            id: dom_id(conversation, :message_body),
             rows: 1,
             placeholder: t("chats.composer.placeholder"),
             class: "chats-composer__input",

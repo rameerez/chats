@@ -381,7 +381,7 @@ class DockControllerTest < ActiveSupport::TestCase
 
         controller = dock({ open: [frame("5", { draft: "keep me" })] })
         let shown = null
-        controller.show = (target) => { shown = target }
+        controller.show = (target) => { shown = target; return true }
         let prevented = false
         controller.beforeStreamRender({
           target: {

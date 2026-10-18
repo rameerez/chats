@@ -48,7 +48,9 @@ reads a thread, and the thread body moved into a partial.
   (`blockable:` included), ⤢ for the full page, – and ×. Until the thread
   arrives, and if it can't, the window shows the same header over
   "Loading…" or "Couldn't load this conversation." with "Try again"; a 404
-  (left, blocked) closes it. An empty conversation's window says "Say hello
+  (left, blocked) closes it, read from the response before Turbo acts on
+  it (an error page carrying `turbo-visit-control`, as Rails' own do, would
+  otherwise take the whole page with it); a 5xx shows the failed shell. An empty conversation's window says "Say hello
   to …". The dock never opens a window for a conversation the page itself
   shows (the streams address the thread's DOM ids, which must exist once).
 - **What fits.** `min(windows, floor((viewport − 312) / 344))` windows beside
@@ -61,9 +63,16 @@ reads a thread, and the thread body moved into a partial.
   the panel. An open that can't fit even with every window in use folded is
   declined, changing nothing, and the row's link (or the `dock: true`
   button) opens the conversation's page instead; a pop-up just doesn't
-  happen. Narrowing the viewport closes what isn't in use and folds what is,
-  the focused window last. A window the viewer closes keeps its unsent text
-  for when it comes back.
+  happen. Unfolding a folded window (its title, a row, a repeated `dock:
+  true`) makes room exactly as an open does, and when it can't, the window
+  stays folded. Narrowing the viewport closes what isn't in use and folds
+  what is, the focused window last; when even a row of folded headers is
+  too wide, it closes the least recently used windows in use too, keeping
+  their unsent text, and announces nothing. A window the viewer closes
+  keeps its unsent text for when it comes back. Every way a window leaves
+  the dock (closed, evicted, declined, gone for the viewer, shown by the
+  page, another viewer's) goes through one path that keeps the draft and
+  resyncs the rows and the phone sheet.
 - **Reading waits for the viewer.** A window never reads on render. A
   minimized window never marks anything read, and a window that popped
   open, or came back after a reload, marks messages read only once the
@@ -215,6 +224,12 @@ reads a thread, and the thread body moved into a partial.
   group row shows the bell-slash when the viewer muted it. Rows ejected
   earlier still work in the dock; they navigate instead of opening a
   window.
+- **The composer's fields have per-conversation ids**
+  (`dom_id(conversation, :message_body)`, `:message_files`), instead of
+  `form_with`'s `message_body` / `message_files`. A page can now hold
+  several composers, and Turbo restores focus by id after rendering a
+  stream, so a shared id moved the cursor into another window's composer.
+  CSS or JS that selected `#message_body` should select `.chats-composer__input`.
 - The long-press Edit event (`chats:edit-message`) now carries its thread
   element, and a composer only starts editing for a message of its own
   thread, since a page can hold several threads now. The check lives in
@@ -222,7 +237,9 @@ reads a thread, and the thread body moved into a partial.
   its own `composer_controller` reacts to every thread's Edit, as before.
 - The dummy app has a real importmap setup (Turbo, Stimulus, the stock
   eager loader) and a host home page with the dock, which is how the
-  screenshots were taken.
+  screenshots were taken. `test/system` measures the dock's rendered layout
+  in a headless Chrome (capybara and selenium-webdriver join the test
+  bundle; the tests skip where Chrome can't start).
 
 ## [0.4.2] - 2026-10-17
 

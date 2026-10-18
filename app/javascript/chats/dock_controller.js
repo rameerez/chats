@@ -95,7 +95,7 @@ export default class extends Controller {
     // A window always names its viewer. One that doesn't match never stays:
     // nothing of one account may surface in another's page.
     this.windowTargets.forEach((frame) => {
-      if (frame.dataset.chatsMessager !== this.messagerValue) frame.remove()
+      if (frame.dataset.chatsMessager !== this.messagerValue) this.dropWindow(frame, { keepDraft: false })
     })
 
     this.layout()
@@ -154,8 +154,7 @@ export default class extends Controller {
     const open = this.windowFor(id)
     if (open) {
       if (opener) this.openers.set(open, opener)
-      this.show(open, { focus })
-      return open
+      return this.show(open, { focus }) ? open : false
     }
 
     if (!this.makeRoom(null, { force: active })) return false
@@ -172,7 +171,7 @@ export default class extends Controller {
   // called again for each window when a Turbo visit reattaches the dock.
   windowTargetConnected(frame) {
     const id = frame.dataset.conversationId
-    if (this.renderedOnPage(id)) return frame.remove()
+    if (this.renderedOnPage(id)) return this.dropWindow(frame)
 
     frame.dataset.chatsMessager ||= this.messagerValue
     frame.dataset.usedAt ||= String(Date.now())
@@ -182,7 +181,7 @@ export default class extends Controller {
     // A window the server sent (`dock: true`) and nothing can make room
     // for: the conversation's page instead.
     if (!this.makeRoom(frame, { force: true })) {
-      frame.remove()
+      this.dropWindow(frame)
       this.visit(this.threadUrl(id))
       return
     }
@@ -214,20 +213,33 @@ export default class extends Controller {
     if (!open) return
 
     event.preventDefault()
-    this.show(open, { focus: true })
+    if (!this.show(open, { focus: true })) this.visit(this.threadUrl(open.dataset.conversationId))
   }
 
-  // Bring a window forward: expanded, engaged, in front on a phone.
+  // Bring a window forward: expanded, engaged, in front on a phone. False
+  // when it can't expand (see expand): it stays as it was.
   show(frame, { focus = false } = {}) {
-    frame.dataset.usedAt = String(Date.now())
-    this.setMinimized(frame, false)
-    this.activate(frame)
+    if (!this.expand(frame)) return false
 
+    frame.dataset.usedAt = String(Date.now())
+    this.activate(frame)
     if (this.compact) {
       this.windowTargets.forEach((other) => other.classList.toggle(FRONT, other === frame))
       this.syncSheet()
     }
     if (focus) this.focusInside(frame)
+    return true
+  }
+
+  // Unfold a window. Expanding takes width, so it makes room exactly as an
+  // open does (closing idle windows, folding the others in use) and, when
+  // even that can't fit it, doesn't happen: the window stays folded.
+  expand(frame) {
+    if (!this.minimized(frame)) return true
+    if (!this.compact && !this.makeRoom(frame, { force: true, expanding: true })) return false
+
+    this.setMinimized(frame, false)
+    return true
   }
 
   buildWindow(id, { minimized, active, focus }) {
@@ -260,9 +272,9 @@ export default class extends Controller {
   // narrow header instead, least recently used first and the focused one
   // last, and a pop-up gives up. When even that isn't enough, there is no
   // room, and the caller opens the conversation's page instead.
-  makeRoom(keeping, { force = false } = {}) {
+  makeRoom(keeping, { force = false, expanding = false } = {}) {
     const others = () => this.windowTargets.filter((frame) => frame !== keeping)
-    const incoming = this.slot(keeping)
+    const incoming = expanding ? this.windowWidth + this.gap : this.slot(keeping)
 
     // Could it fit at all — every window not in use closed, and (opening)
     // every one in use folded? If not, change nothing.
@@ -293,21 +305,37 @@ export default class extends Controller {
     return true
   }
 
-  // After the viewport narrowed: close what isn't in use, fold what is,
-  // until the row fits again. Returns whether anything changed.
+  // After the viewport narrowed: back within both limits. First close what
+  // isn't in use, then fold what is; and when even a row of folded headers
+  // is too wide, close windows in use too, least recently used first and
+  // the focused one last — their unsent text is kept (removeWindow), which
+  // is what drafts are for. Nothing is announced. Returns whether anything
+  // changed.
   reflow() {
     let changed = false
-    while (!this.fits(this.windowTargets)) {
-      const victim = this.leastRecentlyUsed(null) || this.foldable(null)
-      if (!victim) break
-      if (this.inUse(victim)) {
-        this.squeeze(victim)
+    while (this.windowTargets.length > this.windowsValue || !this.fits(this.windowTargets)) {
+      const idle = this.leastRecentlyUsed(null)
+      const fold = !idle && this.foldable(null)
+      const last = !idle && !fold && this.lastInUse()
+      if (fold) {
+        this.squeeze(fold)
+      } else if (idle || last) {
+        this.removeWindow(idle || last)
       } else {
-        this.removeWindow(victim)
+        break
       }
       changed = true
     }
     return changed
+  }
+
+  // The window in use to give up when nothing else is left: least recently
+  // used, the focused one last.
+  lastInUse() {
+    return this.windowTargets.slice().sort((a, b) => {
+      const focus = Number(a.contains(document.activeElement)) - Number(b.contains(document.activeElement))
+      return focus || Number(a.dataset.usedAt || 0) - Number(b.dataset.usedAt || 0)
+    })[0]
   }
 
   // Folded to make room: minimized, at the narrow header width.
@@ -510,7 +538,7 @@ export default class extends Controller {
     if (!frame || this.compact) return
 
     if (this.minimized(frame)) {
-      this.show(frame)
+      this.show(frame) // no room: it stays folded
     } else {
       this.setMinimized(frame, true)
     }
@@ -554,9 +582,19 @@ export default class extends Controller {
 
   // Every way a window goes keeps what was typed in it.
   removeWindow(frame) {
-    this.keepDraft(frame)
+    this.dropWindow(frame)
+  }
+
+  // The one way a window leaves the dock, whatever the reason (closed,
+  // evicted, declined, missing, shown by the page, another viewer's): its
+  // draft kept (unless it isn't this viewer's), and the rows and the phone
+  // sheet told — a window gone from in front of the list must give the list
+  // back its focusability.
+  dropWindow(frame, { keepDraft = true } = {}) {
+    if (keepDraft) this.keepDraft(frame)
     frame.remove()
     this.markOpenRows()
+    this.syncSheet()
   }
 
   setMinimized(frame, minimized) {
@@ -597,15 +635,32 @@ export default class extends Controller {
     this.restoreDraft(frame)
   }
 
-  // A window whose conversation is gone for this viewer (they left, a block
-  // hides it) answers 404 without its frame: close it quietly, instead of
-  // Turbo printing "Content missing" into the dock.
+  // A window's answer, before Turbo acts on it. A 4xx means the
+  // conversation is gone for this viewer (they left, a block hides it):
+  // close the window quietly. A 5xx: the failed shell, with Try again. Both
+  // must be handled HERE: an error page carrying turbo-visit-control (Rails'
+  // own do) would otherwise make Turbo leave the page for it.
+  frameResponded(event) {
+    const frame = event.target
+    const response = event.detail?.fetchResponse
+    if (!this.windowTargets.includes(frame) || !response || response.succeeded) return
+
+    event.preventDefault()
+    if (response.clientError) {
+      this.dropWindow(frame, { keepDraft: false })
+      this.save()
+    } else {
+      frame.replaceChildren(this.shell("failed", this.rowName(frame.dataset.conversationId)))
+    }
+  }
+
+  // The answer had no window in it (a host's page instead of the thread):
+  // close it quietly, rather than Turbo printing "Content missing".
   frameMissing(event) {
     if (!this.windowTargets.includes(event.target)) return
 
     event.preventDefault()
-    event.target.remove()
-    this.markOpenRows()
+    this.dropWindow(event.target, { keepDraft: false })
     this.save()
   }
 
