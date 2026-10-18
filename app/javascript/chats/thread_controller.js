@@ -509,29 +509,39 @@ export default class extends Controller {
 
   // --- Stale-thread refresh (catch up after sleep/disconnect) --------------------
 
-  // The `?since=` cursor: the newest data-updated-at-ms across rendered
-  // bubbles. updated_at (not created_at) so edits/tombstones made while
-  // asleep are caught by the refresh too.
+  // Two cursors, because "new" and "changed" are different questions: the
+  // newest creation rendered (`after`, µs: what is newer gets appended) and
+  // the newest change rendered (`since`, ms: what changed since gets
+  // replaced). One cursor can't answer both: a message created at 10:15
+  // and missed, while a bubble on screen was edited at 10:20, is older than
+  // the newest change and would never come.
   trackLoadCursor(element) {
-    const ms = Number(element.dataset.updatedAtMs || 0)
-    if (ms > (this.lastLoadedAt || 0)) this.lastLoadedAt = ms
+    const created = Number(element.dataset.createdAtUs || 0)
+    const updated = Number(element.dataset.updatedAtMs || 0)
+    if (created > (this.createdCursor || 0)) this.createdCursor = created
+    if (updated > (this.updatedCursor || 0)) this.updatedCursor = updated
   }
 
-  // What the stream missed: messages created since the cursor (appended),
-  // ones changed since (replaced: edits, tombstones, reactions), the read
-  // state, and — when messages are hard-deleted — which rendered bubbles
-  // still exist. `from` is the oldest rendered bubble, so the server can
-  // name every bubble that should be on screen. A thread more than a page
+  // What the stream missed: messages created after the newest one rendered
+  // (appended), rendered ones changed since (replaced: edits, tombstones,
+  // reactions), the read state, and — when messages are hard-deleted —
+  // which rendered bubbles still exist. An empty thread asks from the epoch:
+  // its first message may be the one it missed. `from` is the oldest
+  // rendered bubble, so the server can name every bubble that should be on
+  // screen. A thread more than a page
   // behind gets its history re-rendered at the latest page instead
   // (`history`: this thread's scroller has the id that takes it; one
   // ejected before it did gets a page refresh); it then opens at the
   // bottom, as a fresh thread does.
   refreshThread() {
-    if (!this.refreshUrlValue || !this.lastLoadedAt) return
+    if (!this.refreshUrlValue) return
 
-    const params = new URLSearchParams({ since: this.lastLoadedAt })
+    const params = new URLSearchParams({ since: this.updatedCursor || 0 })
+    // A bubble ejected before it carried its creation time leaves `after`
+    // out, and the server falls back to the one cursor it used to have.
+    if (this.createdCursor || !this.messageTargets.length) params.set("after", this.createdCursor || 0)
     const oldest = this.messageTargets[0]
-    if (oldest?.dataset.createdAtMs) params.set("from", oldest.dataset.createdAtMs)
+    if (oldest?.dataset.createdAtUs) params.set("from", oldest.dataset.createdAtUs)
     if (this.hasScrollerTarget && this.scrollerTarget.id) params.set("history", "1")
     const last = this.messageTargets[this.messageTargets.length - 1]
 
@@ -548,7 +558,7 @@ export default class extends Controller {
   prune = (event) => {
     const present = new Set(event.detail.ids)
     this.messageTargets.forEach((message) => {
-      if (Number(message.dataset.createdAtMs || Infinity) > event.detail.until) return
+      if (Number(message.dataset.createdAtUs || Infinity) > event.detail.until) return
       if (!present.has(message.id)) message.remove()
     })
   }

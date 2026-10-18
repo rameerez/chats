@@ -164,20 +164,25 @@ module Chats
     }
 
     # Catch-up scopes for ConversationsController#refresh (the stale-thread
-    # recovery path — see the thread controller's refresh trigger). `since`
-    # is the newest `updated_at` the client has rendered:
-    #   created_since — messages that arrived while the tab was asleep
-    #                   (appended);
-    #   updated_since — messages the client HAS rendered that changed since
-    #                   (edits, soft-delete tombstones — replaced in place).
-    # `updated_since` excludes fresh rows so nothing renders twice — a Turbo
+    # recovery path — see the thread controller's refresh trigger), on the
+    # client's two cursors: the newest `created_at` it has rendered, and the
+    # newest `updated_at`:
+    #   created_since(created) — messages created after the newest one
+    #                   rendered (appended);
+    #   updated_since(updated, rendered_through: created) — messages the
+    #                   client HAS rendered (created by then) that changed
+    #                   since (edits, tombstones, reactions — replaced).
+    # Two cursors, because one can't answer both: a message created at 10:15
+    # and missed, while a rendered one was edited at 10:20, is older than the
+    # newest change — compared with it, it would never come. The two scopes
+    # split on the same creation cursor, so nothing renders twice — a Turbo
     # append of an existing dom_id would otherwise also MOVE that bubble to
     # the end (Turbo removes-then-appends on id collision).
     # Pattern from Basecamp's Campfire (Rooms::RefreshesController):
     # https://github.com/basecamp/once-campfire
     scope :created_since, ->(time) { where("chats_messages.created_at > ?", time) }
-    scope :updated_since, lambda { |time|
-      where("chats_messages.updated_at > ?", time).where("chats_messages.created_at <= ?", time)
+    scope :updated_since, lambda { |time, rendered_through: time|
+      where("chats_messages.updated_at > ?", time).where("chats_messages.created_at <= ?", rendered_through)
     }
 
     validates :kind, inclusion: { in: KINDS }

@@ -21,11 +21,12 @@
          too. `.ceil` biases the cursor PAST this row's sub-millisecond tail,
          so the strictly-greater server query can't re-fetch it. %>
      data-updated-at-ms="<%= (message.updated_at.to_f * 1000).ceil %>"
-     <%# created-at-ms: the oldest bubble's is the catch-up's `from` — the
-         server lists every message from there that still exists, so a hard
-         delete the stream missed is removed too. `.floor`, so this row
-         itself is in that list. %>
-     data-created-at-ms="<%= (message.created_at.to_f * 1000).floor %>">
+     <%# created-at-us, to the microsecond the database keeps: the newest
+         bubble's is the catch-up's `after` (anything created later is
+         appended), the oldest bubble's its `from` (the server lists every
+         message from there that still exists, so a hard delete the stream
+         missed is removed too). %>
+     data-created-at-us="<%= (message.created_at.to_i * 1_000_000) + message.created_at.usec %>">
 
   <% if message.system? %>
     <div class="chats-message__system<%= " chats-message__system--with-action" if message.action? %>">

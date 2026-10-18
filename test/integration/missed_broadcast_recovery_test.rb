@@ -78,13 +78,13 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     @conversation.participant_for(@bob).read!
 
     login_as @alice
-    get "/messages/#{@conversation.id}/refresh", params: { since: cursor }, headers: { "Accept" => TURBO_STREAM }
+    get "/messages/#{@conversation.id}/refresh", params: cursor, headers: { "Accept" => TURBO_STREAM }
 
     assert_response :success
     append = css_select("turbo-stream[action='append']").sole
     assert_equal dom_id(@conversation, :messages), append["target"]
     assert_equal(missed.map { |message| dom_id(message) },
-                 css_select(append, "[data-chats--thread-target='message']").map { |node| node["id"] })
+                 appended_ids(append))
 
     replaced = css_select("turbo-stream[action='replace']").map { |stream| stream["target"] }
     assert_equal [dom_id(edited), dom_id(@conversation, :read_state)], replaced
@@ -94,6 +94,48 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
                     Chats.messager_key(@bob), "who has read what, as the read-state broadcast says it"
   end
 
+  test "a message created before a rendered bubble's latest edit, and missed, still comes" do
+    # 10:00 rendered; 10:15 created and missed; 10:20 the rendered one is
+    # edited and the edit arrives live. The newest change is 10:20, the
+    # missed message older than it: one cursor would lose it for good.
+    shown = travel_to(Time.zone.parse("2026-10-18 10:00")) { @bob.message!(@conversation, "shown") }
+    rendered = cursor_after(shown)
+    missed = travel_to(Time.zone.parse("2026-10-18 10:15")) { @bob.message!(@conversation, "missed at 10:15") }
+    travel_to(Time.zone.parse("2026-10-18 10:20")) { shown.edit!("shown, edited at 10:20") }
+    cursors = rendered.merge(since: cursor_after(shown)[:since]) # the edit came in live
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: cursors, headers: { "Accept" => TURBO_STREAM }
+
+    append = css_select("turbo-stream[action='append']").sole
+    assert_equal [dom_id(missed)], appended_ids(append)
+    assert_empty css_select("turbo-stream[action='replace'][target='#{dom_id(shown)}']"),
+                 "the edit it already has isn't sent again"
+  end
+
+  test "a change to a rendered bubble since the newest change comes as a replacement, never as an append" do
+    shown = @bob.message!(@conversation, "shown")
+    cursors = cursor_after(shown)
+    travel 1.second
+    shown.edit!("changed while away")
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: cursors, headers: { "Accept" => TURBO_STREAM }
+
+    assert_empty css_select("turbo-stream[action='append']")
+    assert css_select("turbo-stream[action='replace'][target='#{dom_id(shown)}']").one?
+  end
+
+  test "an empty thread asks from the epoch, and its first message, missed, comes" do
+    first = @bob.message!(@conversation, "the very first, while the cable was down")
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: { since: 0, after: 0 }, headers: { "Accept" => TURBO_STREAM }
+
+    append = css_select("turbo-stream[action='append']").sole
+    assert_equal [dom_id(first)], appended_ids(append)
+  end
+
   test "a reaction made while the client wasn't listening is caught up" do
     message = @alice.message!(@conversation, "react to me")
     cursor = cursor_after(message)
@@ -101,7 +143,7 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     Chats::Reaction.toggle!(message: message, reactor: @bob, emoji: "🎉")
 
     login_as @alice
-    get "/messages/#{@conversation.id}/refresh", params: { since: cursor }, headers: { "Accept" => TURBO_STREAM }
+    get "/messages/#{@conversation.id}/refresh", params: cursor, headers: { "Accept" => TURBO_STREAM }
 
     replace = css_select("turbo-stream[action='replace'][target='#{dom_id(message)}']").sole
     assert_includes replace.to_html, "🎉"
@@ -111,7 +153,7 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     message = @bob.message!(@conversation, "all caught up")
 
     login_as @alice
-    get "/messages/#{@conversation.id}/refresh", params: { since: cursor_after(message) },
+    get "/messages/#{@conversation.id}/refresh", params: cursor_after(message),
                                                  headers: { "Accept" => TURBO_STREAM }
 
     assert_equal [["replace", dom_id(@conversation, :read_state)]], actions_and_targets(css_select("turbo-stream"))
@@ -123,7 +165,7 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     @bob.message!(@conversation, "unread while away")
 
     login_as @alice
-    get "/messages/#{@conversation.id}/refresh", params: { since: cursor }, headers: { "Accept" => TURBO_STREAM }
+    get "/messages/#{@conversation.id}/refresh", params: cursor, headers: { "Accept" => TURBO_STREAM }
 
     assert_response :success
     assert @conversation.participant_for(@alice).reload.unread?
@@ -142,14 +184,14 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     login_as @alice
     freeze_time do
       get "/messages/#{@conversation.id}/refresh",
-          params: { since: cursor, from: (oldest.created_at.to_f * 1000).floor },
+          params: cursor.merge(from: microseconds(oldest.created_at)),
           headers: { "Accept" => TURBO_STREAM }
 
       prune = css_select("turbo-stream[action='chats_prune']").sole
       assert_equal dom_id(@conversation, :history), prune["target"]
       assert_equal [oldest, kept].map { |message| dom_id(message) }, prune["data-ids"].split
       assert_not_includes prune["data-ids"], dom_id(before_window), "bounded by the oldest rendered bubble"
-      assert_equal ((Time.current - 10.seconds).to_f * 1000).floor, Integer(prune["data-until"]),
+      assert_equal microseconds(10.seconds.ago), Integer(prune["data-until"]),
                    "a message whose insert hadn't committed when the list was read is never taken for a deleted one"
     end
   end
@@ -162,7 +204,7 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
 
     login_as @alice
     get "/messages/#{@conversation.id}/refresh",
-        params: { since: cursor, from: (message.created_at.to_f * 1000).floor },
+        params: cursor.merge(from: microseconds(message.created_at)),
         headers: { "Accept" => TURBO_STREAM }
 
     assert css_select("turbo-stream[action='replace'][target='#{dom_id(message)}']").one?
@@ -179,7 +221,7 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
 
     block_pair!(@alice, @bob)
     login_as @alice
-    get "/messages/#{@conversation.id}/refresh", params: { since: cursor_after(message) },
+    get "/messages/#{@conversation.id}/refresh", params: cursor_after(message),
                                                  headers: { "Accept" => TURBO_STREAM }
     assert_response :not_found
   end
@@ -194,7 +236,7 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
 
     bubble = css_select("##{dom_id(message)}").sole
     assert_equal (message.updated_at.to_f * 1000).ceil, Integer(bubble["data-updated-at-ms"])
-    assert_equal (message.created_at.to_f * 1000).floor, Integer(bubble["data-created-at-ms"])
+    assert_equal microseconds(message.reload.created_at), Integer(bubble["data-created-at-us"])
     assert_select "##{dom_id(@conversation, :history)}.chats-thread__scroll[data-chats--thread-target='scroller']" do
       assert_select "##{dom_id(@conversation, :messages)}"
       assert_select "##{dom_id(@conversation, :read_state)}"
@@ -230,12 +272,22 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
 
   private
 
+  def appended_ids(append)
+    css_select(append, "[data-chats--thread-target='message']").map { |node| node["id"] }
+  end
+
   def actions_and_targets(streams)
     streams.map { |stream| [stream["action"], stream["target"]] }
   end
 
-  # The client's cursor, exactly as the bubble partial emits it.
+  # The client's cursors when +message+ is the newest bubble it rendered,
+  # exactly as the bubble partial emits them.
   def cursor_after(message)
-    (message.reload.updated_at.to_f * 1000).ceil
+    message.reload
+    { since: (message.updated_at.to_f * 1000).ceil, after: microseconds(message.created_at) }
+  end
+
+  def microseconds(time)
+    (time.to_i * 1_000_000) + time.usec
   end
 end
