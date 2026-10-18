@@ -331,7 +331,9 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
     assert_selector "#chats_dock_list li"
     find("#chats_dock_list a", text: "Bob").click
     window = "turbo-frame.chats-window[data-conversation-id='#{@conversation.id}']"
-    assert_selector "#{window} [data-chats--thread-target='message']", text: "hola"
+    # The window loads its thread in a frame: under a full suite's load that
+    # can take longer than Capybara's default two seconds.
+    using_wait_time(10) { assert_selector "#{window} [data-chats--thread-target='message']", text: "hola" }
     window
   end
 

@@ -555,6 +555,75 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
+  test "a timed-out render's late end is paired with it, not with the render after it (first in, first out)" do
+    run_streams(<<~JAVASCRIPT)
+      afterRendering()                                      // (watching page renders, as a connected thread is)
+      page.documentEvents.dispatch("turbo:before-render")   // R1, which will run late…
+      page.advance(10_001)                                  // …past its bound
+      page.documentEvents.dispatch("turbo:before-render")   // R2 starts
+
+      let after = false
+      afterRendering().then(() => { after = true })
+      page.documentEvents.dispatch("turbo:render")          // R1's late end
+      page.advance(0); await page.settle()
+      assert.strictEqual(after, false, "R2 still holds things up")
+
+      page.documentEvents.dispatch("turbo:render")          // R2's end
+      page.advance(0); await page.settle()
+      assert.strictEqual(after, true)
+    JAVASCRIPT
+  end
+
+  test "a catch-up given up by several of its streams is remembered, and retried, once" do
+    run_streams(<<~JAVASCRIPT)
+      let wanted = true
+      const retries = []
+      const thread = {}
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted, key: thread, retry: () => retries.push("again") })
+      answer(0)                                             // two streams
+      await page.settle()
+
+      page.documentEvents.dispatch("turbo:before-render")
+      wanted = false
+      page.advance(10_001); await page.settle()             // the render is overdue
+      await turbo.applyStreams(); await page.settle()       // both streams reach their guards and give up
+      assert.strictEqual(turbo.performed.length, 0)
+
+      wanted = true
+      page.documentEvents.dispatch("turbo:render")          // the late render ends with the window back
+      page.advance(0); await page.settle()
+      page.documentEvents.dispatch("turbo:before-render")
+      page.documentEvents.dispatch("turbo:render")
+      page.advance(0); await page.settle()
+      assert.deepStrictEqual(retries, ["again"])
+    JAVASCRIPT
+  end
+
+  test "a render that never ends, and what it made give up, are forgotten after 60s" do
+    run_streams(<<~JAVASCRIPT)
+      const retries = []
+      afterRendering()
+      page.documentEvents.dispatch("turbo:before-render")   // never ends
+      page.advance(10_001)
+      let wanted = false
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted, retry: () => retries.push("again") })
+      answer(0)
+      await page.settle(); page.advance(0); await page.settle()  // given up, remembered
+
+      page.advance(60_000); await page.settle()             // forgotten: the render, and the retry
+      wanted = true
+      page.documentEvents.dispatch("turbo:before-render")   // a later, unrelated render…
+      page.documentEvents.dispatch("turbo:render")          // …is paired with itself, not the forgotten one
+      page.advance(0); await page.settle()
+      assert.deepStrictEqual(retries, [], "nothing old is retried")
+
+      let after = false
+      afterRendering().then(() => { after = true })
+      page.advance(0); await page.settle()
+      assert.ok(after, "and nothing holds things up")
+    JAVASCRIPT
+  end
+
   test "at most one unapplied answer per key: a newer one, or cancelStreamsFor, drops the older's leftovers" do
     run_streams(<<~JAVASCRIPT)
       const thread = {}

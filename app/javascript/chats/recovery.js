@@ -108,7 +108,7 @@ export function renderStreamFrom(url, { when = () => true, key = url, retry = nu
     .then((response) => (isTurboStream(response) ? response.text() : ""))
     .then(async (html) => {
       clearTimeout(hung)
-      if (!html || !(await stillWanted(when, retry))) return false
+      if (!html || !(await stillWanted(when, retry, key))) return false
 
       setTimeout(release, APPLY_WITHIN_MS)
       return apply(html, when, key, retry)
@@ -136,63 +136,77 @@ export function cancelStreamsFor(key) {
 // asynchronously (a `turbo:before-render` listener that animates, or uses a
 // view transition), and the element is then off the page for as long as
 // that takes. So "off the page" means "gone" only once page rendering is
-// over: from each `turbo:before-render` to its `turbo:render`, counted one
-// by one (a second render may start before the first ends), nothing is
-// decided, and afterRendering() resolves a task after the last one ends.
+// over, and afterRendering() resolves a task after the last render ends.
 //
-// A render that hasn't ended after RENDER_WITHIN_MS stops holding things
-// up. What is given up while it is still out (an answer, streams waiting)
-// may belong to a window it will yet bring back, so it is remembered with
-// its way to catch up again (`retry:`), and asked again when that render,
-// late, does end: a window that is back and still wanted catches up anew.
+// Pairing. Turbo's events carry no identity, so each `turbo:render` ends
+// the OLDEST render still on record: first in, first out. Turbo's own page
+// renders never overlap (a visit waits for the previous render), so this is
+// exact for them; a host whose own renders could end out of order is held
+// to the same rule, with the bounds below as the safety net.
+//
+// Bounds. A render that hasn't ended after RENDER_WITHIN_MS stops holding
+// things up, but stays on record, in its place, until its own end arrives
+// (so the next `turbo:render` is still paired with it), or until
+// FORGET_AFTER_MS, when it is let go for good. What is given up while such
+// an overdue render is out (an answer, streams waiting) may belong to a
+// window it will yet bring back: it is remembered, once per key, with the
+// caller's way to catch up again (`retry:`), and asked again when the next
+// render ends — a window that is back and still wanted catches up anew,
+// anything else is let go — or forgotten after FORGET_AFTER_MS.
 const RENDER_WITHIN_MS = 10_000
-const inFlight = [] // renders between turbo:before-render and their turbo:render, oldest first
-let overdue = 0 // renders past RENDER_WITHIN_MS that haven't ended
-let idle = null // { finished, resolve } while any render is in flight
-const givenUp = [] // { when, retry } dropped while an overdue render was out
+const FORGET_AFTER_MS = 60_000
+const renders = [] // oldest first: { overdue, bound, forget }
+const givenUp = new Map() // key → { when, retry, forget }
+let idle = null // { finished, resolve } while a render holds things up
 let watchingRenders = false
+
+const holding = () => renders.some((render) => !render.overdue)
+const anyOverdue = () => renders.some((render) => render.overdue)
 
 function watchPageRenders() {
   if (watchingRenders) return
   watchingRenders = true
 
   document.addEventListener("turbo:before-render", () => {
-    if (!inFlight.length) {
+    if (!idle) {
       let resolve
       idle = { finished: new Promise((done) => { resolve = done }) }
       idle.resolve = resolve
     }
-    const render = {}
-    render.timer = setTimeout(() => {
-      inFlight.splice(inFlight.indexOf(render), 1)
-      overdue++
+    const render = { overdue: false }
+    render.bound = setTimeout(() => {
+      render.overdue = true
       settleIfIdle()
     }, RENDER_WITHIN_MS)
-    inFlight.push(render)
+    render.forget = setTimeout(() => {
+      const index = renders.indexOf(render)
+      if (index >= 0) renders.splice(index, 1)
+      settleIfIdle()
+    }, FORGET_AFTER_MS)
+    renders.push(render)
   })
 
   document.addEventListener("turbo:render", () => {
-    const render = inFlight.shift()
-    if (render) {
-      clearTimeout(render.timer)
-    } else if (overdue) {
-      overdue--
-    }
+    const render = renders.shift()
+    if (!render) return
+
+    clearTimeout(render.bound)
+    clearTimeout(render.forget)
     settleIfIdle()
-    if (givenUp.length) afterRendering().then(askAgain)
+    if (givenUp.size) afterRendering().then(askAgain)
   })
 }
 
 function settleIfIdle() {
-  if (inFlight.length || !idle) return
+  if (holding() || !idle) return
 
   const { resolve } = idle
   idle = null
   setTimeout(resolve, 0)
 }
 
-// Resolves once no page render is in progress, a task after the last one
-// (a render that starts within that task is waited for too).
+// Resolves once no page render is holding things up, a task after the last
+// one ends (a render that starts within that task is waited for too).
 export async function afterRendering() {
   watchPageRenders()
   do {
@@ -202,27 +216,33 @@ export async function afterRendering() {
 
 // Whether +when+ holds — or, if it doesn't while a page is rendering, once
 // the render is over. Given up while an overdue render is out: remembered.
-async function stillWanted(when, retry) {
+async function stillWanted(when, retry, key) {
   if (when()) return true
   if (idle) {
     await afterRendering()
     if (when()) return true
   }
-  giveUp(when, retry)
+  giveUp(key, when, retry)
   return false
 }
 
-function giveUp(when, retry) {
-  if (overdue && retry) givenUp.push({ when, retry })
+function giveUp(key, when, retry) {
+  if (!retry || !anyOverdue()) return
+
+  clearTimeout(givenUp.get(key)?.forget)
+  const entry = { when, retry }
+  entry.forget = setTimeout(() => { if (givenUp.get(key) === entry) givenUp.delete(key) }, FORGET_AFTER_MS)
+  givenUp.set(key, entry)
 }
 
+// Each remembered catch-up is asked once: run if its window is back and
+// still wanted, let go otherwise.
 function askAgain() {
-  for (const entry of givenUp.splice(0)) {
-    if (entry.when()) {
-      entry.retry()
-    } else if (overdue) {
-      givenUp.push(entry) // a render still out may bring it back
-    }
+  const entries = [...givenUp.values()]
+  givenUp.clear()
+  for (const entry of entries) {
+    clearTimeout(entry.forget)
+    if (entry.when()) entry.retry()
   }
 }
 
@@ -239,6 +259,7 @@ function apply(html, when, key, retry) {
   const mark = `${Date.now().toString(36)}-${++answerCount}`
   return new Promise((resolve) => {
     const answer = {
+      key,
       when,
       retry,
       applied: false,
@@ -252,7 +273,7 @@ function apply(html, when, key, retry) {
       cancel({ unwanted = false } = {}) {
         this.cancelled = true
         streamsMarked(mark).forEach((stream) => stream.remove())
-        if (unwanted) giveUp(when, retry)
+        if (unwanted) giveUp(key, when, retry)
         this.settle(false)
       }
     }
@@ -291,7 +312,7 @@ function guardStreams() {
     if (!answer || typeof render !== "function") return
 
     event.detail.render = async (stream) => {
-      if (answer.cancelled || !(await stillWanted(answer.when, answer.retry)) || answer.cancelled) return
+      if (answer.cancelled || !(await stillWanted(answer.when, answer.retry, answer.key)) || answer.cancelled) return
       answer.applied = true
       await render(stream)
     }
