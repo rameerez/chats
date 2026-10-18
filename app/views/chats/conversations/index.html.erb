@@ -60,7 +60,8 @@
     <%= form_with url: request.original_fullpath.split("?").first,
           method: :get,
           class: "chats-search",
-          role: "search",
+          # `html:`: form_with drops attributes it doesn't know (role among them).
+          html: { role: "search" },
           data: {
             controller: "chats--debounced-submit",
             action: "input->chats--debounced-submit#queue search->chats--debounced-submit#queue",

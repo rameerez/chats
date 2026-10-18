@@ -91,7 +91,8 @@
         <%= form_with url: chats_routes.conversations_path,
               method: :get,
               class: "chats-search chats-dock__search",
-              role: "search",
+              # `html:`: form_with drops attributes it doesn't know (role among them).
+              html: { role: "search" },
               data: {
                 controller: "chats--debounced-submit",
                 action: "input->chats--debounced-submit#queue search->chats--debounced-submit#queue",

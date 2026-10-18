@@ -120,6 +120,10 @@ to configure, no polling.**
   window's thread catches up by itself. A message missed while offline
   never pops a window open late.
 
+- **Both search forms are search landmarks.** `form_with … role: "search"`
+  rendered no `role` at all (`form_with` drops HTML attributes it doesn't
+  know unless they go through `html:`), on the inbox and in the dock.
+
 ### Changed
 - A page now counts as having been away after 10 seconds hidden, not 60
   (the inbox and the thread used 60).
