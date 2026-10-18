@@ -147,7 +147,9 @@ to configure, no polling.**
   aborted (a fetch can hang across a network interruption, and would
   otherwise stand in for every later one), a thread has at most one answer
   waiting for Turbo (a newer one, or the thread going away, drops the
-  older one's leftover streams and stops watching for them), and only the
+  older one's leftover streams and stops watching for them — going away
+  for good: a dock window Turbo carries across a visit is off the page for
+  an instant and keeps its answer), and only the
   answer's own streams are guarded (`data-chats-answer`), never a host's
   stream rendered at the same moment. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
