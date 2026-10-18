@@ -8,6 +8,7 @@ module Chats
   #   Chats::Inbox.for(alice)                       # rows, newest activity first
   #   Chats::Inbox.for(alice, query: "madrid")      # the search box
   #   Chats::Inbox.for(alice, with: support_desk)   # one stack's contents
+  #   Chats::Inbox.for(alice, limit: 10)            # the messaging dock's recent list
   #
   # Rows are `Chats::Conversation | Chats::InboxGroup`, sorted by last
   # activity descending. Grouping happens HERE and nowhere else, and so does
@@ -27,24 +28,30 @@ module Chats
   class Inbox
     include Enumerable
 
-    attr_reader :viewer, :query, :with
+    attr_reader :viewer, :query, :with, :limit
 
     class << self
       # The inbox for +viewer+. Returns a Chats::Inbox, which enumerates its
       # rows (`to_a` for a plain Array).
-      def for(viewer, query: nil, with: nil)
-        new(viewer, query: query, with: with)
+      def for(viewer, query: nil, with: nil, limit: nil)
+        new(viewer, query: query, with: with, limit: limit)
       end
     end
 
-    def initialize(viewer, query: nil, with: nil)
+    # +limit+ is how many ROWS come back (`config.inbox_limit` by default).
+    # A smaller one is a smaller query, not a slice of the big one — except
+    # while searching, which still looks through the whole `inbox_limit`
+    # window (a match is no less a match for being the eleventh most
+    # recent conversation) and then returns at most +limit+ hits.
+    def initialize(viewer, query: nil, with: nil, limit: nil)
       @viewer = viewer
       @query = query.to_s.strip.presence
       @with = with
+      @limit = Integer(limit || Chats.config.inbox_limit).clamp(1, Chats.config.inbox_limit)
     end
 
     # Conversation | InboxGroup rows, newest activity first, at most
-    # `config.inbox_limit` of them.
+    # +limit+ of them.
     def rows
       @rows ||= build_rows
     end
@@ -112,8 +119,10 @@ module Chats
 
     private
 
-    def limit
-      Chats.config.inbox_limit
+    # How many conversations each leg of the query loads: the row limit, or
+    # the whole inbox window while a search filters it in Ruby.
+    def window
+      query ? Chats.config.inbox_limit : limit
     end
 
     # The viewer's own inbox relation (`Messager#chats`: `inbox_for` with
@@ -152,15 +161,15 @@ module Chats
 
     def load_conversations
       if filtered?
-        @ungrouped_relation = filter_to_counterpart(base_relation).limit(limit)
+        @ungrouped_relation = filter_to_counterpart(base_relation).limit(window)
         @stacked = []
       elsif grouped_types.empty?
-        @ungrouped_relation = base_relation.limit(limit)
+        @ungrouped_relation = base_relation.limit(window)
         @stacked = []
       else
         stacked = Chats::Conversation.direct.where(id: stacked_seats)
-        @ungrouped_relation = base_relation.where.not(id: stacked).limit(limit)
-        recent = base_relation.direct.where(id: stacked_seats).except(:includes).select(:id).limit(limit)
+        @ungrouped_relation = base_relation.where.not(id: stacked).limit(window)
+        recent = base_relation.direct.where(id: stacked_seats).except(:includes).select(:id).limit(window)
         # Preserve the recent search window, plus the freshest conversation
         # of each counterpart. A busy stack cannot consume another stack's
         # row; at most twice the row limit is materialized.
@@ -195,7 +204,7 @@ module Chats
                                                       messager_id: viewer.id })
                             .select("chats_conversations.id, #{activity} AS activity_at", ranking)
       Chats::Conversation.from(ranked, :ranked_stacks).where("stack_rank = 1")
-                         .order(Arel.sql("activity_at DESC, id DESC")).limit(limit).select(:id)
+                         .order(Arel.sql("activity_at DESC, id DESC")).limit(window).select(:id)
     end
 
     # Only the direct threads shared with one counterpart. Direct only, by

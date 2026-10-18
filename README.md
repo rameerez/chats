@@ -518,6 +518,7 @@ Ejecting a whole screen to add one row or one button is too coarse. The bundled 
 | `composer_actions` | a row of your own buttons above the composer's input, outside its form (gets `conversation:`; gone when the thread locks) |
 | `locked_composer` | the locked composer's body |
 | `message_meta` | after each bubble's timestamp |
+| `dock_panel_footer` | beside "See all messages" in the [messaging dock](#-messaging-dock)'s panel (gets `viewer:`) |
 
 ```erb
 <%# app/views/chats/slots/_inbox_top.html.erb %>

@@ -24,13 +24,14 @@ module Chats
       # Which groups to eject. Default copies everything renderable.
       class_option :views,
                    type: :array,
-                   default: %w[conversations messages shared],
-                   desc: "Which view groups to copy (conversations, messages, shared)"
+                   default: %w[conversations messages shared dock],
+                   desc: "Which view groups to copy (conversations, messages, shared, dock)"
 
       def copy_views
         directory "chats/conversations", "app/views/chats/conversations" if include?("conversations")
         directory "chats/messages", "app/views/chats/messages" if include?("messages")
         directory "chats/shared", "app/views/chats/shared" if include?("shared")
+        directory "chats/dock", "app/views/chats/dock" if include?("dock")
       end
 
       def show_styling_tip

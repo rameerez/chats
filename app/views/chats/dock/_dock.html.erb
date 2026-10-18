@@ -1,0 +1,95 @@
+<%# The messaging dock (`chats_dock` in the host's layout): fixed to the
+    bottom-right corner, LinkedIn / Steam style. Left to right, the floating
+    conversation WINDOWS (newest nearest the panel), then the PANEL: its
+    header is the collapsed bar (avatar, "Messages", unread badge), and open
+    it holds search, the recent list and the way to the full inbox.
+
+    data-turbo-permanent: Turbo Drive carries this element from page to page
+    as it is — open windows, scroll positions, drafts and cable
+    subscriptions included — as long as the next page renders a dock too
+    (same id). The panel is a <details>: it opens and closes with no
+    JavaScript at all, and its links are real links.
+
+    The chats--dock controller (dock_controller.js) does the rest: windows
+    open, close, minimize and are capped; they are remembered per messager in
+    localStorage; live messages pop them open; phones get one full-screen
+    window at a time. Its live signal is the badge on the viewer's own
+    `[messager, :chats_dock]` stream (see chats/dock/_badge). %>
+<%= chats_styles %>
+<%= tag.aside id: "chats_dock",
+      class: "chats-dock",
+      "aria-label": t("chats.dock.title"),
+      data: {
+        turbo_permanent: true,
+        controller: "chats--dock",
+        "chats--dock-windows-value": windows,
+        "chats--dock-storage-key-value": "chats:dock:#{Chats.messager_key(viewer)}",
+        "chats--dock-window-url-value": chats_routes.conversation_path("__id__", window: 1),
+        "chats--dock-loading-value": t("chats.thread.loading"),
+        action: "keydown.esc->chats--dock#escape " \
+                "turbo:frame-missing->chats--dock#frameMissing " \
+                "turbo:frame-load->chats--dock#frameLoaded " \
+                "turbo:submit-end->chats--dock#sent " \
+                "turbo:load@document->chats--dock#pageChanged"
+      } do %>
+  <%= turbo_stream_from viewer, :chats_dock %>
+
+  <div id="chats_dock_windows" class="chats-dock__windows" data-chats--dock-target="windows"></div>
+
+  <details class="chats-dock__panel"
+           data-chats--dock-target="panel"
+           data-action="toggle->chats--dock#panelToggled">
+    <summary class="chats-dock__bar">
+      <%= chats_messager_avatar(viewer, css_class: "chats-avatar chats-dock__avatar") %>
+      <svg class="chats-dock__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3Z" />
+      </svg>
+      <span class="chats-dock__title"><%= t("chats.dock.title") %></span>
+      <%= render "chats/dock/badge", count: viewer.unread_chats_count %>
+      <svg class="chats-dock__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="m6 15 6-6 6 6" />
+      </svg>
+    </summary>
+
+    <div class="chats-dock__body">
+      <% if Chats.config.search %>
+        <%= form_with url: chats_routes.dock_conversations_path,
+              method: :get,
+              class: "chats-search chats-dock__search",
+              role: "search",
+              data: {
+                controller: "chats--debounced-submit",
+                action: "input->chats--debounced-submit#queue search->chats--debounced-submit#queue",
+                "chats--debounced-submit-delay-value": 250,
+                turbo_frame: "chats_dock_list"
+              } do %>
+          <%= hidden_field_tag :recent, recent, id: nil %>
+          <%= search_field_tag :q, nil,
+                id: "chats_dock_q",
+                placeholder: t("chats.dock.search"),
+                "aria-label": t("chats.dock.search"),
+                class: "chats-search__input",
+                autocomplete: "off" %>
+        <% end %>
+      <% end %>
+
+      <%# Lazy: nothing is fetched until the panel first opens. The
+          controller reloads it when the badge says something changed. %>
+      <%= turbo_frame_tag "chats_dock_list",
+            src: chats_routes.dock_conversations_path(recent: recent),
+            loading: :lazy,
+            target: "_top",
+            class: "chats-dock__results",
+            data: { "chats--dock-target": "list" } do %>
+        <div class="chats-loader"><%= t("chats.thread.loading") %></div>
+      <% end %>
+
+      <footer class="chats-dock__footer">
+        <%= link_to t("chats.dock.see_all"), chats_routes.conversations_path, class: "chats-dock__see-all" %>
+        <%= chats_slot :dock_panel_footer, viewer: viewer %>
+      </footer>
+    </div>
+  </details>
+<% end %>

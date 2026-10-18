@@ -54,6 +54,18 @@ es:
       send: "Enviar"
       attach: "Adjuntar imágenes"
       locked: "Esta conversación está cerrada."
+    dock:
+      title: "Mensajes"
+      see_all: "Ver todos los mensajes"
+      search: "Buscar mensajes"
+      open_full: "Abrir la conversación completa"
+      minimize: "Minimizar"
+      close: "Cerrar conversación"
+      back: "Volver a los mensajes"
+      unread:
+        zero: "Ninguna conversación sin leer"
+        one: "1 conversación sin leer"
+        other: "%{count} conversaciones sin leer"
     buttons:
       chat: "Mensaje"
     flashes:

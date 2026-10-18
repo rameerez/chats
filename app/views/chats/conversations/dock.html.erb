@@ -1,0 +1,29 @@
+<%# The dock's recent list (GET /dock): the first rows of the viewer's inbox,
+    rendered into the dock's `chats_dock_list` frame with the inbox's own row
+    partials. `dock: true` makes each row open a floating window instead of
+    navigating — the link stays a real link to the thread, so a modified click
+    (new tab) or a page without the dock's JavaScript still gets there.
+
+    `target: "_top"`: anything else inside the frame (a stack's link, a row
+    from an inbox ejected before 0.5.0) navigates the page, not the frame. %>
+<%= turbo_frame_tag "chats_dock_list", target: "_top" do %>
+  <% if @rows.any? %>
+    <ul class="chats-inbox__list chats-dock__list">
+      <% @rows.each do |row| %>
+        <% if row.is_a?(Chats::InboxGroup) %>
+          <%= render "chats/conversations/group", group: row, viewer: chats_current_messager, dock: true %>
+        <% else %>
+          <%= render "chats/conversations/conversation_row",
+                conversation: row,
+                viewer: chats_current_messager,
+                unread_count: @unread_counts.fetch(row.id, 0),
+                dock: true %>
+        <% end %>
+      <% end %>
+    </ul>
+  <% elsif @inbox.query %>
+    <p class="chats-dock__empty"><%= t("chats.inbox.no_results_hint", query: @inbox.query) %></p>
+  <% else %>
+    <p class="chats-dock__empty"><%= t("chats.inbox.empty_title") %></p>
+  <% end %>
+<% end %>

@@ -4,7 +4,7 @@ require "action_view/record_identifier"
 
 module Chats
   # ALL of the gem's real-time fan-out, in one file — read this and you know
-  # the entire live behavior. Three streams exist:
+  # the entire live behavior. Four streams exist:
   #
   #   1. The CONVERSATION stream (`turbo_stream_from @conversation` on the
   #      thread page): surgical message append/replace/remove, the read-state
@@ -30,6 +30,14 @@ module Chats
   #      Deliberately separate from the inbox stream — if badges rode on it,
   #      every page embedding a badge would full-refresh on every message.
   #
+  #   4. The per-messager DOCK stream (`[messager, :chats_dock]`, subscribed
+  #      by the messaging dock — `chats_dock`): the same badge moment, as a
+  #      replace of the dock's own badge, which ALSO carries what happened —
+  #      the conversation that just changed and whether its window should
+  #      pop open. The dock's controller reads it to reload its recent list
+  #      and open the window. One server-driven signal, no polling, no
+  #      Action Cable channel of our own.
+  #
   # Everything uses the `_later` variants (rendering happens in background
   # jobs, never inline in the request) except `message_destroyed`, where the
   # record is gone and can't be serialized for a job.
@@ -38,6 +46,7 @@ module Chats
 
     MESSAGE_PARTIAL = "chats/messages/message"
     BADGE_PARTIAL = "chats/shared/unread_badge"
+    DOCK_BADGE_PARTIAL = "chats/dock/badge"
     READ_STATE_PARTIAL = "chats/conversations/read_state"
 
     class << self
@@ -51,7 +60,7 @@ module Chats
           locals: { message: message }
         )
 
-        fan_out_inboxes(conversation, skip_badge_for: message.sender)
+        fan_out_inboxes(conversation, skip_badge_for: message.sender, message: message)
       end
 
       def message_updated(message)
@@ -111,7 +120,16 @@ module Chats
         Turbo::StreamsChannel.broadcast_refresh_later_to(messager, :chats_inbox)
       end
 
-      def update_badge_of(messager)
+      # +conversation+ is the one that just changed (nil when the viewer
+      # read something), and +pop_up+ whether a new message there should
+      # open its dock window — see fan_out_inboxes for who gets one.
+      def update_badge_of(messager, conversation: nil, pop_up: false)
+        # Counted at broadcast-enqueue time: the badge is advisory UI; a
+        # count that's seconds stale self-heals on the next event. The SAME
+        # count the page renders (`chats_unread_badge`), so what the inbox
+        # scope hides never lights the badge. Counted once for both badges.
+        count = messager.unread_chats_count
+
         # REPLACE, not update: the partial renders the whole badge element
         # (its id included) — an `update` would nest it inside the existing
         # element and duplicate the id. Replace keeps it idempotent.
@@ -119,11 +137,14 @@ module Chats
           messager, :chats_badge,
           target: "chats_unread_badge",
           partial: BADGE_PARTIAL,
-          # Counted at broadcast-enqueue time: the badge is advisory UI; a
-          # count that's seconds stale self-heals on the next event. The
-          # SAME count the page renders (`chats_unread_badge`), so what the
-          # inbox scope hides never lights the badge.
-          locals: { count: messager.unread_chats_count }
+          locals: { count: count }
+        )
+
+        Turbo::StreamsChannel.broadcast_replace_later_to(
+          messager, :chats_dock,
+          target: "chats_dock_badge",
+          partial: DOCK_BADGE_PARTIAL,
+          locals: { count: count, changed: true, conversation: conversation, pop_up: pop_up }
         )
       end
 
@@ -133,13 +154,22 @@ module Chats
       # the sender's — their OTHER tabs/devices need the new ordering; the
       # originating tab skips its own refresh via Turbo's request-id dedup),
       # and every participant except the sender gets a fresh unread badge.
-      def fan_out_inboxes(conversation, skip_badge_for: nil, badges: true)
+      #
+      # A new +message+ also asks the dock to pop its window open, for the
+      # participants a notifier would tell (Participant#notifiable_for?):
+      # never the sender, never a muted seat, never a headless messager. The
+      # badge itself stays truthful for a muted seat — muting silences, it
+      # doesn't hide.
+      def fan_out_inboxes(conversation, skip_badge_for: nil, badges: true, message: nil)
         conversation.participants.active.includes(:messager).each do |participant|
           messager = participant.messager
           next if messager.nil?
 
           refresh_inbox_of(messager)
-          update_badge_of(messager) if badges && messager != skip_badge_for
+          next unless badges && messager != skip_badge_for
+
+          update_badge_of(messager, conversation: conversation,
+                                    pop_up: message.present? && participant.notifiable_for?(message))
         end
       end
     end

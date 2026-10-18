@@ -1,0 +1,10 @@
+<%# A host page: a profile with the dock's Message button. %>
+<main class="dummy-home">
+  <h1>Dummy host</h1>
+  <% @people.each do |person| %>
+    <p class="dummy-person">
+      <%= person.name %>
+      <%= chat_button_to person, dock: true %>
+    </p>
+  <% end %>
+</main>

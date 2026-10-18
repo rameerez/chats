@@ -7,6 +7,7 @@ class EngineHelperTest < ActionView::TestCase
   # The bare ActionView::TestCase view doesn't carry Turbo's helpers
   # (chats_unread_badge composes turbo_stream_from).
   include Turbo::StreamsHelper
+  include Turbo::FramesHelper
 
   setup do
     @alice = create_user(name: "Alice Wonder")
@@ -51,6 +52,60 @@ class EngineHelperTest < ActionView::TestCase
 
     self.stubbed_viewer = nil
     assert_nil chat_button_to(@bob) # logged out
+  end
+
+  test "chat_button_to dock: true asks for a dock window" do
+    self.stubbed_viewer = @alice
+
+    assert_includes chat_button_to(@bob, dock: true), %(name="dock" value="1")
+    assert_not_includes chat_button_to(@bob), %(name="dock")
+  end
+
+  # --- the messaging dock -------------------------------------------------------
+
+  test "chats_dock renders the dock for a signed-in viewer on a host page" do
+    self.stubbed_viewer = @alice
+
+    html = chats_dock
+
+    assert_includes html, %(id="chats_dock")
+    assert_includes html, %(data-turbo-permanent="true")
+    assert_includes html, %(id="chats_dock_windows")
+    assert_includes html, %(id="chats_dock_badge")
+    assert_includes html, %(id="chats_dock_list")
+    assert_includes html, "turbo-cable-stream-source"
+  end
+
+  test "chats_dock takes its options: windows and recent" do
+    self.stubbed_viewer = @alice
+
+    html = chats_dock(windows: 2, recent: 5)
+
+    assert_includes html, %(data-chats--dock-windows-value="2")
+    assert_includes html, "recent=5"
+  end
+
+  test "chats_dock renders nothing for a signed-out visitor" do
+    self.stubbed_viewer = nil
+
+    assert_nil chats_dock
+  end
+
+  test "chats_dock renders nothing on the engine's own pages, unless everywhere: true" do
+    self.stubbed_viewer = @alice
+    engine_page = Chats::ConversationsController.new
+
+    stubs(:controller).returns(engine_page)
+
+    assert_nil chats_dock
+    assert_includes chats_dock(everywhere: true), %(id="chats_dock")
+  end
+
+  test "chats_dock_opener makes a link open the conversation's window" do
+    conversation = conversation_between(@alice, @bob)
+
+    assert_equal({ action: "chats--dock#open", "chats--dock-id-param": conversation.id },
+                 chats_dock_opener(conversation))
   end
 
   test "chats_messager_avatar falls back to initials" do
@@ -146,7 +201,8 @@ class EngineHelperTest < ActionView::TestCase
   end
 
   test "only the documented slots exist — anything else renders nothing" do
-    assert_equal %w[inbox_top inbox_empty conversation_header_actions composer_actions locked_composer message_meta],
+    assert_equal %w[inbox_top inbox_empty conversation_header_actions composer_actions locked_composer message_meta
+                    dock_panel_footer],
                  Chats::EngineHelper::SLOTS
 
     assert_not chats_slot?(:inbox_bottom)

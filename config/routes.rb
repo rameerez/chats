@@ -5,6 +5,11 @@ Chats::Engine.routes.draw do
   # `mount Chats::Engine => "/messages"` the inbox is /messages, a thread is
   # /messages/:id, sending is POST /messages/:conversation_id/messages.
   resources :conversations, path: "", only: %i[index show create] do
+    # The messaging dock's recent list (`chats_dock`), served into its turbo
+    # frame. A collection route, so it is drawn before /:id and never read as
+    # a conversation id.
+    get :dock, on: :collection
+
     member do
       post :read    # advance the viewer's read horizon (mark as read)
       post :typing  # ephemeral "X is typing…" ping (see Chats::Broadcasts.typing)

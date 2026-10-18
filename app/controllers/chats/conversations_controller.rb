@@ -2,8 +2,12 @@
 
 module Chats
   # The inbox (index), the thread (show), starting conversations from host
-  # pages (create), and the per-member actions (read/typing/leave/mute).
+  # pages (create), the messaging dock's recent list (dock), and the
+  # per-member actions (read/typing/leave/mute).
   class ConversationsController < ApplicationController
+    # The most rows the dock's recent list shows, whatever `recent:` asks.
+    DOCK_RECENT_LIMIT = 50
+
     before_action :set_conversation, only: %i[show read typing leave mute unmute refresh]
     helper_method :chats_counterpart
 
@@ -23,9 +27,25 @@ module Chats
       @conversations = @inbox.conversations
     end
 
+    # The messaging dock's recent list (`chats_dock`): the first rows of the
+    # viewer's inbox — the same rows, stacks and search, through the same
+    # Chats::Inbox — rendered into the dock's `chats_dock_list` frame. The
+    # frame asks for `?recent=` rows (the helper's `recent:` option).
+    def dock
+      @inbox = Chats::Inbox.for(chats_current_messager, query: params[:q], limit: dock_recent)
+      @rows = @inbox.rows
+      @unread_counts = @inbox.unread_counts
+
+      render layout: false
+    end
+
     # The thread. Renders the LATEST page of messages; older pages stream in
     # through a lazy Turbo Frame chain (keyset-paginated — see
     # Message.before_message and _messages_page.html.erb).
+    #
+    # `?window=1` from a Turbo frame is the same thread as a floating dock
+    # window: the window template (its compact header around the same
+    # thread body), no layout.
     def show
       @participant = @conversation.participant_for(chats_current_messager)
 
@@ -55,9 +75,17 @@ module Chats
                              @messages.first&.id
         end
 
-        # Opening the thread reads it. (Live appends while the thread stays
-        # open are read via the thread controller's POST to #read.)
-        @participant&.read!
+        if dock_window?
+          # A window does NOT read on render: it may be restored minimized
+          # after a reload, and a header nobody has looked at must not
+          # swallow the unread badge. The thread controller posts #read once
+          # the window is actually on screen (`read-pending`).
+          render :window, layout: false
+        else
+          # Opening the thread reads it. (Live appends while the thread
+          # stays open are read via the thread controller's POST to #read.)
+          @participant&.read!
+        end
       end
     end
 
@@ -106,6 +134,12 @@ module Chats
     # `chat_button_to` helper — unforgeable and purpose-scoped, so raw
     # polymorphic params never reach `GlobalID::Locator`. Policy and block
     # checks still run inside `chat_with` (defense in depth).
+    #
+    # `dock=1` (`chat_button_to …, dock: true`) answers a Turbo Stream that
+    # appends the conversation's floating window to the dock instead of
+    # navigating. Same id, so a window already open is replaced, not
+    # doubled; on a page without the dock the stream has no target and does
+    # nothing. Without Turbo it is the plain redirect.
     def create
       recipient = locate_signed!(params.require(:recipient_sgid), purpose: :chats_recipient)
       raise ActiveRecord::RecordNotFound unless Chats.messager_class?(recipient.class)
@@ -114,7 +148,16 @@ module Chats
                 locate_signed!(params[:subject_sgid], purpose: :chats_subject)
 
       conversation = chats_current_messager.chat_with(recipient, about: subject)
-      redirect_to conversation_path(conversation)
+
+      if params[:dock].present? && request.format.turbo_stream?
+        render turbo_stream: turbo_stream.append(
+          "chats_dock_windows",
+          partial: "chats/dock/window",
+          locals: { conversation: conversation, focus: true }
+        )
+      else
+        redirect_to conversation_path(conversation)
+      end
     rescue Chats::BlockedError
       # Fallback is the INBOX (engine root) — inside the engine, `root_path`
       # already resolves there, never to the host root.
@@ -163,6 +206,16 @@ module Chats
 
     def set_conversation
       @conversation = find_conversation
+    end
+
+    # A dock window asks for its thread from inside its own turbo frame. A
+    # plain visit to the same URL (no frame) still gets the page.
+    def dock_window?
+      params[:window].present? && turbo_frame_request?
+    end
+
+    def dock_recent
+      Integer(params[:recent], exception: false)&.clamp(1, DOCK_RECENT_LIMIT) || 10
     end
 
     def locate_signed!(sgid, purpose:)

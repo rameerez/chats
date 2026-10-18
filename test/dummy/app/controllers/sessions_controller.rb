@@ -10,7 +10,8 @@ class SessionsController < ApplicationController
     head :no_content
   end
 
+  # A host page (not one of the engine's): what the dock is for.
   def home
-    render plain: "dummy host root"
+    @people = current_user ? User.where.not(id: current_user.id).order(:id).limit(5) : []
   end
 end

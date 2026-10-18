@@ -1,8 +1,12 @@
 <%# One inbox row. Rendered per-viewer (this page only updates via full
     refreshes, never shared broadcasts, so viewer-specific state is fine here —
-    unlike message bubbles, which must stay viewer-agnostic). %>
+    unlike message bubbles, which must stay viewer-agnostic).
+
+    `dock: true` (the messaging dock's recent list) keeps the link a link to
+    the thread and adds the action that opens a floating window instead. %>
 <li class="chats-row <%= "chats-row--unread" if unread_count.positive? %>">
-  <%= link_to conversation_path(conversation), class: "chats-row__link" do %>
+  <%= link_to conversation_path(conversation), class: "chats-row__link",
+        data: (chats_dock_opener(conversation) if local_assigns[:dock]) do %>
     <%= chats_conversation_avatar(conversation, viewer) %>
 
     <span class="chats-row__body">
