@@ -110,14 +110,66 @@ class BroadcastsDurabilityTest < ActiveSupport::TestCase
     end
   end
 
-  test "an enqueue that fails leaves no marker behind to swallow the next write's refresh" do
-    Chats::InboxRefreshJob.stub(:perform_later, ->(*) { raise "queue down" }) do
-      assert_raises(RuntimeError) { Chats::Broadcasts.refresh_inbox_of(@bob) }
+  # The marker goes up before the enqueue, so a write can find it while the
+  # enqueue is in flight. These are that interleaving: write B commits and
+  # finds A's marker in the middle of A's failing enqueue.
+  test "an enqueue that fails while another write counts on it is tried again, and that job covers both" do
+    calls = 0
+    flaky = lambda do |messager|
+      calls += 1
+      raise "queue hiccup" unless calls > 1
+
+      Chats::InboxRefreshJob.new(messager).tap(&:enqueue)
     end
 
+    Chats::InboxRefreshJob.stub(:perform_later, lambda { |messager|
+      Chats::Broadcasts.refresh_inbox_of(messager) if calls.zero? # write B, mid-enqueue: finds the marker
+      flaky.call(messager)
+    }) do
+      assert_enqueued_jobs 1, only: Chats::InboxRefreshJob do
+        Chats::Broadcasts.refresh_inbox_of(@bob) # write A
+      end
+    end
+    assert_equal 2, calls, "B queued nothing; A tried twice"
+  end
+
+  test "when the queue refuses twice, the refresh is broadcast at once, so the write that counted on it has one" do
+    writer_b_saw_marker = nil
+    refusing = lambda do |messager|
+      if writer_b_saw_marker.nil?
+        writer_b_saw_marker = !Rails.cache.write("chats:inbox-refresh:#{Chats.messager_key(messager)}", true,
+                                                 unless_exist: true)
+        Chats::Broadcasts.refresh_inbox_of(messager) # write B, mid-enqueue
+      end
+      raise "queue down"
+    end
+
+    streams = capture_turbo_stream_broadcasts([@bob, :chats_inbox]) do
+      Chats::InboxRefreshJob.stub(:perform_later, refusing) do
+        assert_nothing_raised { Chats::Broadcasts.refresh_inbox_of(@bob) } # write A: committed, so not raised
+      end
+    end
+
+    assert writer_b_saw_marker, "B found A's marker and queued nothing"
+    assert_equal [REFRESH], streams.map(&:to_html), "broadcast right away, once"
     assert_enqueued_jobs 1, only: Chats::InboxRefreshJob do
       Chats::Broadcasts.refresh_inbox_of(@bob)
     end
+  end
+
+  test "a queue that declines the job without raising counts as refusing it" do
+    declined = Chats::InboxRefreshJob.new(@bob)
+    def declined.successfully_enqueued? = false
+
+    streams = capture_turbo_stream_broadcasts([@bob, :chats_inbox]) do
+      Chats::InboxRefreshJob.stub(:perform_later, ->(*) { declined }) { Chats::Broadcasts.refresh_inbox_of(@bob) }
+    end
+    assert_equal [REFRESH], streams.map(&:to_html)
+
+    streams = capture_turbo_stream_broadcasts([@alice, :chats_inbox]) do
+      Chats::InboxRefreshJob.stub(:perform_later, ->(*) { false }) { Chats::Broadcasts.refresh_inbox_of(@alice) }
+    end
+    assert_equal [REFRESH], streams.map(&:to_html)
   end
 
   test "the job discards a refresh for a messager deleted before it ran" do

@@ -159,16 +159,20 @@ module Chats
       # Turbo runs one page refresh for refreshes within 150 ms of each
       # other (Session#pageRefreshDebouncePeriod), and chats--refresh-inbox
       # reruns one that landed mid-visit, which Turbo would ignore.
+      #
+      # The marker goes up BEFORE the enqueue, so another write can find it
+      # while the enqueue is still in flight and count on that refresh. An
+      # enqueue that fails is therefore tried once more, and if the queue
+      # refuses again the refresh is broadcast right here: the writes that
+      # counted on it are never left without one. The failure is reported to
+      # Rails.error, not raised: the write has committed, and the refresh is
+      # out.
       def refresh_inbox_of(messager)
         marker = inbox_refresh_marker(messager)
         return unless Rails.cache.write(marker, true, unless_exist: true, expires_in: INBOX_REFRESH_PENDING)
+        return if 2.times.any? { enqueue_inbox_refresh(messager) } # once more if the first fails
 
-        begin
-          Chats::InboxRefreshJob.perform_later(messager)
-        rescue StandardError
-          Rails.cache.delete(marker) # nothing is queued: the next write must queue one
-          raise
-        end
+        refresh_inbox_now(messager)
       end
 
       # The job's half (Chats::InboxRefreshJob): take the marker down, then
@@ -220,6 +224,16 @@ module Chats
       end
 
       private
+
+      # Whether the queue took the job: perform_later raises, or returns
+      # false or a job that wasn't enqueued, depending on the adapter.
+      def enqueue_inbox_refresh(messager)
+        job = Chats::InboxRefreshJob.perform_later(messager)
+        job ? job.successfully_enqueued? : false
+      rescue StandardError => e
+        Rails.error.report(e, handled: true)
+        false
+      end
 
       def inbox_refresh_marker(messager)
         "chats:inbox-refresh:#{Chats.messager_key(messager)}"
