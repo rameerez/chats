@@ -1,6 +1,9 @@
-<%# The thread page: its own header around the shared thread body
-    (chats/conversations/_thread, which a floating dock window renders too —
-    see that partial for how the live thread works). %>
+<%# The thread page under `config.inbox_layout = :stacked`: its header
+    (chats/conversations/_thread_header) over the shared thread body
+    (chats/conversations/_thread, which a floating dock window and the
+    two-pane page's conversation pane render too — see that partial for how
+    the live thread works). Under the default `:split`, /messages/:id is
+    the two-pane page instead (index.html.erb). %>
 <%= chats_styles %>
 
 <%= render layout: "chats/conversations/thread",
@@ -9,67 +12,9 @@
              messages: @messages,
              more: @more_messages,
              first_unread_id: @first_unread_id,
-             counterpart: chats_counterpart
+             counterpart: chats_counterpart,
+             read_pending: @read_pending
            } do %>
-  <header class="chats-thread__header">
-    <%= link_to root_path, class: "chats-thread__back", "aria-label": t("chats.thread.back") do %>
-      <span aria-hidden="true">‹</span>
-    <% end %>
-
-    <%# The counterpart is already resolved for the title, the profile link
-        and the stack link — reuse it here instead of asking again. %>
-    <% if chats_counterpart %>
-      <%= chats_messager_avatar(chats_counterpart) %>
-    <% else %>
-      <%= chats_conversation_avatar(@conversation, chats_current_messager) %>
-    <% end %>
-
-    <div class="chats-thread__identity">
-      <%# Both arms wrap the name in .chats-thread__name: the <h1> is a flex
-          row (the badge is its second child), and only a real element can
-          carry the ellipsis. %>
-      <h1 class="chats-thread__title">
-        <% if chats_counterpart %>
-          <%= chats_messager_name(chats_counterpart, css_class: "chats-thread__name") %>
-          <%= chats_verified_badge(chats_counterpart) %>
-        <% else %>
-          <span class="chats-thread__name"><%= @conversation.title_for(chats_current_messager) %></span>
-        <% end %>
-      </h1>
-      <% if @conversation.subject_label %>
-        <p class="chats-thread__subject"><%= @conversation.subject_label %></p>
-      <% end %>
-      <%# A stacked counterpart's thread is one of many: offer the way back
-          to the whole stack (chats' filtered inbox, or the host's own
-          screen via `group_path:`). %>
-      <% if Chats.grouped_inbox?(chats_counterpart) %>
-        <p class="chats-thread__see-all">
-          <%= link_to t("chats.thread.see_all"), chats_group_path_for(chats_counterpart), class: "chats-thread__see-all-link" %>
-        </p>
-      <% end %>
-    </div>
-
-    <details class="chats-menu">
-      <summary class="chats-menu__trigger" aria-label="<%= t("chats.thread.options") %>">⋯</summary>
-      <div class="chats-menu__panel">
-        <% if @participant&.muted? %>
-          <%= button_to t("chats.thread.unmute"), unmute_conversation_path(@conversation), method: :post, class: "chats-menu__item" %>
-        <% else %>
-          <%= button_to t("chats.thread.mute"), mute_conversation_path(@conversation), method: :post, class: "chats-menu__item" %>
-        <% end %>
-        <% if @conversation.group? %>
-          <%= button_to t("chats.thread.leave"), leave_conversation_path(@conversation), method: :post, class: "chats-menu__item chats-menu__item--danger" %>
-        <% end %>
-        <%# Slot: the host's own thread actions (block, report, archive…).
-            `blockable` is false for messagers declared
-            `acts_as_messager blockable: false`, so safety affordances
-            disappear against a support desk without any class check. %>
-        <%= chats_slot :conversation_header_actions,
-              conversation: @conversation,
-              viewer: chats_current_messager,
-              counterpart: chats_counterpart,
-              blockable: chats_blockable?(chats_counterpart) %>
-      </div>
-    </details>
-  </header>
+  <%= render "chats/conversations/thread_header",
+             conversation: @conversation, participant: @participant, counterpart: chats_counterpart %>
 <% end %>

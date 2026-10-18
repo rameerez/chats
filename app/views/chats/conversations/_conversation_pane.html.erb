@@ -1,0 +1,42 @@
+<%# The open conversation on the two-pane messaging page (`config.inbox_layout
+    = :split`), inside the page's `chats_conversation` frame: the header
+    (chats/conversations/_thread_header) over the shared thread body
+    (chats/conversations/_thread, the same one the thread page and a dock
+    window render).
+
+    The thread is wrapped in a data-turbo-permanent element keyed by the
+    conversation, the way the dock keys its own element: the inbox's live
+    updates are Turbo 8 page refreshes that MORPH this whole page, and a
+    morph leaves a permanent element alone, so the draft, the scroll
+    position, the read state and the thread's stream subscription all go
+    on untouched while the list beside it re-renders. Opening another
+    conversation renders another id, which replaces it. The id also names
+    the viewer: a visit that lands on another account's page (signing out
+    and in, an account switcher) never inherits someone else's thread.
+
+    The header stays outside it, so a refresh still brings it up to date
+    (a mute, a renamed group).
+
+    Locals: conversation, participant, messages, more, first_unread_id,
+    counterpart, read_pending (as in chats/conversations/_thread). %>
+<% title_id = dom_id(conversation, :title) %>
+<%= tag.section class: "chats-split__pane", "aria-labelledby": title_id,
+                data: { conversation_id: conversation.id } do %>
+  <%= render "chats/conversations/thread_header",
+             conversation: conversation, participant: participant, counterpart: counterpart,
+             heading: :h2, title_id: title_id, back_path: conversations_path(**chats_inbox_filter) %>
+
+  <%= tag.div id: "chats_conversation_pane_#{conversation.id}_#{Chats.messager_key(chats_current_messager)}",
+              class: "chats-split__thread", data: { turbo_permanent: true } do %>
+    <%= render layout: "chats/conversations/thread",
+               locals: {
+                 conversation: conversation,
+                 messages: messages,
+                 more: more,
+                 first_unread_id: first_unread_id,
+                 counterpart: counterpart,
+                 pane: true,
+                 read_pending: read_pending
+               } do %><% end %>
+  <% end %>
+<% end %>

@@ -15,6 +15,7 @@ module Chats
   class Configuration
     ATTACHMENT_MODES = [false, :images, :any].freeze
     DELETION_MODES = [false, :soft, :hard].freeze
+    INBOX_LAYOUTS = %i[split stacked].freeze
 
     # --- Host integration -----------------------------------------------------
 
@@ -91,6 +92,15 @@ module Chats
     # archive — raise it only if your users really keep hundreds of live
     # threads.
     attr_accessor :inbox_limit
+
+    # How the inbox and a conversation share the screen. `:split` (the
+    # default): on screens at least 700px wide, /messages is two panes, the
+    # conversation list on the left and the open conversation on the right,
+    # and /messages/:id is that same page with the conversation open
+    # (LinkedIn's messaging page); narrower, the list and the thread are
+    # separate pages. `:stacked`: separate pages at every width, as before
+    # 0.6.
+    attr_reader :inbox_layout
 
     # Per-sender send throttle, enforced with Rails 8's built-in controller
     # `rate_limit` when available (feature-detected; on Rails 7.1 it's a
@@ -187,6 +197,7 @@ module Chats
       @max_attachments_per_message = 4
       @send_rate_limit = { to: 60, within: 60 } # 60 messages per minute per sender
       @inbox_limit = 200
+      @inbox_layout = :split
 
       @encrypt_messages = false
 
@@ -243,6 +254,18 @@ module Chats
 
       @deletion = normalized
     end
+
+    def inbox_layout=(value)
+      normalized = value.respond_to?(:to_sym) ? value.to_sym : value
+      unless INBOX_LAYOUTS.include?(normalized)
+        raise ConfigurationError, "inbox_layout must be one of #{INBOX_LAYOUTS.inspect}, got #{value.inspect}"
+      end
+
+      @inbox_layout = normalized
+    end
+
+    # Whether the inbox and the open conversation are one two-pane page.
+    def split_inbox? = inbox_layout == :split
 
     def send_rate_limit=(value)
       if value.nil?

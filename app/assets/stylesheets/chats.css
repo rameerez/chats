@@ -32,6 +32,13 @@
   --chats-bubble-text: #111827;
   --chats-radius: 1.1rem;
   --chats-max-width: 42rem;
+  /* The conversation list beside an open conversation (two panes). */
+  --chats-list-width: 320px;
+  /* --chats-split-height, how tall the two-pane page is, is NOT declared
+     here: the rules read it with the whole screen (100dvh) as the fallback,
+     so a host's own declaration wins wherever it is, even on a :root rule
+     loaded before this file (the bundled views link it in the body).
+     Under a host header: calc(100dvh - <the header's height>). */
 
   /* Safe areas, re-pointable by a host with its own source of truth. */
   --chats-safe-top: env(safe-area-inset-top, 0px);
@@ -1006,6 +1013,110 @@ turbo-frame[id^="chats_page_"] {
   color: var(--chats-text-muted);
 }
 
+
+/* ---------------------------------------------------------------------------
+   0.6.0 — two panes (config.inbox_layout = :split)
+   ---------------------------------------------------------------------------
+
+   The messaging page as LinkedIn has it: from 700px wide (the dock's phone
+   rule, and chats--split's), the list on the left and the open conversation
+   on the right, both as tall as the screen, each scrolling on its own. Below
+   that, one column, exactly as the separate pages: /messages is the list,
+   /messages/:id the thread. Every request renders both panes; this media
+   query alone picks, so it holds before JavaScript runs and without it.
+
+     .chats-split                 the page (.chats.chats-inbox too)
+     .chats-split__list           the list's <nav>
+     .chats-split__conversation   the `chats_conversation` frame
+     .chats-split__pane           a conversation in it (section)
+     .chats-split__thread         its permanent wrapper, around .chats-thread--pane
+     .chats-split__empty          no conversation open (--inbox: no conversations at all)
+
+   The page is as wide as the list plus a thread page (--chats-max-width),
+   so the conversation reads at the width it always had, and as tall as
+   --chats-split-height (the screen; a host with its own header above the
+   page sets what is left: calc(100dvh - 4rem)). */
+.chats-split {
+  max-width: calc(var(--chats-list-width) + var(--chats-max-width));
+  /* The list alone (a phone): at least what is left of the screen, never
+     the shell's whole 100dvh, which would run past it under a host header. */
+  min-height: var(--chats-split-height, 100dvh);
+}
+.chats-split__list { display: flex; flex-direction: column; min-width: 0; }
+.chats-split__conversation {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.chats-split__pane,
+.chats-split__thread {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The thread page's body, inside the pane: no shell of its own (the page is
+   the .chats shell), and the pane's height, not the screen's. */
+.chats-thread--pane {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.chats-split__empty { margin: auto; }
+.chats-row--current .chats-row__link {
+  background: var(--chats-surface);
+  box-shadow: inset 3px 0 0 var(--chats-accent);
+}
+
+@media (min-width: 700px) {
+  .chats-split {
+    box-sizing: border-box;
+    flex-direction: row;
+    height: var(--chats-split-height, 100dvh);
+    min-height: 0;
+    overflow: hidden;
+    /* Its edges, where a page wider than it shows the host's background. */
+    border-inline: 1px solid var(--chats-border);
+  }
+  .chats-split__list {
+    box-sizing: border-box;
+    flex: 0 0 var(--chats-list-width);
+    width: var(--chats-list-width);
+    border-right: 1px solid var(--chats-border);
+  }
+  /* The rows scroll; the title and the search stay. */
+  .chats-split__list > turbo-frame {
+    display: block;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  .chats-split__conversation { flex: 1 1 0; }
+  /* The list is right there: no way back to it. */
+  .chats-split .chats-thread__back { display: none; }
+}
+
+@media (max-width: 699.98px) {
+  /* A conversation open: the page is the thread, as tall as the screen. */
+  .chats-split:has(.chats-split__pane) {
+    height: var(--chats-split-height, 100dvh);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .chats-split:has(.chats-split__pane) > .chats-split__list { display: none; }
+  .chats-split:has(.chats-split__pane) > .chats-split__conversation { flex: 1; }
+  /* None: the page is the list. The empty pane shows under it only to say
+     there are no conversations at all (the inbox's empty state lives there). */
+  .chats-split:not(:has(.chats-split__pane, .chats-split__empty--inbox)) > .chats-split__conversation {
+    display: none;
+  }
+}
 
 /* ---------------------------------------------------------------------------
    0.5.0 — the messaging dock (chats_dock)

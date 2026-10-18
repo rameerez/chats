@@ -44,7 +44,9 @@ import { recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
 //                  Every access is guarded: no storage, no memory, no harm.
 //   * hiding       on any page with [data-chats-dock-hide] (the engine's
 //                  inbox and thread), since a permanent element is never
-//                  re-rendered by the server
+//                  re-rendered by the server; and no window for a
+//                  conversation the page renders, after a visit or after a
+//                  frame of the page loads one
 //   * keyboard     Escape unwinds innermost first: the thread's popup or
 //                  photo, an edit, the window menu, then the window
 //                  (minimized), the panel (closed); on a phone, the window
@@ -779,6 +781,18 @@ export default class extends Controller {
     })
     this.markOpenRows()
     this.syncSheet()
+    this.save()
+  }
+
+  // A frame of the page itself loaded a conversation (the two-pane messaging
+  // page opens one beside its list without a visit): no window keeps a
+  // second copy of it.
+  pageFrameLoaded(event) {
+    if (this.element.contains(event.target)) return
+
+    this.windowTargets.forEach((frame) => {
+      if (this.renderedOnPage(frame.dataset.conversationId)) this.removeWindow(frame)
+    })
     this.save()
   }
 

@@ -5,10 +5,26 @@
     `dock: true` (the messaging dock's recent list) keeps the link a link to
     the thread and marks it as a dock opener: a plain click opens the
     conversation's floating window instead. A muted conversation carries
-    the bell-slash. %>
-<li class="chats-row <%= "chats-row--unread" if unread_count.positive? %>">
-  <%= link_to conversation_path(conversation), class: "chats-row__link",
-        data: (chats_dock_opener(conversation) if local_assigns[:dock]) do %>
+    the bell-slash.
+
+    `pane: true` (the two-pane messaging page) points the link at the
+    page's conversation frame, which opens it beside the list on a wide
+    screen; on a phone, and without JavaScript, the frame is disabled and
+    the link opens the thread page. `current:` is the conversation the page
+    has open: its row says so (aria-current="page", .chats-row--current).
+    `filter:` is the list's search or stack (`q`, `with`), kept in the
+    link: the list's refreshes re-request the page's URL, and must find the
+    same list there. %>
+<% current = local_assigns[:current] == conversation %>
+<% filter = local_assigns[:pane] ? local_assigns.fetch(:filter, {}) : {} %>
+<li class="<%= class_names("chats-row", "chats-row--unread": unread_count.positive?, "chats-row--current": current) %>">
+  <%= link_to conversation_path(conversation, **filter), class: "chats-row__link",
+        "aria-current": ("page" if current),
+        data: (if local_assigns[:dock]
+                 chats_dock_opener(conversation)
+               elsif local_assigns[:pane]
+                 { turbo_frame: Chats::ConversationsController::PANE_FRAME }
+               end) do %>
     <%= chats_conversation_avatar(conversation, viewer) %>
 
     <span class="chats-row__body">

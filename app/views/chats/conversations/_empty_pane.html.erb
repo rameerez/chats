@@ -1,0 +1,23 @@
+<%# The conversation pane of the two-pane messaging page with no
+    conversation open (/messages, `config.inbox_layout = :split`).
+
+    With conversations to choose from, it asks for one. With none at all,
+    the inbox's own empty state lives here instead, the host's
+    inbox_empty slot included: rendered once on the page, never once in the
+    list and again beside it. On narrow screens, where the list is the
+    page, chats.css shows this pane under the list only in that case.
+
+    Locals: inbox_empty (no rows, no search), inbox (the Chats::Inbox). %>
+<% if inbox_empty %>
+  <div class="chats-split__empty chats-split__empty--inbox chats-empty">
+    <span class="chats-empty__icon" aria-hidden="true">💬</span>
+    <p class="chats-empty__title"><%= t("chats.inbox.empty_title") %></p>
+    <p class="chats-empty__hint"><%= t("chats.inbox.empty_hint") %></p>
+    <%= chats_slot :inbox_empty, viewer: chats_current_messager, inbox: inbox %>
+  </div>
+<% else %>
+  <div class="chats-split__empty chats-empty">
+    <span class="chats-empty__icon" aria-hidden="true">💬</span>
+    <p class="chats-empty__title"><%= t("chats.inbox.select_hint") %></p>
+  </div>
+<% end %>

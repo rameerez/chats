@@ -84,6 +84,15 @@ Chats.configure do |config|
   #
   # config.inbox_limit = 200
   #
+  # The messaging page's layout. :split (the default): from 700px wide,
+  # /messages is two panes, LinkedIn-style: the conversation list on the
+  # left, the open conversation on the right (/messages/:id is that same
+  # page, its conversation open); narrower, the list and the thread are
+  # separate pages. :stacked keeps them separate pages at every width.
+  # (Views you ejected with `rails g chats:views` keep rendering as they are.)
+  #
+  # config.inbox_layout = :split
+  #
   # Encrypt message bodies at rest (ActiveRecord Encryption; requires
   # `bin/rails db:encryption:init`). Body search degrades when enabled.
   #

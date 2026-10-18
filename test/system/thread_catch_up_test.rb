@@ -65,6 +65,9 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
   end
 
   test "an answer that arrives after the page rendered the conversation again is dropped" do
+    # The thread page: a visit to the same URL renders it again. (The
+    # two-pane page's conversation is permanent, and such a visit keeps it.)
+    Chats.config.inbox_layout = :stacked
     sign_in
     visit "/messages/#{@conversation.id}"
     assert_selector ".chats-thread [data-chats--thread-target='message']", text: "hola"
@@ -128,6 +131,9 @@ class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
   end
 
   test "an answer whose streams are still waiting when the page renders the thread again changes nothing" do
+    # The thread page: a visit to the same URL renders it again. (The
+    # two-pane page's conversation is permanent, and such a visit keeps it.)
+    Chats.config.inbox_layout = :stacked
     sign_in
     visit "/messages/#{@conversation.id}"
     assert_selector ".chats-thread [data-chats--thread-target='message']", text: "hola"

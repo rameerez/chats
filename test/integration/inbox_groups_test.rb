@@ -146,13 +146,21 @@ class InboxGroupsTest < ActionDispatch::IntegrationTest
 
     # The header names the counterpart, links to their profile, draws their
     # avatar and decides on the "see all" link — one lookup serves all four.
+    # On the two-pane page the list beside it asks its own questions: the
+    # thread costs one lookup on top of the inbox alone, and a group none.
+    inbox = count_counterpart_lookups { get "/messages" }
     lookups = count_counterpart_lookups { get "/messages/#{direct.id}" }
     assert_response :success
-    assert_equal 1, lookups
+    assert_equal inbox + 1, lookups
 
-    assert_equal 0, count_counterpart_lookups { get "/messages/#{group.id}" },
+    assert_equal inbox, count_counterpart_lookups { get "/messages/#{group.id}" },
                  "a group thread has no counterpart and must not go looking for one"
     assert_response :success
+
+    # The thread page alone (`:stacked`): exactly one, and none.
+    Chats.config.inbox_layout = :stacked
+    assert_equal(1, count_counterpart_lookups { get "/messages/#{direct.id}" })
+    assert_equal(0, count_counterpart_lookups { get "/messages/#{group.id}" })
   end
 
   private

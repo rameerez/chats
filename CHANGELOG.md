@@ -4,6 +4,124 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-18
+
+The messaging page is two panes, LinkedIn-style: on a wide screen
+`/messages` is the conversation list beside the open conversation, and
+`/messages/:id` is that same page with its conversation open. Phones keep
+the separate pages. **No migration; `config.inbox_layout = :stacked` keeps
+the old pages everywhere.**
+
+### Added
+- **Two panes (`config.inbox_layout = :split`, the default).** From 700px
+  wide (the width at which the dock turns into a phone sheet) the list sits
+  on the left in a `<nav>` named "Messages", `--chats-list-width` (320px)
+  wide, and the open conversation on the right in a
+  `turbo_frame_tag "chats_conversation"`; with none open, the pane says
+  "Select a conversation" (`chats.inbox.select_hint`), and with no
+  conversations at all it holds the inbox's empty state and the
+  `inbox_empty` slot (rendered once, in the pane, no longer in the list
+  too). Both panes are as tall as `--chats-split-height` (the screen,
+  `100dvh`, by default; a host with its own header above the page sets what
+  is left, `calc(100dvh - 4rem)`, which a phone's list page also takes as
+  its least height) and scroll on their own; the page is as
+  wide as the list plus a thread page (`--chats-max-width`).
+  Below 700px it is one column, exactly the separate pages: `/messages` is
+  the list, `/messages/:id` the thread with its back link. One media query
+  decides, so the layout holds before JavaScript and without it.
+- **A row opens its conversation in the pane.** Each row is a real link to
+  `/messages/:id` aimed at the frame (`data-turbo-frame`); the frame is
+  `data-turbo-action="advance"`, so the address bar and history follow, and
+  the server answers the frame with the pane alone (new `pane.html.erb`: the
+  header over `chats/conversations/_thread`, no list, no layout). A reload, a
+  deep link or back/forward renders the whole page, the row current
+  (`.chats-row--current`, `aria-current="page"`). The new `chats--split`
+  controller (`controllers/chats/split_controller`, pinned like the others)
+  enables the frame only on a wide screen; on a phone, before it connects
+  and without JavaScript, the same link opens the page. It also skips the
+  hover prefetch of a row while the frame is disabled (Turbo would ask for
+  the pane alone and then render it as the page), marks the row the pane
+  opened current at once, and takes the viewer into it, as LinkedIn does:
+  the focus goes to its composer, inside the pane a screen reader names
+  after the conversation; on a touch screen (`pointer: coarse`), and in a
+  locked conversation, to the pane's title (`tabindex="-1"`), so no
+  keyboard rises over a conversation not read yet.
+- **A filtered list stays filtered.** A row of a search's results or of a
+  stack (`?with=`) links to `/messages/:id?q=…` / `?with=…`: the address
+  bar names the list the page shows, so the list's refreshes, which
+  re-request it, keep it, and the pane's back link (phones) returns to it.
+- **The open conversation survives the list's refreshes.** The inbox's live
+  updates are Turbo 8 morphs of the whole page; the pane's thread sits in a
+  `data-turbo-permanent` element keyed by the conversation and the viewer
+  (`chats_conversation_pane_<id>_<viewer key>`), so a refresh re-renders the
+  rows and leaves the draft, the scroll position, the read state and the
+  stream subscription alone, while another conversation (another id)
+  replaces it. The pane's header (avatar, name, verified badge, subject, the
+  ⋯ menu) stays outside it, so a mute or a renamed group still shows. The
+  list and the pane each catch up on missed broadcasts once: a page refresh
+  for the list, the thread catch-up for the conversation.
+- **`config.inbox_layout`**, `:split` or `:stacked`, checked at boot (a
+  wrong value fails the initializer), in the generated initializer and the
+  README.
+
+### Changed
+- **When `/messages/:id` reads.** Opening a conversation still reads it: a
+  row clicked (the pane's frame), a link from elsewhere, a reload, a page
+  loaded without JavaScript. A Turbo visit of the two-pane page does not
+  read on the server, because the inbox's own refresh is one: it may arrive
+  in a background tab, and a read there said "Seen" while nobody looked and
+  refreshed the inbox again, in a loop. The pane renders `read-pending`
+  instead and its thread reads once it is on screen, as a dock window does.
+  A prefetched thread page (`:stacked`), which nothing used to read when
+  Turbo showed it, now reads itself the same way.
+- **The inbox's search form has no `action`**, so it searches whatever page
+  it is on (an HTML form without one submits to the page's URL): after a row
+  opened a conversation and moved the address bar to `/messages/:id`, a
+  search keeps that conversation open (`/messages/:id?q=…`) instead of
+  going back to `/messages`.
+- **The dock** drops a window whose conversation a frame of the page loads
+  (`turbo:frame-load`), as it did after a visit: one copy of a thread's DOM
+  ids per page, with `chats_dock everywhere: true` too.
+- **Templates.** Hosts with ejected views are unaffected: an app whose own
+  `index` or `show` came from a `rails generate chats:views` before 0.6
+  (no `_conversation_pane` of its own) keeps its separate pages, rendered
+  and read exactly as before; re-eject to get the panes. The bundled
+  templates that changed:
+  - `chats/conversations/index.html.erb`: the two-pane page (the list in
+    `nav.chats-split__list`, the `chats_conversation` frame), rendered for
+    `/messages/:id` too; the list alone under `:stacked`. The search form is
+    a bare `<form>` with no `action`.
+  - `chats/conversations/show.html.erb`: the thread page, now only under
+    `:stacked` (or for views ejected before 0.6); its header moved to the new
+    `chats/conversations/_thread_header.html.erb`, shared with the pane.
+  - new `chats/conversations/_conversation_pane.html.erb` (the pane:
+    `section.chats-split__pane`, labelled by its `h2` title, the header, and
+    the permanent `.chats-split__thread` around the thread),
+    `chats/conversations/_empty_pane.html.erb` (`.chats-split__empty`,
+    `--inbox` for an empty inbox) and `chats/conversations/pane.html.erb`
+    (the frame's answer).
+  - `chats/conversations/_thread.html.erb`: `pane:` (rooted at
+    `.chats-thread--pane`, inside the page's `.chats` shell) and
+    `read_pending:` locals.
+  - `chats/conversations/_conversation_row.html.erb` and `_group.html.erb`:
+    with `pane: true` the link carries
+    `data-turbo-frame="chats_conversation"` (a stack only when it holds one
+    conversation) and the list's `filter:` (`q`, `with`) in its URL, and
+    with `current:` the current row its class and `aria-current="page"`;
+    the `<li>`'s classes come from `class_names` (no trailing space).
+  - `chats/conversations/_thread_header.html.erb` takes `back_path:` (the
+    pane's keeps the list's filter) and gives a titled pane's heading
+    `tabindex="-1"`.
+  - `chats/dock/_dock.html.erb`: one more action,
+    `turbo:frame-load@document->chats--dock#pageFrameLoaded`.
+  - `chats.css`: the `chats-split`, `chats-split__list`,
+    `chats-split__conversation`, `chats-split__pane`, `chats-split__thread`,
+    `chats-split__empty` and `chats-thread--pane` rules and
+    `--chats-list-width`; `--chats-split-height` is read with a `100dvh`
+    fallback and never declared by the gem, so a host's declaration wins
+    wherever it is. The existing class names are unchanged, so a theme on
+    `.chats`, `.chats-row` or `.chats-thread` keeps applying.
+
 ## [0.5.1] - 2026-10-18
 
 A page that missed a broadcast is never left stale: every live surface

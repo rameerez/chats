@@ -14,9 +14,12 @@ module Chats
     # 36): a client past either gets its history re-rendered instead.
     CURSOR_IDS_LIMIT = 200
     CURSOR_ID_LENGTH = 64
+    # The two-pane messaging page's conversation frame (index.html.erb): a
+    # request from it is answered with the pane alone (pane.html.erb).
+    PANE_FRAME = "chats_conversation"
 
     before_action :set_conversation, only: %i[show read typing leave mute unmute refresh]
-    helper_method :chats_counterpart
+    helper_method :chats_counterpart, :chats_two_panes?, :chats_inbox_filter
 
     # The inbox. Everything is preloaded/batched so rendering N rows costs a
     # constant number of queries (conversations + last messages + participants
@@ -29,14 +32,7 @@ module Chats
       # is the dock's own list.
       return dock if turbo_frame_request_id == "chats_dock_list"
 
-      @inbox = Chats::Inbox.for(chats_current_messager, query: params[:q], with: inbox_filter)
-      @rows = @inbox.rows
-      @unread_counts = @inbox.unread_counts
-      # Back-compat for inboxes ejected under 0.1.x, which loop over
-      # @conversations: they keep rendering the flat list (no stacking, i.e.
-      # exactly what they rendered before). Re-eject or delete your copy to
-      # get the stacked rows.
-      @conversations = @inbox.conversations
+      load_inbox
     end
 
     # The messaging dock's recent list (`chats_dock`): the first rows of the
@@ -67,6 +63,12 @@ module Chats
     # `?window=1` from a Turbo frame is the same thread as a floating dock
     # window: the window template (its compact header around the same
     # thread body), no layout.
+    #
+    # With two panes (`config.inbox_layout = :split`, the default) the
+    # thread is the conversation pane of the messaging page: the whole page
+    # (the inbox's template, with the pane open), or, asked from that page's
+    # own conversation frame (a row clicked on a wide screen), the pane
+    # alone. `:stacked` renders the thread page.
     def show
       @participant = @conversation.participant_for(chats_current_messager)
 
@@ -90,10 +92,14 @@ module Chats
           # swallow the unread badge. The thread controller posts #read once
           # the window is actually on screen (`read-pending`).
           render :window, layout: false
-        elsif !prefetch?
+        else
           # Opening the thread reads it. (Live appends while the thread
           # stays open are read via the thread controller's POST to #read.)
-          @participant&.read!
+          # A render the server doesn't read is marked `read-pending`: the
+          # thread controller reads it once it is on screen.
+          @read_pending = !reads_on_render?
+          @participant&.read! unless @read_pending
+          render_split_page if chats_two_panes?
         end
       end
     end
@@ -224,6 +230,90 @@ module Chats
 
     def set_conversation
       @conversation = find_conversation
+    end
+
+    # The inbox's rows, for the inbox page and for the two-pane page.
+    def load_inbox
+      @inbox = Chats::Inbox.for(chats_current_messager, query: params[:q], with: inbox_filter)
+      @rows = @inbox.rows
+      @unread_counts = @inbox.unread_counts
+      # Back-compat for inboxes ejected under 0.1.x, which loop over
+      # @conversations: they keep rendering the flat list (no stacking, i.e.
+      # exactly what they rendered before). Re-eject or delete your copy to
+      # get the stacked rows.
+      @conversations = @inbox.conversations
+    end
+
+    # The open conversation on the two-pane page: the pane alone for the
+    # page's own conversation frame, else the whole page around it (any
+    # other frame of the page, the search's results among them, finds its
+    # own part in it).
+    def render_split_page
+      return render :pane, layout: false if pane_request?
+
+      load_inbox
+      render :index
+    end
+
+    def pane_request?
+      turbo_frame_request_id == PANE_FRAME
+    end
+
+    # Whether the messaging page is two panes: `config.inbox_layout = :split`
+    # (the default), unless this app ejected its views before there were
+    # two panes. `rails g chats:views` under 0.5 copied an inbox and a
+    # thread page and no conversation pane: that app keeps its own separate
+    # pages, rendered and read exactly as before, until it ejects again (or
+    # deletes its copies). Views ejected since 0.6 carry the pane, and are
+    # two panes like the gem's own.
+    def chats_two_panes?
+      return @chats_two_panes if defined?(@chats_two_panes)
+
+      @chats_two_panes = Chats.config.split_inbox? && !views_ejected_before_two_panes?
+    end
+
+    # The list's filter on the two-pane page: its search (`q`) or the stack
+    # it shows (`with`). A row opened in the pane carries it into its URL,
+    # /messages/:id?with=…, because that URL is what the list's live
+    # refreshes re-request: without it, the next refresh would bring back
+    # the whole inbox under a list that was filtered. The back link to the
+    # list keeps it too.
+    def chats_inbox_filter
+      { q: params[:q], with: params[:with] }.select { |_, value| value.is_a?(String) && value.present? }
+    end
+
+    def views_ejected_before_two_panes?
+      (own_view?("index") || own_view?("show")) && !own_view?("conversation_pane", partial: true)
+    end
+
+    # Whether the app renders its own copy of one of these views, not the gem's.
+    def own_view?(name, partial: false)
+      template = lookup_context.find_all(name, ["chats/conversations"], partial).first
+      template.present? && !template.identifier.to_s.start_with?(Chats::Engine.root.join("app/views").to_s)
+    end
+
+    # Whether showing the conversation reads it, there and then.
+    #
+    # Never a prefetch (Turbo 8 fetches a link the pointer rests on, which
+    # is nobody reading). On the thread page, everything else: opening it
+    # reads it.
+    #
+    # On the two-pane page, the viewer opening it: a row clicked (the
+    # pane's frame) or the page loaded by the browser itself (a link from
+    # elsewhere, a reload, no JavaScript). NOT a Turbo visit of the page,
+    # because one of those is the inbox's own refresh: every live update of
+    # the list re-requests this page, maybe in a hidden tab, and a read
+    # there would say "Seen" to the sender while nobody looks — and, since
+    # a read refreshes the reader's inbox, refresh the page again, forever.
+    # Turbo marks each of its requests (X-Turbo-Request-Id) and a refresh
+    # looks like any other visit, so a Turbo visit renders the pane unread
+    # and its thread reads it once it's on screen. A refresh's pane never
+    # gets that far: the page keeps its permanent one, and drops the new.
+    def reads_on_render?
+      return false if prefetch?
+      return true unless chats_two_panes?
+
+      pane_request? || request.headers["X-Turbo-Request-Id"].blank?
     end
 
     def time_from_ms(value)

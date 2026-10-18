@@ -1,0 +1,83 @@
+<%# The header over a conversation: the thread page's, and the conversation
+    pane's on the two-pane messaging page (chats/conversations/
+    _conversation_pane). Back to the list, who it is with (avatar, name,
+    the verified badge, what it is about, the way back to their stack) and
+    the ⋯ menu (mute, leave, the host's conversation_header_actions).
+
+    The back link always renders: on the two-pane page chats.css hides it
+    while the list is on screen beside the conversation.
+
+    Locals:
+      conversation  the Chats::Conversation
+      participant   the viewer's seat in it (mute state), or nil
+      counterpart   the other messager of a direct thread, or nil
+      heading       the title's element: :h1 on the thread page, :h2 in the
+                    pane, under the page's own "Messages" heading
+      title_id      the title's id, which a pane is labelled by (optional);
+                    the pane's title also takes the focus when a row opens
+                    it on a touch screen (tabindex="-1", see chats--split)
+      back_path     where the back link goes (default: the inbox; the pane
+                    keeps the list's search or stack) %>
+<% heading = local_assigns.fetch(:heading, :h1) %>
+<% title_id = local_assigns[:title_id] %>
+<header class="chats-thread__header">
+  <%= link_to local_assigns[:back_path] || root_path, class: "chats-thread__back", "aria-label": t("chats.thread.back") do %>
+    <span aria-hidden="true">‹</span>
+  <% end %>
+
+  <%# The counterpart is already resolved for the title, the profile link
+      and the stack link — reuse it here instead of asking again. %>
+  <% if counterpart %>
+    <%= chats_messager_avatar(counterpart) %>
+  <% else %>
+    <%= chats_conversation_avatar(conversation, chats_current_messager) %>
+  <% end %>
+
+  <div class="chats-thread__identity">
+    <%# Both arms wrap the name in .chats-thread__name: the heading is a flex
+        row (the badge is its second child), and only a real element can
+        carry the ellipsis. %>
+    <%= content_tag heading, class: "chats-thread__title", id: title_id, tabindex: (-1 if title_id) do %>
+      <% if counterpart %>
+        <%= chats_messager_name(counterpart, css_class: "chats-thread__name") %>
+        <%= chats_verified_badge(counterpart) %>
+      <% else %>
+        <span class="chats-thread__name"><%= conversation.title_for(chats_current_messager) %></span>
+      <% end %>
+    <% end %>
+    <% if conversation.subject_label %>
+      <p class="chats-thread__subject"><%= conversation.subject_label %></p>
+    <% end %>
+    <%# A stacked counterpart's thread is one of many: offer the way back
+        to the whole stack (chats' filtered inbox, or the host's own
+        screen via `group_path:`). %>
+    <% if Chats.grouped_inbox?(counterpart) %>
+      <p class="chats-thread__see-all">
+        <%= link_to t("chats.thread.see_all"), chats_group_path_for(counterpart), class: "chats-thread__see-all-link" %>
+      </p>
+    <% end %>
+  </div>
+
+  <details class="chats-menu">
+    <summary class="chats-menu__trigger" aria-label="<%= t("chats.thread.options") %>">⋯</summary>
+    <div class="chats-menu__panel">
+      <% if participant&.muted? %>
+        <%= button_to t("chats.thread.unmute"), unmute_conversation_path(conversation), method: :post, class: "chats-menu__item" %>
+      <% else %>
+        <%= button_to t("chats.thread.mute"), mute_conversation_path(conversation), method: :post, class: "chats-menu__item" %>
+      <% end %>
+      <% if conversation.group? %>
+        <%= button_to t("chats.thread.leave"), leave_conversation_path(conversation), method: :post, class: "chats-menu__item chats-menu__item--danger" %>
+      <% end %>
+      <%# Slot: the host's own thread actions (block, report, archive…).
+          `blockable` is false for messagers declared
+          `acts_as_messager blockable: false`, so safety affordances
+          disappear against a support desk without any class check. %>
+      <%= chats_slot :conversation_header_actions,
+            conversation: conversation,
+            viewer: chats_current_messager,
+            counterpart: counterpart,
+            blockable: chats_blockable?(counterpart) %>
+    </div>
+  </details>
+</header>

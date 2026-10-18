@@ -58,6 +58,7 @@ class InstallGeneratorTest < Rails::Generators::TestCase
       assert_match(/Chats\.on\(:message_created\)/, initializer) # the event bus, documented
       assert_match(/config\.messager_url/, initializer)
       assert_match(/config\.inbox_limit/, initializer)
+      assert_match(/# config\.inbox_layout = :split/, initializer)
       assert_match(/acts_as_messager notifications: false/, initializer)
     end
   end

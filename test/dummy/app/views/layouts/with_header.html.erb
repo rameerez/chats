@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Dummy (with a header)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <%= csrf_meta_tags %>
+    <%= action_cable_meta_tag %>
+    <%= javascript_importmap_tags %>
+    <%= yield :head %>
+    <%# A host with its own header above every page: the two-pane page gets
+        what is left of the screen, through the one variable the README
+        names for it. %>
+    <style>
+      body { margin: 0; }
+      .dummy-header { height: 56px; box-sizing: border-box; border-bottom: 1px solid #ddd; }
+      :root { --chats-split-height: calc(100dvh - 56px); }
+    </style>
+  </head>
+  <body>
+    <header class="dummy-header">Dummy</header>
+    <%= yield %>
+  </body>
+</html>

@@ -1,9 +1,10 @@
 <%# The thread body: everything live about one open conversation, shared by
-    the thread PAGE (show.html.erb) and a floating dock WINDOW
-    (window.html.erb). Rendered as a partial LAYOUT — `yield` is the header,
-    which is the one thing the two differ in: the page keeps its full header
-    (back link, ⋯ menu), the window its compact one (minimize, close, open
-    full page).
+    the thread PAGE (show.html.erb), a floating dock WINDOW (window.html.erb)
+    and the two-pane page's conversation PANE (_conversation_pane.html.erb).
+    Rendered as a partial LAYOUT — `yield` is the header, which is the one
+    thing they differ in: the page keeps its full header (back link, ⋯ menu),
+    the window its compact one (minimize, close, open full page); the pane
+    renders its header above the thread, outside it, and yields nothing.
 
     One conversation stream powers everything here: message
     append/replace/remove, the read-state payload, and typing pings. Bubbles
@@ -28,10 +29,19 @@
                        server did NOT read this render — the controller
                        posts #read once the window is on screen and the
                        viewer is engaged with it (`readPending`).
+      pane             true in the two-pane page's conversation pane: rooted
+                       at .chats-thread--pane, inside the page's .chats shell.
+      read_pending     the server did not read this render, so the
+                       controller posts #read once the thread is on screen
+                       (always true in a window; see
+                       ConversationsController#show for when a page or a
+                       pane is rendered unread).
 
     The page's root carries data-chats-dock-hide: the messaging dock hides
     itself on any page that has it. %>
 <% window = local_assigns.fetch(:window, false) %>
+<% pane = local_assigns.fetch(:pane, false) %>
+<% read_pending = window || local_assigns.fetch(:read_pending, false) %>
 <% viewer = chats_current_messager %>
 <%# A direct thread nobody may write in any more says so up front, in the
     composer's place — the host's policy turned false, or the other account
@@ -39,12 +49,16 @@
     the live lock swap still finds it. %>
 <% refused = !conversation.locked? && conversation.direct? &&
              (counterpart.nil? || !Chats.can_message?(viewer, counterpart)) %>
-<%= tag.div class: (window ? "chats-thread chats-thread--window" : "chats chats-thread"), data: {
+<% root_class = if window then "chats-thread chats-thread--window"
+                elsif pane then "chats-thread chats-thread--pane"
+                else "chats chats-thread"
+                end %>
+<%= tag.div class: root_class, data: {
       controller: "chats--thread",
-      "chats-dock-hide": (true unless window),
+      "chats-dock-hide": (true unless window || pane), # the pane's page carries it
       "chats--thread-me-value": Chats.messager_key(viewer),
       "chats--thread-read-url-value": read_conversation_path(conversation),
-      "chats--thread-read-pending-value": window,
+      "chats--thread-read-pending-value": read_pending,
       "chats--thread-sent-label-value": t("chats.thread.sent"),
       "chats--thread-seen-label-value": Chats.config.read_receipts ? t("chats.thread.seen") : "",
       "chats--thread-today-label-value": t("chats.thread.today"),
