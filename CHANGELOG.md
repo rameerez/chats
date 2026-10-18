@@ -131,7 +131,13 @@ to configure, no polling.**
   (`after_ids`, `changed_ids`, each id at most 64 characters); past that,
   or with `full=1`, the history is re-rendered. Kept on the element
   (`data-chats-reconciled`), so a dock window moved by a Turbo visit, or a
-  restored snapshot, keeps them. An empty
+  restored snapshot, keeps them. Each catch-up is bound to one render of
+  the thread (`render=`, echoed by the answer): an answer that arrives
+  after the page or a dock window rendered the conversation again is
+  dropped unrendered, and its cursors ignored. A history re-render is
+  followed by one more catch-up from its own cursors, once Turbo has
+  actually applied it (stream actions run a repaint after they arrive),
+  so a message written while that page was being built isn't lost. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also
