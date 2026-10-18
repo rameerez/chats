@@ -8,6 +8,7 @@ en:
       no_results_title: "No results"
       no_results_hint: "Nothing matched “%{query}”."
       no_messages: "No messages yet"
+      select_hint: "Select a conversation"
       filtered_by: "Conversations with %{name}"
       clear_filter: "Show all conversations"
       group_count:

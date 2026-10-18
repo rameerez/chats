@@ -8,11 +8,22 @@
     either the host's `group_path:` or chats' own filtered inbox.
 
     In the messaging dock (`dock: true`) a stack of one opens its thread's
-    floating window; a deeper stack still goes to the stack list. %>
-<li class="chats-row chats-row--group <%= "chats-row--unread" if group.unread? %>"
+    floating window; a deeper stack still goes to the stack list. On the
+    two-pane page (`pane: true`) a stack of one opens its thread in the
+    conversation pane, and is the current row while it is open there
+    (`current:`, as in _conversation_row); a deeper stack still goes to the
+    stack list. %>
+<% single = group.single? %>
+<% current = single && local_assigns[:current].present? && local_assigns[:current] == group.conversation %>
+<li class="<%= class_names("chats-row chats-row--group", "chats-row--unread": group.unread?, "chats-row--current": current) %>"
     id="<%= group.dom_id %>">
   <%= link_to chats_group_path(group), class: "chats-row__link",
-        data: (chats_dock_opener(group.conversation) if local_assigns[:dock] && group.single?) do %>
+        "aria-current": ("page" if current),
+        data: (if local_assigns[:dock] && single
+                 chats_dock_opener(group.conversation)
+               elsif local_assigns[:pane] && single
+                 { turbo_frame: Chats::ConversationsController::PANE_FRAME }
+               end) do %>
     <%= chats_messager_avatar(group.messager) %>
 
     <span class="chats-row__body">

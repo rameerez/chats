@@ -116,6 +116,13 @@ class MessagingDockTest < ActionDispatch::IntegrationTest
     get "/messages/#{@conversation.id}"
     assert_response :success
     assert_empty css_select(".chats-dock"), "a window there would duplicate the thread's ids"
+    assert_select ".chats.chats-split[data-chats-dock-hide]"
+
+    Chats.config.inbox_layout = :stacked
+    get "/messages"
+    assert_select ".chats-inbox[data-chats-dock-hide]"
+    get "/messages/#{@conversation.id}"
+    assert_empty css_select(".chats-dock")
     assert_select ".chats.chats-thread[data-chats-dock-hide]"
   end
 
@@ -446,12 +453,25 @@ class MessagingDockTest < ActionDispatch::IntegrationTest
   end
 
   test "the thread page renders the same body, read on render" do
+    Chats.config.inbox_layout = :stacked
     login_as @alice
 
     get "/messages/#{@conversation.id}"
 
     assert_select "[data-controller='chats--thread'][data-chats--thread-read-pending-value='false']" do
       assert_select ".chats-thread__header"
+      assert_select "##{dom_id(@conversation, :composer)}"
+    end
+  end
+
+  test "the two-pane page's conversation pane renders the same body, its header above it, read on render" do
+    login_as @alice
+
+    get "/messages/#{@conversation.id}"
+
+    assert_select ".chats-split__pane > .chats-thread__header", 1
+    thread = "[data-controller='chats--thread'][data-chats--thread-read-pending-value='false']"
+    assert_select ".chats-split__pane #{thread}" do
       assert_select "##{dom_id(@conversation, :composer)}"
     end
   end

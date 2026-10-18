@@ -49,7 +49,8 @@
                 "input->chats--dock#typed " \
                 "click@document->chats--dock#delegate " \
                 "turbo:before-stream-render@document->chats--dock#beforeStreamRender " \
-                "turbo:load@document->chats--dock#pageChanged turbo:render@document->chats--dock#pageChanged"
+                "turbo:load@document->chats--dock#pageChanged turbo:render@document->chats--dock#pageChanged " \
+                "turbo:frame-load@document->chats--dock#pageFrameLoaded"
       } do %>
   <%= turbo_stream_from viewer, :chats_dock %>
   <%= render "chats/dock/signal" %>

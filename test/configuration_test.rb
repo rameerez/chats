@@ -26,6 +26,8 @@ class ConfigurationTest < ActiveSupport::TestCase
     assert_equal 32, config.max_group_size
     assert_equal({ to: 60, within: 60 }, config.send_rate_limit)
     assert_equal 200, config.inbox_limit
+    assert_equal :split, config.inbox_layout
+    assert_predicate config, :split_inbox?
     refute config.encrypt_messages
 
     # 0.2.0 seams, all inert until a host sets them.
@@ -68,6 +70,26 @@ class ConfigurationTest < ActiveSupport::TestCase
     assert_equal :any, Chats.config.attachments
 
     assert_raises(Chats::ConfigurationError) { Chats.config.attachments = :videos }
+  end
+
+  test "inbox_layout is :split or :stacked, said as a symbol or a string, and nothing else" do
+    Chats.config.inbox_layout = :stacked
+    assert_equal :stacked, Chats.config.inbox_layout
+    refute_predicate Chats.config, :split_inbox?
+
+    Chats.config.inbox_layout = "split"
+    assert_equal :split, Chats.config.inbox_layout
+    assert_predicate Chats.config, :split_inbox?
+
+    [:columns, "", nil, false, true, 2].each do |value|
+      error = assert_raises(Chats::ConfigurationError) { Chats.config.inbox_layout = value }
+      assert_includes error.message, "inbox_layout must be one of [:split, :stacked]"
+    end
+    assert_equal :split, Chats.config.inbox_layout, "a refused value leaves the layout as it was"
+  end
+
+  test "a wrong inbox_layout fails the initializer, at boot" do
+    assert_raises(Chats::ConfigurationError) { Chats.configure { |config| config.inbox_layout = :sidebar } }
   end
 
   test "deletion setter validates modes" do

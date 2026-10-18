@@ -14,7 +14,8 @@ class EngineTest < ActiveSupport::TestCase
       "controllers/chats/debounced_submit_controller" => "chats/debounced_submit_controller.js",
       "controllers/chats/refresh_inbox_controller" => "chats/refresh_inbox_controller.js",
       "controllers/chats/dock_controller" => "chats/dock_controller.js",
-      "controllers/chats/unread_badge_controller" => "chats/unread_badge_controller.js"
+      "controllers/chats/unread_badge_controller" => "chats/unread_badge_controller.js",
+      "controllers/chats/split_controller" => "chats/split_controller.js"
     }.each do |name, path|
       pin = packages[name]
 

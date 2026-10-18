@@ -3,6 +3,25 @@
     re-renders this page per-viewer — see Chats::Broadcasts for why refreshes
     beat surgical row patches here.
 
+    Two panes (`config.inbox_layout = :split`, the default): the list in a
+    <nav> on the left, and on the right the `chats_conversation` frame with
+    the open conversation (/messages/:id renders this same template, see
+    ConversationsController#show) or the empty pane (/messages). chats.css
+    decides with one media query: at least 700px wide both panes show; below
+    that the page is the list (/messages) or the thread (/messages/:id), as
+    with `:stacked`, which renders the list alone and the thread on its own
+    page (show.html.erb). Every request renders the same markup; only CSS
+    knows the width, so it works before JavaScript runs and without it.
+
+    A row is a real link to /messages/:id. On a wide screen it targets the
+    frame: the server answers with the pane alone (pane.html.erb) and the
+    frame's data-turbo-action="advance" moves the address bar and history
+    there. A reload, a deep link or back/forward renders the whole page.
+    The frame is `disabled` until chats--split enables it, and only while
+    the screen is wide: on a phone, and without JavaScript, the same link
+    opens the thread page. The pane keeps its draft, scroll and stream
+    through every refresh of the list (see _conversation_pane).
+
     Rows come from Chats::Inbox and are either a Chats::Conversation or a
     Chats::InboxGroup (every direct thread with a `inbox: :grouped` messager,
     stacked into one row).
@@ -39,8 +58,9 @@
   <%= turbo_stream_from chats_current_messager, :chats_inbox %>
 </div>
 
-<%# data-chats-dock-hide: the messaging dock hides itself on this page. %>
-<div class="chats chats-inbox" data-chats-dock-hide>
+<% split = chats_two_panes? %>
+<% inbox_empty = @rows.none? && params[:q].blank? %>
+<% list = capture do %>
   <header class="chats-inbox__header">
     <h1 class="chats-inbox__title"><%= t("chats.inbox.title") %></h1>
   </header>
@@ -53,15 +73,17 @@
   <% end %>
 
   <% if Chats.config.search && !@inbox.filtered? %>
-    <%# The inbox's own path exactly as it was opened (/messages or
-        /messages/: the engine answers both), so the URL a search puts in the
-        address bar is still this page to Turbo, and the next refresh morphs
-        it instead of re-rendering it from scratch. %>
-    <%= form_with url: request.original_fullpath.split("?").first,
-          method: :get,
+    <%# No `action` (so a bare tag.form: form_with always writes one): a form
+        without one submits to the page's own URL (the HTML standard, and
+        Turbo too), whatever that is NOW — /messages,
+        /messages/ (the engine answers both), or /messages/:id after a row
+        opened a conversation in the pane and moved the address bar. So the
+        URL a search puts in the address bar is still this page to Turbo,
+        the next refresh morphs it instead of re-rendering it from scratch,
+        and on the two-pane page the open conversation stays open. %>
+    <%= tag.form method: :get,
           class: "chats-search",
-          # `html:`: form_with drops attributes it doesn't know (role among them).
-          html: { role: "search" },
+          role: "search",
           data: {
             controller: "chats--debounced-submit",
             action: "input->chats--debounced-submit#queue search->chats--debounced-submit#queue",
@@ -88,12 +110,15 @@
       <ul class="chats-inbox__list">
         <% @rows.each do |row| %>
           <% if row.is_a?(Chats::InboxGroup) %>
-            <%= render "chats/conversations/group", group: row, viewer: chats_current_messager %>
+            <%= render "chats/conversations/group", group: row, viewer: chats_current_messager,
+                                                    pane: split, current: @conversation %>
           <% else %>
             <%= render "chats/conversations/conversation_row",
                   conversation: row,
                   viewer: chats_current_messager,
-                  unread_count: @unread_counts.fetch(row.id, 0) %>
+                  unread_count: @unread_counts.fetch(row.id, 0),
+                  pane: split,
+                  current: @conversation %>
           <% end %>
         <% end %>
       </ul>
@@ -102,7 +127,8 @@
         <p class="chats-empty__title"><%= t("chats.inbox.no_results_title") %></p>
         <p class="chats-empty__hint"><%= t("chats.inbox.no_results_hint", query: params[:q]) %></p>
       </div>
-    <% else %>
+    <% elsif !split %>
+      <%# (Two panes: the empty pane says it, once — chats/conversations/_empty_pane.) %>
       <div class="chats-empty">
         <span class="chats-empty__icon" aria-hidden="true">💬</span>
         <p class="chats-empty__title"><%= t("chats.inbox.empty_title") %></p>
@@ -111,4 +137,39 @@
       </div>
     <% end %>
   <% end %>
-</div>
+<% end %>
+
+<%# data-chats-dock-hide: the messaging dock hides itself on this page. %>
+<% if split %>
+  <%= tag.div class: "chats chats-inbox chats-split",
+              data: {
+                chats_dock_hide: true,
+                controller: "chats--split",
+                action: "turbo:before-prefetch->chats--split#prefetch " \
+                        "turbo:frame-load->chats--split#opened " \
+                        "turbo:before-morph-attribute->chats--split#keepEnabled"
+              } do %>
+    <nav class="chats-split__list" aria-label="<%= t("chats.inbox.title") %>" data-chats--split-target="list">
+      <%= list %>
+    </nav>
+
+    <%= turbo_frame_tag Chats::ConversationsController::PANE_FRAME,
+          class: "chats-split__conversation",
+          target: "_top",
+          disabled: true,
+          data: { turbo_action: "advance", "chats--split-target": "frame" } do %>
+      <% if @conversation %>
+        <%= render "chats/conversations/conversation_pane",
+                   conversation: @conversation, participant: @participant,
+                   messages: @messages, more: @more_messages, first_unread_id: @first_unread_id,
+                   counterpart: chats_counterpart, read_pending: @read_pending %>
+      <% else %>
+        <%= render "chats/conversations/empty_pane", inbox_empty: inbox_empty, inbox: @inbox %>
+      <% end %>
+    <% end %>
+  <% end %>
+<% else %>
+  <div class="chats chats-inbox" data-chats-dock-hide>
+    <%= list %>
+  </div>
+<% end %>
