@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-10-18
+
+### Fixed
+- **A moderation removal that removed nothing said it had.**
+  `Chats::Message#remove_reported_field!(:body)`, the seam moderate calls to
+  take reported content down, returned true for a message that was already
+  deleted, so moderate recorded a second "content removed" with a statement
+  of reasons that was false. It now returns whether anything was removed:
+  false for a message already deleted (by its sender or an earlier
+  decision), one whose body is already blank, and one already gone
+  (`deletion: :hard`); true only when it actually removed something (the
+  tombstone, or the row under `deletion: :hard`). It decides under the
+  message's row lock and reads the message again under it, so two
+  decisions taken at once cannot both see it standing. moderate
+  1.0.0.beta3 and later refuse a removal that removed nothing; earlier
+  versions ignore the return value. A group's `remove_reported_field!(:title)`
+  keeps the same contract (false for a title already removed).
+
 ## [0.6.1] - 2026-10-18
 
 The package is the gem again, and three fixes to the two-pane page.
