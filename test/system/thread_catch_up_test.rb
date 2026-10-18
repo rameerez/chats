@@ -18,7 +18,9 @@ require "selenium-webdriver"
 # Chrome is a prerequisite in CI (ENV["CI"]), as for the dock's layout
 # tests; locally they skip without it. The suite's output says how many ran.
 class ThreadCatchUpBrowserTest < ActionDispatch::SystemTestCase
-  driven_by :selenium, using: :headless_chrome, screen_size: [1280, 900]
+  driven_by :selenium, using: :headless_chrome, screen_size: [1280, 900] do |options|
+    HeadlessChromeWithMouse.configure(options) # see test_helper: every class says so
+  end
 
   @ran = 0
   @skipped = 0

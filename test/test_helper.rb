@@ -146,3 +146,18 @@ module ActionDispatch
     end
   end
 end
+
+# Headless Chrome on GitHub's Linux runners has no pointing device, so it
+# answers (hover: none) and nothing behind `@media (hover: hover)` ever applies.
+# Every system test class launches Chrome with Blink's own settings for a fine,
+# hovering pointer (hover 2 = hover, pointer 4 = fine). Every class, because
+# Capybara keeps the first browser a process starts for the classes that follow,
+# so the one that happens to run first decides for all. Touch emulation still
+# turns the pointer off where a test wants a tap.
+module HeadlessChromeWithMouse
+  BLINK_SETTINGS = "availableHoverTypes=2,primaryHoverType=2,availablePointerTypes=4,primaryPointerType=4"
+
+  def self.configure(options)
+    options.add_argument("--blink-settings=#{BLINK_SETTINGS}")
+  end
+end

@@ -19,6 +19,7 @@ require "selenium-webdriver"
 # how many ran (see the after_run hook below).
 class DockLayoutTest < ActionDispatch::SystemTestCase
   driven_by :selenium, using: :headless_chrome, screen_size: [1800, 1000] do |options|
+    HeadlessChromeWithMouse.configure(options) # see test_helper: every class says so
     options.add_option("goog:loggingPrefs", { browser: "ALL" }) # printed when a test fails
   end
 
