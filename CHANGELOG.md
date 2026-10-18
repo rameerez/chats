@@ -71,7 +71,9 @@ to configure, no polling.**
   `<turbo-cable-stream-source>` and the page, and asks for what was missed
   when the stream reconnects, when the page comes back after 10 seconds or
   more hidden, when the network comes back online (it asks Action Cable to
-  check its socket at once instead of after its backoff) and when the page
+  check its socket at once instead of after its backoff, and catches up
+  anyway: after a short outage the socket can look open while what was
+  sent during it is gone) and when the page
   is restored from the back/forward cache or from Turbo's snapshot cache (a
   back navigation, a Hotwire Native stack pop). Never otherwise: a healthy,
   visible page fetches nothing. A hidden page never fetches; what it missed
@@ -94,14 +96,27 @@ to configure, no polling.**
   typing in, no longer drops the search (see Changed), and a morph no longer
   strips the stream source's `connected` attribute.
 - **The inbox refresh is durable.** `refresh_inbox_of` enqueues
-  `Turbo::Streams::BroadcastStreamJob` straight from the after_commit
-  instead of calling `broadcast_refresh_later_to`, which parked the refresh
-  for half a second in an in-process timer (`Turbo::Debouncer`) before
-  enqueueing it, so a deploy or a crash inside that window dropped it. Bursts
-  merge on the client instead: Turbo runs one page refresh for refreshes
-  arriving within 150 ms of each other. The refresh tag now carries
-  `method="morph" scroll="preserve"`, so the inbox morphs whatever the host
-  layout's refresh meta says.
+  `Chats::InboxRefreshJob` straight from the after_commit instead of calling
+  `broadcast_refresh_later_to`, which parked the refresh for half a second
+  in an in-process timer (`Turbo::Debouncer`) before enqueueing it, so a
+  deploy or a crash inside that window dropped it. At most one is queued
+  per recipient: while one is queued and hasn't started, it stands for
+  every write that commits before it runs (a short-lived marker in
+  `Rails.cache`, removed by the job as it starts, before it broadcasts), so
+  a burst is one job per recipient. A lost marker costs an extra job, never
+  a missed refresh, and the marker expires after two seconds. The refresh
+  tag carries `method="morph" scroll="preserve"`, so the inbox morphs
+  whatever the host layout's refresh meta says, and no request id, since
+  it may stand for several requests' writes.
+- **The thread's catch-up asks on two cursors.** It sent only the newest
+  `updated_at` it had rendered and the server appended what was created
+  after it, so a message created at 10:15 and missed, while a bubble on
+  screen was edited at 10:20, never came. Now `after=` (the newest
+  `created_at` rendered, to the microsecond) decides what is appended and
+  `since=` what is replaced, and the two scopes split on the same creation
+  cursor (`Message.updated_since(since, rendered_through: after)`). An empty
+  thread, which used to ask nothing, asks from the epoch: its first message
+  may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also
   replaces the read state (a read the stream missed left "Sent" where it
   should say "Seen"), catches reactions (a reaction now moves its message's
@@ -139,7 +154,8 @@ to configure, no polling.**
   the same results instead of the unfiltered list. The dock's recent list
   frame has `refresh="morph"`, so a reload keeps its scroll and its search.
 - New: the `GET /badge` collection route, the `chats--unread-badge`
-  controller, and `data-created-at-ms` on every bubble.
+  controller, `Chats::InboxRefreshJob`, and `data-created-at-us` on every
+  bubble.
 - **If you wrapped the inbox in a reconciler of your own** (a
   stream-reconciler controller around `turbo_stream_from … :chats_inbox`),
   remove it: two on one page both fire, and the gem's covers what yours did.
@@ -148,8 +164,9 @@ to configure, no polling.**
   `turbo_stream_from chats_current_messager, :chats_inbox` (an inbox without
   it doesn't catch up), and add `turbo_action: "replace"` to the search
   form's `data` and `url: request.original_fullpath.split("?").first`. An
-  ejected message partial without `data-created-at-ms` only means a hard
-  delete missed while offline stays on screen until the next load.
+  ejected message partial without `data-created-at-us` keeps the one cursor
+  it had (`since` alone), and a hard delete missed while offline stays on
+  screen until the next load.
 
 ## [0.5.0] - 2026-10-18
 
