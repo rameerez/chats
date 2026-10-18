@@ -106,6 +106,9 @@ class DockControllerTest < ActiveSupport::TestCase
             controller.opened.push([id, options])
             return frame(id)
           }
+          // What restore() builds: a frame the thread hasn't arrived in yet.
+          controller.buildWindow = (id, { minimized }) => frame(id, { minimized })
+          controller.windowsTarget = { append: (built) => windows.push(built) }
           return controller
         }
 
@@ -399,7 +402,8 @@ class DockControllerTest < ActiveSupport::TestCase
         controller.closed = { 9: Date.now() }
         controller.save()
         const saved = JSON.parse(stored["chats:dock:v1:alice"])
-        assert.deepStrictEqual(saved.windows, [{ id: "1", minimized: true, usedAt: 5 }, { id: "2", minimized: false, usedAt: 9 }])
+        assert.deepStrictEqual(saved.windows, [{ id: "1", minimized: true, folded: false, usedAt: 5 },
+                                               { id: "2", minimized: false, folded: false, usedAt: 9 }])
         assert.ok(saved.closed["9"])
 
         stored["chats:dock:v1:alice"] = JSON.stringify({
@@ -408,10 +412,30 @@ class DockControllerTest < ActiveSupport::TestCase
         })
         controller = dock({ width: 1280 })
         controller.restore()
-        assert.deepStrictEqual(controller.opened.map(([id, options]) => [id, options.active, options.minimized]),
-                               [["2", false, true], ["3", false, false]],
-                               "the newest that fit, not engaged until the viewer turns to them")
+        assert.deepStrictEqual(windows.map((w) => [w.dataset.conversationId, w.classes.has("chats-window--minimized")]),
+                               [["2", true], ["3", false]],
+                               "the saved arrangement, then reflowed to the width there is: the oldest idle one goes")
+        assert(windows.every((w) => w.hasAttribute("data-restored")), "placed by restore, not by makeRoom")
         assert.strictEqual(controller.panelTarget.open, true, "the dock's panel comes back")
+
+        // At 768: an expanded window and a folded one that holds a draft
+        // fit together, and come back together.
+        stored["chats:dock:v1:alice"] = JSON.stringify({
+          windows: [{ id: "1", minimized: true, folded: true, usedAt: 1 }, { id: "2", usedAt: 2 }]
+        })
+        stored["chats:draft:alice:1"] = JSON.stringify({ text: "kept", at: Date.now() })
+        controller = dock({ width: 768 })
+        controller.restore()
+        assert.deepStrictEqual(windows.map((w) => [w.dataset.conversationId, w.classes.has("chats-window--squeezed")]),
+                               [["1", true], ["2", false]], "both back, the folded one still folded")
+        assert(controller.inUse(windows[0]), "before its thread arrives, a restored window holds its saved draft")
+        delete stored["chats:draft:alice:1"]
+
+        // Saved wider than the viewport now: the idle one closes first.
+        stored["chats:dock:v1:alice"] = JSON.stringify({ windows: [{ id: "1", usedAt: 1 }, { id: "2", usedAt: 2 }] })
+        controller = dock({ width: 768 })
+        controller.restore()
+        assert.deepStrictEqual(windows.map((w) => w.dataset.conversationId), ["2"])
 
         controller = dock({ compact: true, width: 390 })
         controller.restore()
@@ -423,7 +447,7 @@ class DockControllerTest < ActiveSupport::TestCase
           stored["chats:dock:v1:alice"] = corrupt
           controller = dock()
           controller.restore()
-          assert.deepStrictEqual(controller.opened, [], `ignores ${corrupt}`)
+          assert.deepStrictEqual(windows, [], `ignores ${corrupt}`)
         }
 
         storage = {

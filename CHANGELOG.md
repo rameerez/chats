@@ -50,8 +50,9 @@ reads a thread, and the thread body moved into a partial.
   "Loading…" or "Couldn't load this conversation." with "Try again"; a 404
   (left, blocked) closes it, read from the response before Turbo acts on
   it (an error page carrying `turbo-visit-control`, as Rails' own do, would
-  otherwise take the whole page with it); a 5xx shows the failed shell. An empty conversation's window says "Say hello
-  to …". The dock never opens a window for a conversation the page itself
+  otherwise take the whole page with it), keeping what was typed in it; a
+  5xx shows the failed shell. An empty conversation's window says "Say
+  hello to …". The dock never opens a window for a conversation the page itself
   shows (the streams address the thread's DOM ids, which must exist once).
 - **What fits.** `min(windows, floor((viewport − 312) / 344))` windows beside
   the panel: two at 1280px, one at 768px, three from 1344px. Opening one
@@ -101,12 +102,15 @@ reads a thread, and the thread body moved into a partial.
   `inbox_scope` apply), because the dock's list and window refuse anything
   else. The badges stay truthful either way. No polling.
 - **Memory.** Per viewer in `localStorage`: `chats:dock:v1:<messager key>`
-  (which windows, minimized or not, when each was used, the recently closed
-  ones and the panel) and `chats:draft:<messager key>:<conversation id>`
-  (unsent text, saved as you type and whenever a window goes, restored when
-  it comes back, cleared on send, kept seven days). A reload restores the
-  windows up to what fits, not engaged; the panel comes back in dock mode
-  only, and the phone's sheet always starts closed. Every access is guarded,
+  (which windows, minimized or folded or not, when each was used, the
+  recently closed ones and the panel) and `chats:draft:<messager key>:
+  <conversation id>` (unsent text, saved as you type and whenever a window
+  goes, by any path, a refused or missing one included; restored when it
+  comes back, cleared on send, kept seven days). A reload restores the
+  saved arrangement as it was, folded windows included, up to the cap, then
+  fits it to the width there is now by the resize rules; none of them is
+  engaged. The panel comes back in dock mode only, and the phone's sheet
+  always starts closed. Every access is guarded,
   so a browser that refuses storage only means forgetting.
 - **Phones.** Under 700px wide or 500px tall the closed bar is a 56px round
   launcher, the open panel a full-screen sheet, and a conversation one
@@ -239,7 +243,9 @@ reads a thread, and the thread body moved into a partial.
   eager loader) and a host home page with the dock, which is how the
   screenshots were taken. `test/system` measures the dock's rendered layout
   in a headless Chrome (capybara and selenium-webdriver join the test
-  bundle; the tests skip where Chrome can't start).
+  bundle). Under CI (`CI=true`) Chrome is a prerequisite: the tests fail
+  when it can't start, and the workflow checks for it first; on a machine
+  without Chrome they skip. The suite prints how many ran.
 
 ## [0.4.2] - 2026-10-17
 

@@ -179,8 +179,11 @@ export default class extends Controller {
       if (other !== frame && other.dataset.conversationId === id) this.removeWindow(other)
     })
     // A window the server sent (`dock: true`) and nothing can make room
-    // for: the conversation's page instead.
-    if (!this.makeRoom(frame, { force: true })) {
+    // for: the conversation's page instead. A restored one was placed by
+    // restore(), which reflows the whole arrangement at once.
+    if (frame.hasAttribute("data-restored")) {
+      frame.removeAttribute("data-restored")
+    } else if (!this.makeRoom(frame, { force: true })) {
       this.dropWindow(frame)
       this.visit(this.threadUrl(id))
       return
@@ -586,9 +589,10 @@ export default class extends Controller {
   }
 
   // The one way a window leaves the dock, whatever the reason (closed,
-  // evicted, declined, missing, shown by the page, another viewer's): its
-  // draft kept (unless it isn't this viewer's), and the rows and the phone
-  // sheet told — a window gone from in front of the list must give the list
+  // evicted, declined, missing or refused, shown by the page, another
+  // viewer's): its draft kept for this viewer — skipped only for a window
+  // that names another account, whose words are not this viewer's to keep —
+  // and the rows and the phone sheet told — a window gone from in front of the list must give the list
   // back its focusability.
   dropWindow(frame, { keepDraft = true } = {}) {
     if (keepDraft) this.keepDraft(frame)
@@ -647,7 +651,8 @@ export default class extends Controller {
 
     event.preventDefault()
     if (response.clientError) {
-      this.dropWindow(frame, { keepDraft: false })
+      // The old content (and what was typed in it) is still there: kept.
+      this.dropWindow(frame)
       this.save()
     } else {
       frame.replaceChildren(this.shell("failed", this.rowName(frame.dataset.conversationId)))
@@ -660,7 +665,7 @@ export default class extends Controller {
     if (!this.windowTargets.includes(event.target)) return
 
     event.preventDefault()
-    this.dropWindow(event.target, { keepDraft: false })
+    this.dropWindow(event.target)
     this.save()
   }
 
@@ -767,6 +772,7 @@ export default class extends Controller {
       windows: this.windowTargets.map((frame) => ({
         id: frame.dataset.conversationId,
         minimized: this.minimized(frame),
+        folded: frame.classList.contains(SQUEEZED),
         usedAt: Number(frame.dataset.usedAt || 0)
       })),
       closed: this.freshClosed()
@@ -774,16 +780,26 @@ export default class extends Controller {
   }
 
   // Once per page load (a Turbo visit keeps the live element and skips it):
-  // the windows in their saved order, as many as fit now, not engaged.
+  // the saved arrangement as it was — order, folded or expanded, the
+  // narrow headers included, up to the cap — then reflow() brings it within
+  // the width the viewport has NOW, through the same rules as a resize
+  // (close idle windows, fold the ones in use, …). None of them engaged.
   restore() {
     const saved = this.read(this.storageKey)
     if (!saved || this.windowTargets.length > 0) return
 
     const windows = Array.isArray(saved.windows) ? saved.windows.filter((entry) => entry?.id) : []
-    windows.slice(-this.fit).forEach((entry) => {
-      const frame = this.openWindow(String(entry.id), { minimized: Boolean(entry.minimized), active: false })
-      if (frame && entry.usedAt) frame.dataset.usedAt = String(entry.usedAt)
+    windows.slice(-this.windowsValue).forEach((entry) => {
+      const id = String(entry.id)
+      if (this.renderedOnPage(id) || this.windowFor(id)) return
+
+      const frame = this.buildWindow(id, { minimized: Boolean(entry.minimized), active: false, focus: false })
+      if (entry.folded) frame.classList.add(SQUEEZED)
+      if (entry.usedAt) frame.dataset.usedAt = String(entry.usedAt)
+      frame.setAttribute("data-restored", "") // placed by this arrangement, not by makeRoom
+      this.windowsTarget.append(frame)
     })
+    if (!this.compact) this.reflow()
     if (!this.compact && saved.panel) this.panelTarget.open = true
   }
 
@@ -941,9 +957,14 @@ export default class extends Controller {
   }
 
   // Being typed in, or holding words not yet sent.
+  // A window whose thread hasn't arrived yet (just restored) holds what its
+  // saved draft holds.
   inUse(frame) {
-    return frame.contains(document.activeElement) ||
-      Boolean(frame.querySelector(".chats-composer__input")?.value?.trim())
+    if (frame.contains(document.activeElement)) return true
+
+    const input = frame.querySelector(".chats-composer__input")
+    if (input) return Boolean(input.value.trim())
+    return Boolean(this.read(this.draftKey(frame.dataset.conversationId))?.text?.trim())
   }
 
   // Whether the page itself (not one of our windows) renders this thread.

@@ -13,12 +13,31 @@ require "selenium-webdriver"
 #   * a reopen that can't fit is declined (the window stays folded);
 #   * on a phone, a window that disappears gives the list back.
 #
-# Skipped where no Chrome can be started (Selenium Manager finds the driver).
+# Chrome is a prerequisite in CI (ENV["CI"]): a browser that can't start
+# FAILS these tests there, so a green build can't mean none of them ran.
+# On a machine without Chrome they skip. Either way the suite's output says
+# how many ran (see the after_run hook below).
 class DockLayoutTest < ActionDispatch::SystemTestCase
   driven_by :selenium, using: :headless_chrome, screen_size: [1800, 1000]
 
+  @ran = 0
+  @skipped = 0
+  class << self
+    attr_accessor :ran, :skipped
+  end
+
+  Minitest.after_run do
+    puts "\nDock layout tests (headless Chrome): #{DockLayoutTest.ran} ran, #{DockLayoutTest.skipped} skipped" \
+         "#{" — Chrome unavailable" if DockLayoutTest.skipped.positive?}"
+  end
+
   setup do
-    skip "Chrome is not available" unless self.class.chrome?
+    unless self.class.chrome?
+      flunk "Chrome could not start, and CI requires it for the dock's layout tests: #{self.class.chrome_error}" if ci?
+      self.class.skipped += 1
+      skip "Chrome is not available"
+    end
+    self.class.ran += 1
 
     @alice = create_user(name: "Alice")
     @people = %w[Bruno Carla Diego Elena].map do |name|
@@ -107,6 +126,46 @@ class DockLayoutTest < ActionDispatch::SystemTestCase
     assert_selector ".chats-window.chats-window--front", text: "Carla"
   end
 
+  test "a window refused on its next load keeps its draft, and the draft comes back when it reopens" do
+    sign_in_at(1280)
+    open_panel
+    open_row("Carla")
+    type_into("Carla", "words not sent yet")
+
+    # Its next load is refused (the conversation is gone for this viewer, a
+    # 404): the window closes…
+    page.execute_script("document.querySelector(#{window_selector("Carla").to_json}).src = '/messages/0?window=1'")
+    assert_no_selector window_selector("Carla")
+    assert_selector ".chats-dock", visible: :all # …without the page leaving for the error
+
+    carla = Chats::Conversation.direct_between(@alice, @people[1])
+    draft = page.evaluate_script("localStorage.getItem('chats:draft:#{Chats.messager_key(@alice)}:#{carla.id}')")
+    assert_equal "words not sent yet", JSON.parse(draft)["text"], "kept under this viewer's key"
+
+    open_row("Carla")
+    assert_equal "words not sent yet", find("#{window_selector("Carla")} .chats-composer__input").value,
+                 "and it comes back with the conversation"
+  end
+
+  test "a reload at 768px brings back the expanded and the folded window, both on screen" do
+    sign_in_at(768)
+    open_panel
+    open_row("Carla")
+    type_into("Carla", "draft one")
+    open_row("Bruno")
+    type_into("Bruno", "draft two")
+    assert_equal({ "Carla" => 104, "Bruno" => 336 }, widths)
+    sleep 0.7 # drafts are saved 500ms after typing stops
+
+    visit "/"
+
+    assert_selector "#{window_selector("Bruno")} .chats-composer__input"
+    assert_selector window_selector("Carla", folded: true)
+    assert_equal({ "Carla" => 104, "Bruno" => 336 }, widths, "the arrangement as it was")
+    assert_row_on_screen
+    assert_equal "draft two", find("#{window_selector("Bruno")} .chats-composer__input").value
+  end
+
   # Starting a browser once tells whether this machine can run these.
   def self.chrome?
     return @chrome if defined?(@chrome)
@@ -114,11 +173,21 @@ class DockLayoutTest < ActionDispatch::SystemTestCase
     options = Selenium::WebDriver::Chrome::Options.new(args: ["--headless=new"])
     Selenium::WebDriver.for(:chrome, options: options).quit
     @chrome = true
-  rescue StandardError
+  rescue StandardError => e
+    @chrome_error = "#{e.class}: #{e.message.lines.first}"
     @chrome = false
   end
 
+  class << self
+    attr_reader :chrome_error
+  end
+
   private
+
+  # GitHub Actions sets CI=true; an empty or "false" CI is a local run.
+  def ci?
+    %w[1 true yes].include?(ENV["CI"].to_s.downcase)
+  end
 
   def sign_in_at(width, height: 900, mobile: false, dock_windows: nil)
     resize(width, height: height, mobile: mobile)
