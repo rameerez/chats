@@ -151,9 +151,11 @@ to configure, no polling.**
   for good: a dock window Turbo carries across a visit is off the page
   until that render ends, which a host's asynchronous `turbo:before-render`
   can make last many tasks, and keeps its answer, decided only once every
-  `turbo:before-render` has had its `turbo:render`; a render that runs
-  past 10 seconds stops holding things up, and a window it then brings
-  back catches up anew), and only the
+  `turbo:before-render` has had its `turbo:render`, paired first in, first
+  out; a render that runs past 10 seconds stops holding things up but stays
+  paired until its own end, a window it then brings back catches up anew,
+  once, and a render that never ends is forgotten after a minute along
+  with what it made give up), and only the
   answer's own streams are guarded (`data-chats-answer`), never a host's
   stream rendered at the same moment. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
