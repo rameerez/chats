@@ -1,0 +1,6 @@
+<%# Every unread badge on the page (ConversationsController#badge), as the
+    badge streams would have sent them: the nav badge
+    (Chats::Broadcasts.update_badge_of) and the dock's (chats/dock/_update).
+    A page without one of them simply has nothing to replace. %>
+<%= turbo_stream.replace "chats_unread_badge", partial: "chats/shared/unread_badge", locals: { count: count } %>
+<%= turbo_stream.replace_all ".chats-dock [data-chats-unread-badge]", partial: "chats/dock/badge", locals: { count: count } %>

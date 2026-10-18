@@ -16,3 +16,9 @@ pin "controllers/chats/composer_controller", to: "chats/composer_controller.js"
 pin "controllers/chats/debounced_submit_controller", to: "chats/debounced_submit_controller.js"
 pin "controllers/chats/refresh_inbox_controller", to: "chats/refresh_inbox_controller.js"
 pin "controllers/chats/dock_controller", to: "chats/dock_controller.js"
+pin "controllers/chats/unread_badge_controller", to: "chats/unread_badge_controller.js"
+
+# Not a controller: what the inbox, thread, badge and dock controllers share
+# to catch up on broadcasts they missed. Outside controllers/ so the eager
+# loader never tries to register it.
+pin "chats/recovery", to: "chats/recovery.js"

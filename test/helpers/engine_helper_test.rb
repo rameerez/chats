@@ -223,6 +223,27 @@ class EngineHelperTest < ActionView::TestCase
     assert_includes html, ">1<"
   end
 
+  test "the viewer's own badge catches up on what its stream missed, with no box of its own" do
+    self.stubbed_viewer = @alice
+
+    html = chats_unread_badge
+    wrapper = Nokogiri::HTML5.fragment(html).at_css("span.chats-unread-badge-live[data-controller='chats--unread-badge']")
+    assert wrapper, "wrapped in the catch-up controller"
+    assert_match %r{/badge\z}, wrapper["data-chats--unread-badge-url-value"]
+    assert wrapper.at_css("turbo-cable-stream-source"), "the stream it watches is inside it"
+    assert wrapper.at_css("#chats_unread_badge")
+    assert_includes File.read(Chats::Engine.root.join("app/assets/stylesheets/chats.css")),
+                    ".chats-unread-badge-live { display: contents; }"
+  end
+
+  test "someone else's badge is live but never catches up: GET /badge only knows the viewer's count" do
+    self.stubbed_viewer = @alice
+
+    html = chats_unread_badge(@bob)
+    assert_includes html, "turbo-cable-stream-source"
+    assert_not_includes html, "chats--unread-badge"
+  end
+
   # --- 0.2.0 helpers ---------------------------------------------------------
 
   test "chats_slot renders an existing partial and nothing at all for a missing one" do

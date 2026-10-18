@@ -7,6 +7,9 @@ module Chats
   class ConversationsController < ApplicationController
     # The most rows the dock's recent list shows, whatever `recent:` asks.
     DOCK_RECENT_LIMIT = 50
+    # How far before its list of what exists a catch-up stops naming
+    # deletions (see #present_messages).
+    PRESENT_MARGIN = 10.seconds
 
     before_action :set_conversation, only: %i[show read typing leave mute unmute refresh]
     helper_method :chats_counterpart
@@ -44,6 +47,15 @@ module Chats
       render :dock, layout: false
     end
 
+    # The viewer's unread badges as a Turbo Stream: the nav badge
+    # (`chats_unread_badge`) and every badge in the dock, replaced with the
+    # same count the badge streams send. What a page asks for when it may
+    # have missed them (chats/recovery: a reconnect, a return to a hidden
+    # page, a restored page). Reads nothing, writes nothing.
+    def badge
+      render :badge, formats: :turbo_stream, locals: { count: chats_current_messager.unread_chats_count }
+    end
+
     # The thread. Renders the LATEST page of messages; older pages stream in
     # through a lazy Turbo Frame chain (keyset-paginated — see
     # Message.before_message and _messages_page.html.erb).
@@ -55,15 +67,9 @@ module Chats
       @participant = @conversation.participant_for(chats_current_messager)
 
       anchor = params[:before].present? ? @conversation.messages.find_by(id: params[:before]) : nil
-      scope = @conversation.messages.includes(:sender, :reactions)
-      scope = scope.with_attached_files if scope.respond_to?(:with_attached_files)
+      scope = rendered_messages
       scope = scope.before_message(anchor) if anchor
-
-      # Fetch newest-first + reverse so "the last N messages" render in
-      # chronological order. One extra record peeks whether older pages exist.
-      page = scope.recent_first.limit(Chats.config.messages_per_page + 1).to_a
-      @more_messages = page.size > Chats.config.messages_per_page
-      @messages = page.first(Chats.config.messages_per_page).reverse
+      @messages, @more_messages = latest_page_of(scope)
 
       if anchor
         # Older-page request from the pagination frame: render just the page.
@@ -71,14 +77,8 @@ module Chats
                locals: { conversation: @conversation, messages: @messages, more: @more_messages }
       else
         # The «new messages» divider: computed BEFORE read! advances the
-        # horizon (after it, nothing is unread anymore). Anchored to the
-        # oldest unread bubble on the rendered page; when the backlog runs
-        # deeper than one page it pins to the top of the page instead —
-        # the scroll-up frame chain holds the rest.
-        if @participant&.unread?
-          @first_unread_id = @participant.unread_messages.where(id: @messages.map(&:id)).oldest_first.pick(:id) ||
-                             @messages.first&.id
-        end
+        # horizon (after it, nothing is unread anymore).
+        @first_unread_id = first_unread_id(@participant, @messages)
 
         if dock_window?
           # A window does NOT read on render: it may be restored minimized
@@ -94,43 +94,48 @@ module Chats
       end
     end
 
-    # Stale-thread catch-up: appends messages created — and replaces ones
-    # edited/tombstoned — since the newest `updated_at` the client has
-    # rendered (`?since=` in ms). The thread controller calls this when the
-    # tab wakes from a long sleep or its Turbo Stream subscription
-    # reconnects, i.e. whenever broadcasts may have been missed. Mobile
-    # WebViews suspend WebSockets aggressively, so without this a
-    # backgrounded chat silently loses messages until a manual reload.
-    # Pattern from Basecamp's Campfire (Rooms::RefreshesController):
-    # https://github.com/basecamp/once-campfire
+    # Stale-thread catch-up (`?since=` ms, the newest `updated_at` the client
+    # has rendered; `from=` ms, its oldest bubble's `created_at`). The thread
+    # controller calls this whenever chats/recovery says the stream may have
+    # missed something: a reconnect, a return after 10 seconds hidden, the
+    # network back, a restored page. Mobile WebViews suspend WebSockets
+    # aggressively, so without this a backgrounded chat silently loses
+    # messages until a manual reload. Pattern from Basecamp's Campfire
+    # (Rooms::RefreshesController): https://github.com/basecamp/once-campfire
+    #
+    # The answer touches the history only, never the composer or its draft:
+    # messages created since are appended, ones changed since (edits,
+    # tombstones, reactions) replaced, the read state replaced, and — under
+    # `deletion: :hard` — the bubbles that no longer exist removed. Reads
+    # nothing: catching up is not reading (the controller posts #read once
+    # the viewer can see the new messages).
+    #
+    # `render turbo_stream:`, NOT `render html: … content_type:` — the
+    # latter forces text/html and silently ignores the content type, so the
+    # body says <turbo-stream> while the response says it isn't one.
     def refresh
       head :no_content and return if params[:since].blank?
 
-      since = Time.zone.at(0, params[:since].to_i, :millisecond)
-      scope = @conversation.messages.includes(:sender, :reactions)
-      scope = scope.with_attached_files if scope.respond_to?(:with_attached_files)
+      since = time_from_ms(params[:since])
+      scope = rendered_messages
 
       @new_messages = scope.created_since(since).oldest_first.limit(Chats.config.messages_per_page + 1).to_a
 
-      # A backlog deeper than one page would mean splicing an arbitrary
-      # amount of history through surgical appends; a Turbo 8 page refresh
-      # (morph + scroll preservation) re-renders the latest page + frame
-      # chain correctly instead.
-      #
-      # `render turbo_stream:`, NOT `render html: … content_type:` — the
-      # latter forces text/html and silently ignores the content type, so the
-      # body says <turbo-stream> while the response says it isn't one.
-      #
-      # `request_id: nil` on purpose: Turbo skips a refresh tagged with a
-      # request id it recognizes as its own, and this response is the answer
-      # to the client's OWN catch-up fetch — the one client that must not
-      # skip it.
+      # More than a page behind: splicing an arbitrary backlog through
+      # surgical appends would leave a hole in the scroll-up chain. Re-render
+      # the history at the latest page instead, exactly as opening the thread
+      # does, frame chain included. A thread view ejected before the history
+      # had its id (no `history=1`) gets the page refresh it always got;
+      # `request_id: nil`, because Turbo skips a refresh tagged with a request
+      # of its own, and this one answers the client's own catch-up.
       if @new_messages.size > Chats.config.messages_per_page
-        render turbo_stream: turbo_stream.refresh(request_id: nil)
-        return
+        return render_latest_history if params[:history].present?
+
+        return render turbo_stream: turbo_stream.refresh(request_id: nil)
       end
 
       @updated_messages = scope.updated_since(since)
+      @present = present_messages if Chats.config.deletion == :hard && params[:from].present?
       render "chats/conversations/refresh", formats: :turbo_stream
     end
 
@@ -211,6 +216,61 @@ module Chats
 
     def set_conversation
       @conversation = find_conversation
+    end
+
+    def time_from_ms(value)
+      Time.zone.at(0, value.to_i, :millisecond)
+    end
+
+    # The conversation's messages with everything a bubble renders.
+    def rendered_messages
+      scope = @conversation.messages.includes(:sender, :reactions)
+      scope.respond_to?(:with_attached_files) ? scope.with_attached_files : scope
+    end
+
+    # The newest page of +scope+, oldest first, and whether older pages
+    # exist. Fetched newest-first and reversed; one extra record peeks.
+    def latest_page_of(scope)
+      page = scope.recent_first.limit(Chats.config.messages_per_page + 1).to_a
+      [page.first(Chats.config.messages_per_page).reverse, page.size > Chats.config.messages_per_page]
+    end
+
+    # Where the «new messages» line goes: the oldest unread bubble on the
+    # page; when the backlog runs deeper than one page, the top of the page
+    # (the scroll-up frame chain holds the rest). Nil when nothing is unread.
+    def first_unread_id(participant, messages)
+      return unless participant&.unread?
+
+      participant.unread_messages.where(id: messages.map(&:id)).oldest_first.pick(:id) || messages.first&.id
+    end
+
+    # The thread's history at its latest page, for a catch-up more than a
+    # page behind: the same messages, frame chain and «new messages» line
+    # the thread opens with (chats/conversations/_history).
+    def render_latest_history
+      messages, more = latest_page_of(rendered_messages)
+      participant = @conversation.participant_for(chats_current_messager)
+
+      render turbo_stream: turbo_stream.update(
+        helpers.dom_id(@conversation, :history),
+        partial: "chats/conversations/history",
+        locals: { conversation: @conversation, messages: messages, more: more,
+                  first_unread_id: first_unread_id(participant, messages),
+                  counterpart: chats_counterpart, window: false }
+      )
+    end
+
+    # Under `deletion: :hard` a deleted message leaves nothing to replace:
+    # the catch-up names every message from the client's oldest bubble on
+    # that still exists, and the client removes the bubbles not named.
+    # `until` sits PRESENT_MARGIN before the list is read: a message whose
+    # insert had not committed yet is missing from the list but may already
+    # have reached the client live — it must not be taken for a deleted one.
+    def present_messages
+      until_ms = ((Time.current - PRESENT_MARGIN).to_f * 1000).floor
+      ids = @conversation.messages.where(created_at: time_from_ms(params[:from])..).pluck(:id)
+
+      { ids: ids.map { |id| helpers.dom_id(Chats::Message.new(id: id)) }, until: until_ms }
     end
 
     # A dock window asks for its thread from inside its own turbo frame. A

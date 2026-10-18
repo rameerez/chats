@@ -67,52 +67,13 @@
 
   <%= yield %>
 
-  <%# tabindex: the arrow keys scroll the history (WCAG 2.1.1). %>
-  <div class="chats-thread__scroll" data-chats--thread-target="scroller" tabindex="0">
-    <% if window && messages.empty? %>
-      <%# A window opened from a Message button, before anybody wrote: who
-          you're about to talk to. Gone with the first bubble (chats.css). %>
-      <div class="chats-window__hello">
-        <% if counterpart %>
-          <%= chats_messager_avatar(counterpart) %>
-          <strong><%= Chats.display_name_for(counterpart) %></strong>
-        <% end %>
-        <%= t("chats.dock.hello", name: conversation.title_for(viewer)) %>
-      </div>
-    <% end %>
-    <% if more && messages.any? %>
-      <%# Lazy frame chain for infinite scroll-up: when this frame becomes
-          visible, Turbo fetches the previous keyset page (?before=oldest id),
-          whose response contains a frame with this SAME id — older messages
-          plus, recursively, the next frame. See ConversationsController#show. %>
-      <%= turbo_frame_tag "chats_page_#{messages.first.id}",
-            src: conversation_path(conversation, before: messages.first.id),
-            loading: :lazy do %>
-        <div class="chats-loader"><%= t("chats.thread.loading") %></div>
-      <% end %>
-    <% end %>
-
-    <div id="<%= dom_id(conversation, :messages) %>" class="chats-thread__messages">
-      <%# Explicit loop (not a collection render) so the «new messages»
-          divider can sit BEFORE the first unread bubble (WhatsApp's "the
-          catch-up starts here" line). Server-rendered on the initial page
-          only; it scrolls away naturally as the thread lives on. %>
-      <% messages.each do |message| %>
-        <% if message.id == first_unread_id %>
-          <div class="chats-thread__unread-line" role="separator">
-            <span><%= t("chats.thread.new_messages") %></span>
-          </div>
-        <% end %>
-        <%= render "chats/messages/message", message: message %>
-      <% end %>
-    </div>
-
-    <%= render "chats/conversations/read_state", conversation: conversation %>
-
-    <div id="<%= dom_id(conversation, :typing) %>"
-         class="chats-typing"
-         data-chats--thread-target="typing"
-         hidden></div>
+  <%# tabindex: the arrow keys scroll the history (WCAG 2.1.1). The id is
+      what the stale-thread catch-up re-renders when the thread fell more
+      than a page behind (ConversationsController#refresh). %>
+  <div id="<%= dom_id(conversation, :history) %>" class="chats-thread__scroll" data-chats--thread-target="scroller" tabindex="0">
+    <%= render "chats/conversations/history", conversation: conversation, messages: messages, more: more,
+                                              first_unread_id: first_unread_id, counterpart: counterpart,
+                                              window: window %>
   </div>
 
   <%# Long-press popup (Telegram-style): the backdrop blurs the thread, the

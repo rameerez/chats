@@ -57,13 +57,23 @@ module Chats
     # tab docks). Subscribes to the messager's badge stream so it updates in
     # real time without refreshing the page it sits on (see
     # Chats::Broadcasts for why badges get their own stream).
+    #
+    # The viewer's own badge also catches up on updates its stream missed
+    # (the chats--unread-badge controller asks GET /badge on a reconnect, on
+    # a return to a hidden page, on a restored page). Its wrapper is
+    # `display: contents` in chats.css, so it changes no layout.
     def chats_unread_badge(messager = chats_viewer)
       return if messager.nil?
 
-      safe_join([
-                  turbo_stream_from(messager, :chats_badge),
-                  render(partial: "chats/shared/unread_badge", locals: { count: messager.unread_chats_count })
-                ])
+      badge = safe_join([
+                          turbo_stream_from(messager, :chats_badge),
+                          render(partial: "chats/shared/unread_badge", locals: { count: messager.unread_chats_count })
+                        ])
+      return badge unless messager == chats_viewer
+
+      tag.span(badge, class: "chats-unread-badge-live",
+                      data: { controller: "chats--unread-badge",
+                              "chats--unread-badge-url-value": chats_routes.badge_conversations_path })
     end
 
     # The messaging dock, LinkedIn / Steam style: a bar in the bottom-right

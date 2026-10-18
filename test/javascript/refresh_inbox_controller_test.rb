@@ -1,145 +1,116 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "open3"
+require_relative "support/node_script"
 
+# chats--refresh-inbox, in node against a fake page (support/browser.js):
+# what it runs to catch up, how it reruns a refresh Turbo dropped mid-visit,
+# and that a refresh never rewrites the field being typed in. When it
+# catches up is chats/recovery's (recovery_test.rb).
 class RefreshInboxControllerTest < ActiveSupport::TestCase
-  test "refreshes after a stream reconnect or long hidden interval" do
-    skip "node is not available" unless node_available?
+  include NodeScript
 
-    stdout, stderr, status = Open3.capture3(
-      "node",
-      "-",
-      Chats::Engine.root.join("app/javascript/chats/refresh_inbox_controller.js").to_s,
-      stdin_data: <<~"JAVASCRIPT"
-        const fs = require("fs")
-        const assert = require("assert")
-
-        let sourceText = fs.readFileSync(process.argv[2], "utf8")
-        sourceText = sourceText
-          .replace('import { Controller } from "@hotwired/stimulus"', 'class Controller { constructor() { this.element = null } }')
-          .replace("export default class extends Controller", "return class RefreshInboxController extends Controller")
-
-        let observer
-        class FakeMutationObserver {
-          constructor(callback) {
-            this.callback = callback
-            observer = this
-            this.disconnected = false
-          }
-
-          observe(source, options) {
-            this.source = source
-            this.options = options
-          }
-
-          disconnect() {
-            this.disconnected = true
-          }
-
-          trigger() {
-            this.callback()
-          }
-        }
-
-        function streamSourceElement() {
-          const attributes = new Set()
-
-          return {
-            hasAttribute(name) {
-              return attributes.has(name)
-            },
-
-            setAttribute(name) {
-              attributes.add(name)
-            },
-
-            removeAttribute(name) {
-              attributes.delete(name)
-            }
-          }
-        }
-
-        let visibilityHandler
-        let now = 1_000_000
-        let refreshCalls = []
-
-        global.MutationObserver = FakeMutationObserver
-        Date.now = () => now
-        global.document = {
-          baseURI: "https://example.test/messages",
-          visibilityState: "visible",
-          activeElement: null,
-          addEventListener(name, handler) {
-            if (name === "visibilitychange") visibilityHandler = handler
-          },
-          removeEventListener(name, handler) {
-            if (name === "visibilitychange" && visibilityHandler === handler) visibilityHandler = null
-          }
-        }
-        global.window = {
-          Turbo: {
-            session: {
-              refresh(url) {
-                refreshCalls.push(url)
-              }
-            }
-          }
-        }
-
-        const RefreshInboxController = new Function(sourceText)()
-        const source = streamSourceElement()
-        const controller = new RefreshInboxController()
-        controller.element = {
-          querySelector(selector) {
-            return selector === "turbo-cable-stream-source" ? source : null
-          }
-        }
-
-        controller.connect()
-
-        assert(observer, "expected MutationObserver to be installed")
-        assert.deepStrictEqual(observer.options, { attributes: true, attributeFilter: ["connected"] })
-
-        source.removeAttribute("connected")
-        observer.trigger()
-        source.setAttribute("connected", "")
-        observer.trigger()
-        assert.deepStrictEqual(refreshCalls, ["https://example.test/messages"])
-
-        refreshCalls = []
-        document.visibilityState = "hidden"
-        visibilityHandler()
-        now += 61_000
-        document.visibilityState = "visible"
-        visibilityHandler()
-        assert.deepStrictEqual(refreshCalls, ["https://example.test/messages"])
-
-        refreshCalls = []
-        document.activeElement = {
-          matches(selector) {
-            return selector === "input, textarea, select"
-          }
-        }
-        source.removeAttribute("connected")
-        observer.trigger()
-        source.setAttribute("connected", "")
-        observer.trigger()
-        assert.deepStrictEqual(refreshCalls, [])
-
-        controller.disconnect()
-
-        assert.strictEqual(observer.disconnected, true)
-        assert.strictEqual(visibilityHandler, null)
-      JAVASCRIPT
-    )
-
-    assert status.success?, "node smoke test failed\nSTDOUT:\n#{stdout}\nSTDERR:\n#{stderr}"
+  def run_inbox(script)
+    run_node(<<~JAVASCRIPT)
+      const page = browser.install()
+      const RefreshInbox = loader.loadController("refresh_inbox_controller.js")
+      const source = page.streamSource()
+      const controller = new RefreshInbox()
+      controller.element = page.element({ sources: [source] })
+      controller.connect()
+      source.confirm()
+      const refreshStream = () => page.documentEvents.dispatch("turbo:before-stream-render", { target: { getAttribute: (name) => (name === "action" ? "refresh" : null) } })
+      #{script}
+    JAVASCRIPT
   end
 
-  private
+  test "catching up is a morphing, scroll-keeping page refresh of the page itself" do
+    run_inbox(<<~JAVASCRIPT)
+      source.drop()
+      source.confirm()
+      page.advance(250)
+      assert.deepStrictEqual(page.refreshes, [{ url: "https://example.test/messages", options: { method: "morph", scroll: "preserve" } }])
+    JAVASCRIPT
+  end
 
-  def node_available?
-    system("node", "--version", out: File::NULL, err: File::NULL)
+  test "a refresh that arrives mid-visit, which Turbo would drop, runs once that visit completes" do
+    run_inbox(<<~JAVASCRIPT)
+      page.documentEvents.dispatch("turbo:visit")
+      page.htmlAttributes.add("aria-busy")      // Turbo marks <html> busy for the visit
+      refreshStream()
+      refreshStream()
+      page.htmlAttributes.delete("aria-busy")
+      page.documentEvents.dispatch("turbo:load")
+      assert.strictEqual(page.refreshes.length, 1, "two refreshes waiting are one")
+      assert.deepStrictEqual(page.refreshes[0].options, { method: "morph", scroll: "preserve" })
+
+      page.documentEvents.dispatch("turbo:load")
+      assert.strictEqual(page.refreshes.length, 1, "and only once")
+    JAVASCRIPT
+  end
+
+  test "a refresh with no visit in flight is Turbo's own to run" do
+    run_inbox(<<~JAVASCRIPT)
+      refreshStream()
+      page.documentEvents.dispatch("turbo:visit")   // Turbo's refresh visit
+      page.documentEvents.dispatch("turbo:load")
+      assert.strictEqual(page.refreshes.length, 0)
+    JAVASCRIPT
+  end
+
+  test "a visit that starts after the refresh arrived already fetches what it was about" do
+    run_inbox(<<~JAVASCRIPT)
+      page.htmlAttributes.add("aria-busy")
+      refreshStream()
+      page.documentEvents.dispatch("turbo:visit")   // a new visit: its request comes after the refresh
+      page.documentEvents.dispatch("turbo:load")
+      assert.strictEqual(page.refreshes.length, 0)
+    JAVASCRIPT
+  end
+
+  test "an inbox the visit took away refreshes nothing" do
+    run_inbox(<<~JAVASCRIPT)
+      page.htmlAttributes.add("aria-busy")
+      refreshStream()
+      controller.element.isConnected = false
+      page.documentEvents.dispatch("turbo:load")
+      assert.strictEqual(page.refreshes.length, 0)
+    JAVASCRIPT
+  end
+
+  test "other streams arriving mid-visit are not refreshes" do
+    run_inbox(<<~JAVASCRIPT)
+      page.htmlAttributes.add("aria-busy")
+      page.documentEvents.dispatch("turbo:before-stream-render", { target: { getAttribute: () => "replace" } })
+      page.documentEvents.dispatch("turbo:load")
+      assert.strictEqual(page.refreshes.length, 0)
+    JAVASCRIPT
+  end
+
+  test "a refresh never rewrites the value of the field being typed in, and nothing else is held back" do
+    run_inbox(<<~JAVASCRIPT)
+      const search = { localName: "input" }
+      document.activeElement = search
+      const morph = (target, attributeName) =>
+        page.documentEvents.dispatch("turbo:before-morph-attribute", { target, detail: { attributeName, mutationType: "update" } })
+
+      assert.strictEqual(morph(search, "value").defaultPrevented, true)
+      assert.strictEqual(morph(search, "placeholder").defaultPrevented, false)
+      assert.strictEqual(morph({ localName: "input" }, "value").defaultPrevented, false, "a field nobody is typing in follows the page")
+    JAVASCRIPT
+  end
+
+  test "disconnecting stops catching up and removes every listener" do
+    run_inbox(<<~JAVASCRIPT)
+      controller.disconnect()
+      for (const name of ["turbo:visit", "turbo:load", "turbo:before-stream-render", "visibilitychange"]) {
+        assert.strictEqual(page.documentEvents.count(name), 0, name)
+      }
+      assert.strictEqual(page.documentEvents.count("turbo:before-morph-attribute"), 1, "only chats/recovery's page-wide stream guard stays")
+
+      source.confirm()
+      page.advance(10_000)
+      assert.strictEqual(page.refreshes.length, 0)
+    JAVASCRIPT
   end
 end

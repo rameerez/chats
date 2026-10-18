@@ -32,6 +32,7 @@
         "chats--dock-everywhere-value": everywhere,
         "chats--dock-window-url-value": chats_routes.conversation_path("__id__", window: 1),
         "chats--dock-record-key-value": Chats::Conversation.model_name.param_key,
+        "chats--dock-badge-url-value": chats_routes.badge_conversations_path,
         "chats--dock-announcement-value": t("chats.dock.new_message_from", name: "%{name}"),
         # Every plural form the locale has (CLDR: zero, one, two, few, many,
         # other), uninterpolated: the controller picks one with
@@ -108,10 +109,14 @@
       <% end %>
 
       <%# Lazy: nothing is fetched until the panel first opens; until then,
-          four still rows. The controller reloads it when the signal says. %>
+          four still rows. The controller reloads it when the signal says,
+          and when its stream may have missed a signal. `refresh: :morph`:
+          a reload morphs the rows in place, so the list keeps its scroll
+          position, and it reloads its own src, so a search stays. %>
       <%= turbo_frame_tag "chats_dock_list",
             src: chats_routes.dock_conversations_path(recent: recent),
             loading: :lazy,
+            refresh: :morph,
             target: "_top",
             class: "chats-dock__results",
             # A click here opens a window, never the page: hovering a row

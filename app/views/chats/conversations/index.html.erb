@@ -10,18 +10,22 @@
     The chats--refresh-inbox wrapper heals a MISSED refresh broadcast: Action
     Cable has no replay, so a broadcast sent while the socket was down (tab
     backgrounded, network blip) would leave the inbox stale until the user
-    navigated. The controller re-runs the same page refresh on cable reconnect
-    and on return-to-visible. It needs to wrap the <turbo-cable-stream-source>
-    that `turbo_stream_from` renders so it can observe its `connected`
-    attribute as the heartbeat. %>
+    navigated. The controller re-runs the same page refresh when the stream
+    reconnects, when the page comes back after 10 seconds hidden, when the
+    network comes back and when the browser restores the page (see
+    chats/recovery.js), and reruns a refresh Turbo dropped because it
+    arrived mid-visit. It wraps the <turbo-cable-stream-source> that
+    `turbo_stream_from` renders: the stream's own confirmations are how it
+    sees a reconnect. One per page: don't wrap it in a reconciler of your
+    own as well. %>
 
 <%# The OTHER inbox-staleness case, distinct from a missed broadcast: a Turbo
     RESTORATION visit (browser back / Hotwire Native stack pop) serves the
     inbox's cached snapshot with no GET. Open a chat from a profile, send a
     message, tap back — the snapshot cached before the chat existed comes back
     and the new conversation is missing until you navigate away and return.
-    The reconciler above can't help (it only fires on reconnect / visibility,
-    not on a restore visit). `turbo-cache-control: no-cache` makes the inbox
+    The wrapper above can't help (it fires on reconnect and visibility, not
+    on a restore visit). `turbo-cache-control: no-cache` makes the inbox
     uncacheable, so a restore visit re-fetches from the network and is always
     fresh — on the web AND in Hotwire Native, whose back-pop issues a Turbo
     `.restore` visit that honors this. Requires the host layout to
@@ -49,7 +53,11 @@
   <% end %>
 
   <% if Chats.config.search && !@inbox.filtered? %>
-    <%= form_with url: conversations_path,
+    <%# The inbox's own path exactly as it was opened (/messages or
+        /messages/: the engine answers both), so the URL a search puts in the
+        address bar is still this page to Turbo, and the next refresh morphs
+        it instead of re-rendering it from scratch. %>
+    <%= form_with url: request.original_fullpath.split("?").first,
           method: :get,
           class: "chats-search",
           role: "search",
@@ -57,7 +65,11 @@
             controller: "chats--debounced-submit",
             action: "input->chats--debounced-submit#queue search->chats--debounced-submit#queue",
             "chats--debounced-submit-delay-value": 250,
-            turbo_frame: "chats_inbox_results"
+            turbo_frame: "chats_inbox_results",
+            # The query goes in the URL (replaced, not pushed): a page
+            # refresh re-requests the URL, so a live update or a catch-up
+            # keeps the results and the field as they are.
+            turbo_action: "replace"
           } do %>
       <%= search_field_tag :q, params[:q],
             placeholder: t("chats.inbox.search_placeholder"),

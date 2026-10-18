@@ -1,15 +1,18 @@
 import { Controller } from "@hotwired/stimulus"
+import { recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
 
-// Stale-thread refresh + DOM budget (both patterns from Basecamp's
+// Stale-thread catch-up + DOM budget (both patterns from Basecamp's
 // Campfire, https://github.com/basecamp/once-campfire — its
 // refresh_room_controller and message_paginator):
-//   * refresh when the tab was hidden long enough that the WebSocket was
-//     probably reaped (mobile WebViews suspend sockets aggressively), and
-//     whenever the Turbo Stream subscription reconnects after a drop;
+//   * catch up on what the stream missed whenever chats/recovery says it
+//     may have (a reconnect, a return after 10 seconds hidden, the network
+//     back, a page restored from the back/forward cache or a Turbo
+//     snapshot): GET #refresh?since= appends, replaces and removes exactly
+//     what changed, so the composer, its draft and the scroll position are
+//     never touched;
 //   * cap rendered bubbles so day-long sessions in a busy group don't
 //     grow the DOM unboundedly (trimmed history stays reachable — the
 //     pagination anchor is rebuilt to re-fetch it on scroll-up).
-const REFRESH_AFTER_HIDDEN_MS = 60_000
 // Long-press tuning: Telegram-ish. The move tolerance keeps a scroll
 // gesture from ever reading as a press.
 const LONG_PRESS_MS = 450
@@ -88,6 +91,7 @@ export default class extends Controller {
 
   connect() {
     this.registerTypingStreamAction()
+    this.registerPruneStreamAction()
     // The dock's engagement gate: the window frame around a dock thread.
     // No gate (the thread page) means always engaged.
     this.gate = this.element.closest("[data-chats-active]")
@@ -124,7 +128,8 @@ export default class extends Controller {
       event.stopPropagation()
     }
     this.element.addEventListener("click", this.suppressClickCapture, true)
-    this.watchStreamSource()
+    this.element.addEventListener("chats:prune", this.prune)
+    this.stopRecovery = recoverMissedBroadcasts(this.element, () => this.refreshThread())
     this.watchScreenPresence()
   }
 
@@ -134,7 +139,8 @@ export default class extends Controller {
     }
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
-    this.sourceObserver?.disconnect()
+    this.stopRecovery?.()
+    this.element.removeEventListener("chats:prune", this.prune)
     this.presenceObserver?.disconnect()
     this.gate?.removeEventListener("chats:activated", this.flushPendingRead)
     this.element.removeEventListener("click", this.suppressClickCapture, true)
@@ -375,20 +381,12 @@ export default class extends Controller {
     this.readTimer = setTimeout(() => this.postRead(), 700)
   }
 
+  // A read that waited for the tab to be seen happens when it is. (What the
+  // tab missed while hidden is chats/recovery's to fetch.)
   visibilityChanged = () => {
-    if (document.visibilityState === "visible") {
-      // Asleep long enough for the socket to have been reaped? Catch up on
-      // anything the missed broadcasts carried.
-      if (this.hiddenAt && Date.now() - this.hiddenAt > REFRESH_AFTER_HIDDEN_MS) {
-        this.refreshThread()
-      }
-      this.hiddenAt = null
-      if (this.pendingRead) {
-        this.pendingRead = false
-        this.queueRead()
-      }
-    } else {
-      this.hiddenAt = Date.now()
+    if (document.visibilityState === "visible" && this.pendingRead) {
+      this.pendingRead = false
+      this.queueRead()
     }
   }
 
@@ -519,37 +517,55 @@ export default class extends Controller {
     if (ms > (this.lastLoadedAt || 0)) this.lastLoadedAt = ms
   }
 
-  // Reconnect detection without a dedicated cable channel: turbo-rails
-  // toggles a `connected` attribute on <turbo-cable-stream-source> as the
-  // Action Cable subscription confirms/drops, so observing that attribute
-  // IS the heartbeat. (Campfire ran a HeartbeatChannel for this; the
-  // attribute observer gets the same signal for free.)
-  watchStreamSource() {
-    const source = this.element.querySelector("turbo-cable-stream-source")
-    if (!source || typeof MutationObserver === "undefined") return
-
-    this.sourceObserver = new MutationObserver(() => {
-      const connected = source.hasAttribute("connected")
-      if (connected && this.streamDropped) {
-        this.streamDropped = false
-        this.refreshThread()
-      } else if (!connected) {
-        this.streamDropped = true
-      }
-    })
-    this.sourceObserver.observe(source, { attributes: true, attributeFilter: ["connected"] })
-  }
-
+  // What the stream missed: messages created since the cursor (appended),
+  // ones changed since (replaced: edits, tombstones, reactions), the read
+  // state, and — when messages are hard-deleted — which rendered bubbles
+  // still exist. `from` is the oldest rendered bubble, so the server can
+  // name every bubble that should be on screen. A thread more than a page
+  // behind gets its history re-rendered at the latest page instead
+  // (`history`: this thread's scroller has the id that takes it; one
+  // ejected before it did gets a page refresh); it then opens at the
+  // bottom, as a fresh thread does.
   refreshThread() {
     if (!this.refreshUrlValue || !this.lastLoadedAt) return
 
-    const url = `${this.refreshUrlValue}?since=${this.lastLoadedAt}`
-    fetch(url, { headers: { Accept: "text/vnd.turbo-stream.html" } })
-      .then((response) => (response.ok ? response.text() : ""))
-      .then((html) => {
-        if (html) window.Turbo?.renderStreamMessage(html)
+    const params = new URLSearchParams({ since: this.lastLoadedAt })
+    const oldest = this.messageTargets[0]
+    if (oldest?.dataset.createdAtMs) params.set("from", oldest.dataset.createdAtMs)
+    if (this.hasScrollerTarget && this.scrollerTarget.id) params.set("history", "1")
+    const last = this.messageTargets[this.messageTargets.length - 1]
+
+    return renderStreamFrom(`${this.refreshUrlValue}?${params}`).then(() => {
+      if (last && !last.isConnected) this.scrollToBottom()
+    })
+  }
+
+  // A hard delete the stream missed: the bubble is gone from the server, so
+  // it goes from here. Only bubbles created before `until`, which the server
+  // sets a little before it listed what exists: a message whose insert had
+  // not committed yet when it looked, and which then arrived live, is new,
+  // not deleted.
+  prune = (event) => {
+    const present = new Set(event.detail.ids)
+    this.messageTargets.forEach((message) => {
+      if (Number(message.dataset.createdAtMs || Infinity) > event.detail.until) return
+      if (!present.has(message.id)) message.remove()
+    })
+  }
+
+  registerPruneStreamAction() {
+    const Turbo = window.Turbo
+    if (!Turbo || Turbo.StreamActions.chats_prune) return
+
+    Turbo.StreamActions.chats_prune = function () {
+      const detail = {
+        ids: (this.getAttribute("data-ids") || "").split(" ").filter(Boolean),
+        until: Number(this.getAttribute("data-until") || 0)
+      }
+      this.targetElements.forEach((target) => {
+        target.dispatchEvent(new CustomEvent("chats:prune", { bubbles: true, detail }))
       })
-      .catch(() => {})
+    }
   }
 
   // --- DOM budget -----------------------------------------------------------------
