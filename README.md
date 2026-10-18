@@ -11,7 +11,7 @@ It's **Hotwire-native**: messages stream live over Turbo Streams + Action Cable,
 
 Every consumer app eventually needs DMs, and everyone rebuilds the same conversation/participant/message schema, the same Action Cable plumbing, and the same "report this message, block this user" story. `chats` is that whole rebuild, done once, done right.
 
-**Contents:** [Example](#-example) · [Quickstart](#quickstart) · [Data model](#-the-data-model) · [The macros](#-the-macros) · [Real-time](#-real-time-the-hotwire-way) · [Trust & Safety](#%EF%B8%8F-trust--safety-snaps-onto-the-moderate-gem) · [Events](#-events-subscribe-to-the-domain-moments) · [Headless messagers](#-headless-messagers-desks-bots-storefronts) · [Official accounts](#-official-accounts-the-verified-badge) · [Grouped inbox](#%EF%B8%8F-grouped-inbox-rows) · [Locked conversations](#-locked-conversations) · [Signed messages](#%EF%B8%8F-signed-messages) · [Action buttons](#-action-buttons) · [View slots](#-view-slots) · [Messaging dock](#-messaging-dock) · [Profile links](#-profile-links) · [Theming](#-make-it-yours) · [Configuration reference](#configuration-reference) · [The full Ruby API](#-the-full-ruby-api) · [View helpers](#-view-helpers) · [Errors](#errors) · [Locales](#locales) · [Upgrading](#upgrading) · [Testing](#testing)
+**Contents:** [Example](#-example) · [Quickstart](#quickstart) · [Data model](#-the-data-model) · [The macros](#-the-macros) · [Real-time](#-real-time-the-hotwire-way) · [Trust & Safety](#%EF%B8%8F-trust--safety-snaps-onto-the-moderate-gem) · [Events](#-events-subscribe-to-the-domain-moments) · [Headless messagers](#-headless-messagers-desks-bots-storefronts) · [Official accounts](#-official-accounts-the-verified-badge) · [Grouped inbox](#%EF%B8%8F-grouped-inbox-rows) · [Locked conversations](#-locked-conversations) · [Signed messages](#%EF%B8%8F-signed-messages) · [Action buttons](#-action-buttons) · [View slots](#-view-slots) · [Two panes](#-two-panes) · [Messaging dock](#-messaging-dock) · [Profile links](#-profile-links) · [Theming](#-make-it-yours) · [Configuration reference](#configuration-reference) · [The full Ruby API](#-the-full-ruby-api) · [View helpers](#-view-helpers) · [Errors](#errors) · [Locales](#locales) · [Upgrading](#upgrading) · [Testing](#testing)
 
 ## 👨‍💻 Example
 
@@ -68,7 +68,7 @@ end
 mount Chats::Engine => "/messages"
 ```
 
-That's it. `/messages` is now a working, real-time inbox: threads, bubbles, reactions, read receipts, typing indicators. The engine inherits your `ApplicationController` (so your auth, layout, and locale apply automatically — Devise works out of the box), and its bundled Stimulus controllers register themselves through your existing importmap setup. Zero JavaScript changes.
+That's it. `/messages` is now a working, real-time inbox: threads, bubbles, reactions, read receipts, typing indicators — on a wide screen, the conversation list and the open conversation side by side, as on LinkedIn ([two panes](#-two-panes)). The engine inherits your `ApplicationController` (so your auth, layout, and locale apply automatically — Devise works out of the box), and its bundled Stimulus controllers register themselves through your existing importmap setup. Zero JavaScript changes.
 
 An inbox lists the conversations that have **at least one message** (a system message or a deleted one counts). Opening a conversation (`chat_with`, the Message button) creates it, but until a first message exists it appears nowhere — not in the inbox, its stacks, search, the dock or any count — so nobody's inbox fills with "No messages yet" rows. It still opens when you go to it, which is where the first message gets written.
 
@@ -200,7 +200,7 @@ Triggers that arrive together make one catch-up, and catch-ups are at least five
 
 | surface | catches up with |
 |---|---|
-| the inbox | the same morphing page refresh a broadcast triggers. A refresh that arrives while another visit is still loading, which Turbo would otherwise ignore, runs when that visit completes |
+| the inbox | the same morphing page refresh a broadcast triggers. A refresh that arrives while another visit is still loading, which Turbo would otherwise ignore, runs when that visit completes. On the [two-pane page](#-two-panes) the list and the open conversation are two surfaces: one refresh for the list, one thread catch-up for the conversation, which the refresh leaves alone |
 | a thread (page or dock window) | `GET /:id/refresh?after=…&changed=…`, on two cursors: messages created after the newest one on screen are appended (an empty thread asks from the beginning), and edits, tombstones and reactions made to the ones on screen since the newest change it saw are replaced. Two, because a message created at 10:15 and missed is older than a 10:20 edit that did arrive. Each cursor is a moment to the microsecond up to which the thread knows it has everything: set by a complete render or by a catch-up that arrived, never by a live bubble, which can arrive after one that was missed. What arrived live since is named instead (at most 200 ids; past that the history is re-rendered), so it isn't sent twice, and two messages that share a timestamp are never mistaken for each other. Each catch-up belongs to one render of the thread: an answer that arrives after the page or the window rendered the conversation again is dropped unrendered. The read receipts are updated too, the read receipts updated, and, under `deletion: :hard`, bubbles whose messages are gone removed. The composer, its draft and your scroll position are never touched. A thread more than a page behind gets its history re-rendered at the latest page |
 | `chats_unread_badge` and the dock's badges | `GET /badge`, every unread badge on the page in one Turbo Stream |
 | the dock's recent list | a reload of its frame, morphed in place so it keeps its scroll position and your search |
@@ -584,6 +584,29 @@ Ejecting a whole screen to add one row or one button is too coarse. The bundled 
 
 An engine mounted on top of chats ships its own `app/views/chats/slots/…`; the host's file wins by view-path order. `rails generate chats:views` is still there for wholesale restyling.
 
+## 🪟 Two panes
+
+`/messages` is LinkedIn's messaging page: the conversation list on the left, the open conversation on the right. `/messages/:id` is that same page with its conversation open and its row highlighted, so a link to a conversation, a reload, back and forward all land where they should.
+
+![Two panes](docs/screenshots/split-inbox.png)
+
+Each row is a real link to `/messages/:id`. On a wide screen it opens the conversation in the right pane, a `turbo_frame_tag "chats_conversation"` whose `data-turbo-action="advance"` moves the address bar and history with it, and the server answers that frame with the pane alone. The pane's thread sits in a `data-turbo-permanent` element keyed by the conversation (and the viewer), so the inbox's live refreshes (Turbo 8 morphs of the whole page) re-render the list and leave the conversation alone: its draft, scroll position, read state and stream subscription.
+
+**On a phone** (under 700px wide, where the dock turns into a full-screen sheet) it is one column, exactly the separate pages as before: `/messages` is the list, and a row opens the conversation's page, with its back link to the list. One media query decides, so the layout holds before JavaScript runs and without it; with JavaScript off a row always opens the page.
+
+<img src="docs/screenshots/split-inbox-phone-list.png" alt="A phone: the messaging page is the conversation list" width="240"> <img src="docs/screenshots/split-inbox-phone-thread.png" alt="A phone: a conversation fills the screen, with its back link to the list" width="240">
+
+**Reads** happen when you open a conversation: a row clicked, a link, a reload. The page's own refreshes never read (one may arrive in a background tab), and a conversation the page renders unread reads itself as soon as it's on screen.
+
+The [messaging dock](#-messaging-dock) stays off this page, as on every engine page; its "See all messages" opens it, and a window's ⤢ opens its conversation here.
+
+```ruby
+config.inbox_layout = :split    # the default: two panes from 700px wide
+config.inbox_layout = :stacked  # separate pages at every width, as before 0.6
+```
+
+The list pane is `--chats-list-width` wide (320px), and the page as wide as the list plus a thread (`--chats-max-width`). Like the thread page, it is as tall as the screen (`100dvh`): a layout with a nav bar above it gives `.chats-split` the height that's left, as it does `.chats-thread`. Views ejected with `rails generate chats:views` before 0.6 keep their own separate pages; re-eject to get the panes.
+
 ## 🪟 Messaging dock
 
 LinkedIn and Steam don't send you to another page to answer a message: chats live in small windows in the bottom-right corner while you keep doing what you were doing. One line in your layout, for signed-in viewers, gives your app the same:
@@ -678,6 +701,7 @@ The bundled UI is intentionally framework-free (semantic `chats-*` classes + one
   --chats-accent: #facc15;           /* own bubbles, send button, badges */
   --chats-accent-contrast: #111827;
   --chats-verified: #0284c7;         /* the "official account" badge */
+  --chats-list-width: 320px;         /* the list beside an open conversation */
 }
 ```
 
@@ -687,7 +711,7 @@ Want full control? Eject the views Devise-style and restyle with your own stack 
 rails generate chats:views
 ```
 
-Override any bundled Stimulus controller by pinning the same importmap key — host pins win. The current keys are `controllers/chats/thread_controller`, `controllers/chats/composer_controller`, `controllers/chats/debounced_submit_controller`, `controllers/chats/refresh_inbox_controller`, `controllers/chats/unread_badge_controller`, and `controllers/chats/dock_controller`. What the inbox, thread, badge and dock controllers share to catch up on missed broadcasts is `chats/recovery` (`recoverMissedBroadcasts`, `renderStreamFrom`); a controller of your own can import it too.
+Override any bundled Stimulus controller by pinning the same importmap key — host pins win. The current keys are `controllers/chats/thread_controller`, `controllers/chats/composer_controller`, `controllers/chats/debounced_submit_controller`, `controllers/chats/refresh_inbox_controller`, `controllers/chats/unread_badge_controller`, `controllers/chats/dock_controller`, and `controllers/chats/split_controller`. What the inbox, thread, badge and dock controllers share to catch up on missed broadcasts is `chats/recovery` (`recoverMissedBroadcasts`, `renderStreamFrom`); a controller of your own can import it too.
 
 ## Configuration reference
 
@@ -729,6 +753,7 @@ Chats.configure do |config|
   # Inbox shaping
   config.inbox_limit = 200
   config.inbox_scope = ->(relation, viewer) { relation }
+  config.inbox_layout = :split              # :split (two panes from 700px wide) | :stacked
 
   # Ecosystem seams (no-op defaults; chats runs standalone)
   config.blocked_messager_ids = ->(messager) { [] }
@@ -902,7 +927,7 @@ rails generate chats:upgrade   # 0.2.0: message authorship columns · 0.4.0: the
 rails db:migrate
 ```
 
-0.5.1 needs no migration and nothing to configure: every live surface now [catches up](#what-happens-when-a-broadcast-is-missed) on missed broadcasts by itself. If you wrapped the inbox in a reconciler of your own, remove it; if you ejected the inbox, the thread or the message partial, read the 0.5.1 [CHANGELOG](CHANGELOG.md) entry. 0.5.0 needs no migration: the messaging dock is opt-in (`chats_dock`). A few things change on their own: a conversation with no messages is no longer listed (it used to show as a "No messages yet" row), a thread the host's policy no longer allows shows the notice in the composer's place, a Turbo hover prefetch no longer marks a thread read, and the thread body moved into `chats/conversations/_thread.html.erb`. Read the 0.5.0 [CHANGELOG](CHANGELOG.md) entry if you ejected `show.html.erb` or the unread badge. 0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
+0.6.0 needs no migration: the messaging page becomes [two panes](#-two-panes) on wide screens by itself; `config.inbox_layout = :stacked` keeps the separate pages. Views you ejected before 0.6 keep rendering as they are (the separate pages); the [CHANGELOG](CHANGELOG.md) lists the templates that changed. 0.5.1 needs no migration and nothing to configure: every live surface now [catches up](#what-happens-when-a-broadcast-is-missed) on missed broadcasts by itself. If you wrapped the inbox in a reconciler of your own, remove it; if you ejected the inbox, the thread or the message partial, read the 0.5.1 [CHANGELOG](CHANGELOG.md) entry. 0.5.0 needs no migration: the messaging dock is opt-in (`chats_dock`). A few things change on their own: a conversation with no messages is no longer listed (it used to show as a "No messages yet" row), a thread the host's policy no longer allows shows the notice in the composer's place, a Turbo hover prefetch no longer marks a thread read, and the thread body moved into `chats/conversations/_thread.html.erb`. Read the 0.5.0 [CHANGELOG](CHANGELOG.md) entry if you ejected `show.html.erb` or the unread badge. 0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
 
 ## Database support
 
