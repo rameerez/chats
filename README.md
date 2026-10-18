@@ -98,6 +98,8 @@ Or give every page LinkedIn-style floating chat windows with one line in your la
 
 > [!NOTE]
 > **Want customer support?** Ticketing stays out of `chats` on purpose — queues, assignment and SLAs are not messaging. [`support_desk`](https://github.com/rameerez/support_desk) is the product gem that adds them ON TOP of this one: tickets that are real conversations, a support desk that sends while your staff sign, and a BYOUI agent console. It uses the seams below (headless messagers, subject locks, message authorship, grouped inbox rows), so you get the same threads, attachments and read state you already have.
+>
+> A product on chats may need a conversation to open although your `inbox_scope` keeps it out of the inbox (a requester's own ticket). `Chats::ApplicationController#conversation_lookup_scopes` is the one extension point for that: every engine endpoint looks a conversation up through it, in order (by default `[viewer.chats]`), and the product appends its own relation, `super + [own_cases_scope]`, from a prepended module. Each scope must hold only conversations the viewer may open: nothing outside them becomes reachable, a miss is still a plain 404, and an error inside a scope is not rescued.
 
 ## 🧱 The data model
 

@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scopes see every conversation and belong behind staff authorization.
   Nothing changes by default: system messages still bump `messages_count`
   and `last_message`, and the inbox still lists system-only threads.
+- **`Chats::ApplicationController#conversation_lookup_scopes`, the one
+  extension point for a conversation that must open although the inbox
+  hides it.** Every engine endpoint (the thread, a dock window, sending,
+  editing, reacting, reading) finds a conversation through
+  `find_conversation(id)`, which now asks each relation
+  `conversation_lookup_scopes` returns, in order (`find_by(id:)`), and
+  raises `ActiveRecord::RecordNotFound` when none has it. By default that is
+  `[chats_current_messager.chats]`, exactly the old lookup. A product gem
+  (support_desk: a requester's own ticket, which the host's `inbox_scope`
+  keeps out of the inbox) prepends a module whose
+  `conversation_lookup_scopes` returns `super + [its own scope]`, instead of
+  re-implementing the lookup and recognising a miss by the exception's
+  details. Later scopes are asked only on a miss; each scope must hold only
+  conversations the viewer may open, so nothing outside them becomes
+  reachable; and an error a scope raises is not rescued into a 404.
 
 ### Fixed
 - **The dock's window count used the right plural form only in two-form
