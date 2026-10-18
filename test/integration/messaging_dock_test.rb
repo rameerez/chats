@@ -214,7 +214,7 @@ class MessagingDockTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "between us"
   end
 
-  test "the recent list never shows a conversation nobody has written in" do
+  test "the recent list never shows a conversation with no messages" do
     login_as @alice # @conversation was only opened
 
     get "/messages/dock"

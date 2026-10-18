@@ -32,7 +32,7 @@ module Chats
       assert_equal 0, inbox.unread_count
     end
 
-    # --- a conversation nobody has written in is never listed -----------------
+    # --- a conversation with no messages is never listed ----------------------
 
     test "an opened but unused conversation is not a row" do
       @alice.chat_with(@bob) # the Message button, and then nothing
@@ -51,6 +51,14 @@ module Chats
 
       assert_equal [empty], Chats::Inbox.for(@alice).rows
       assert_equal [empty], Chats::Inbox.for(@bob).rows
+    end
+
+    test "a message is a message: a system note alone lists the conversation" do
+      ride = @alice.chat_with(@bob, about: create_listing(title: "Ride"))
+      ride.post_system_message!("Your ride was cancelled")
+
+      assert_equal [ride], Chats::Inbox.for(@alice).rows, "with_messages is any message, not a person writing"
+      assert_includes Chats::Conversation.with_messages, ride
     end
 
     test "it still OPENS: the authorization relation keeps it" do
@@ -414,7 +422,8 @@ module Chats
 
     private
 
-    # Open a conversation AND write in it — the only kind a list shows
+    # Open a conversation AND write in it — lists show only conversations
+    # with a message
     # (Chats::Conversation.with_messages). The opener writes, so nothing is
     # unread for them.
     def chatting(*others, from: @alice, **options)

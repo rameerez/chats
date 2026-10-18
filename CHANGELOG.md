@@ -10,7 +10,7 @@ The messaging dock. LinkedIn and Steam keep your conversations in small
 windows in the bottom-right corner while you go on using the app; one line
 in a layout, `<%= chats_dock %>`, now does that. **No migration.** The dock
 is opt-in, but a few things change without asking, all under Changed: a
-conversation nobody has written in is no longer listed, a direct thread the
+conversation with no messages is no longer listed, a direct thread the
 host's policy no longer allows says so up front, a hover prefetch no longer
 reads a thread, and the thread body moved into a partial.
 
@@ -53,12 +53,17 @@ reads a thread, and the thread body moved into a partial.
   shows (the streams address the thread's DOM ids, which must exist once).
 - **What fits.** `min(windows, floor((viewport − 312) / 344))` windows beside
   the panel: two at 1280px, one at 768px, three from 1344px. Opening one
-  more, or narrowing the viewport, closes the least recently used window
-  that isn't in use. A window in use (it has the focus, or unsent text) is
-  never closed to make room: when only those are left, opening another
-  folds them to their headers beside it (folded windows may narrow so the
-  row still fits), and a pop-up doesn't open at all. A window the viewer
-  closes keeps its unsent text for when it comes back.
+  more closes the least recently used window that isn't in use. A window in
+  use (it has the focus, or unsent text) is never closed to make room: it
+  folds to a 104px header (avatar and ×, `--chats-dock-squeezed-width`)
+  beside the new one. Two limits are absolute: never more than `windows:`
+  windows, folded ones included, and never wider than the viewport beside
+  the panel. An open that can't fit even with every window in use folded is
+  declined, changing nothing, and the row's link (or the `dock: true`
+  button) opens the conversation's page instead; a pop-up just doesn't
+  happen. Narrowing the viewport closes what isn't in use and folds what is,
+  the focused window last. A window the viewer closes keeps its unsent text
+  for when it comes back.
 - **Reading waits for the viewer.** A window never reads on render. A
   minimized window never marks anything read, and a window that popped
   open, or came back after a reload, marks messages read only once the
@@ -97,7 +102,8 @@ reads a thread, and the thread body moved into a partial.
 - **Phones.** Under 700px wide or 500px tall the closed bar is a 56px round
   launcher, the open panel a full-screen sheet, and a conversation one
   full-screen window with ← back to the list, sized to the visual viewport
-  so the composer sits on the keyboard. The sheet makes the rest of the page
+  so the composer sits on the keyboard. The list behind a window is `inert`
+  until Back, which returns the focus to it. The sheet makes the rest of the page
   `inert` (the siblings of the dock and of each of its ancestors, so a
   layout that wraps the dock never inerts the sheet) and stops it scrolling. Inputs are 16px, so iOS doesn't zoom.
   Messages never pop a window on a phone. The layout is one media query, so
@@ -133,9 +139,10 @@ reads a thread, and the thread body moved into a partial.
   (`config.inbox_limit` by default, never more). A smaller limit is a
   smaller query; a search still looks through the whole `inbox_limit`
   window.
-- **`Chats::Conversation.with_messages`**: conversations somebody has
-  written in (`last_message_id IS NOT NULL`, which the denormalized pointer
-  already gives).
+- **`Chats::Conversation.with_messages`**: conversations that have at least
+  one message, system messages and tombstones included (`last_message_id`
+  set, which the denormalized pointer already gives). It doesn't mean a
+  person wrote there: a thread holding only a system note is listed.
 - **The `dock_panel_footer` slot** (receives `viewer:`): your own link next
   to "See all messages".
 - **Theming.** The dock's variables are declared on `:where(.chats-dock)`,
@@ -156,7 +163,7 @@ reads a thread, and the thread body moved into a partial.
   `rails generate chats:views` has a `dock` group (`app/views/chats/dock/`).
 
 ### Changed
-- **A conversation nobody has written in is never listed.** Opening a
+- **A conversation with no messages is never listed.** Opening a
   conversation (`chat_with`, the Message button) creates it, and until now
   the inbox listed it straight away as a "No messages yet" row. Every list
   now reads through `Chats::Conversation.with_messages`: the inbox rows,

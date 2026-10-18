@@ -36,6 +36,7 @@ class DockControllerTest < ActiveSupport::TestCase
         global.document = { activeElement: null }
         global.getComputedStyle = () => ({ getPropertyValue: () => "" })
         global.requestAnimationFrame = (callback) => callback()
+        global.cancelAnimationFrame = () => {}
         const DockController = new Function(sourceText)()
 
         // --- fakes ---------------------------------------------------------
@@ -124,8 +125,8 @@ class DockControllerTest < ActiveSupport::TestCase
         document.activeElement = windows[1].input || windows[1] // window 2 has the focus
         windows[1].contains = () => true
         assert.strictEqual(controller.makeRoom(null, { force: false }), false,
-                           "only windows in use are left, and a pop-up closes none of them")
-        assert.deepStrictEqual(removed, ["3"], "the one not in use went; the focused one and the drafted one stay")
+                           "two windows in use leave no room a pop-up may take")
+        assert.deepStrictEqual(removed, [], "and a declined pop-up closes nothing, not even the idle window")
 
         // Closed by the viewer, a window's unsent text is kept for next time.
         controller = dock({ open: [frame("1", { draft: "half a thought" })] })
@@ -202,6 +203,110 @@ class DockControllerTest < ActiveSupport::TestCase
         controller.panelTarget.open = false
         DockController.prototype.syncSheet.call(controller)
         assert.deepStrictEqual([header, script, main].map((n) => n.inert), [false, false, false], "and back on close")
+
+        // --- on a phone, the list behind a window can't take the focus ----------
+
+        let focused = null
+        controller = dock({ compact: true, width: 390, open: [frame("1")] })
+        controller.element = Object.assign(dockElement, { hidden: false, contains: () => false })
+        controller.syncSheet = DockController.prototype.syncSheet
+        controller.panelTarget = { open: true, inert: false, querySelector: () => ({ focus: () => { focused = "list" } }) }
+        windows[0].classes.add("chats-window--front")
+        controller.syncSheet()
+        assert.strictEqual(controller.panelTarget.inert, true, "the open list sits behind the window: inert")
+        controller.back({ target: { closest: () => windows[0] } })
+        assert.strictEqual(controller.panelTarget.inert, false, "Back gives it back")
+        assert.strictEqual(focused, "list", "with the focus on it")
+        controller.panelTarget.open = false
+        controller.syncSheet()
+        assert.strictEqual(controller.panelTarget.inert, false)
+
+        // --- opening never overflows: the cap and the width, the public path ---
+        // openWindow() and the row click (delegate), unstubbed. Expanded
+        // windows take 336+8, a folded (squeezed) one 104+8, beside a 288
+        // panel and a 16 inset: 456px of row at 768, 968px at 1280.
+
+        function opening(width) {
+          const controller = dock({ width })
+          let clock = 1000
+          controller.openWindow = DockController.prototype.openWindow
+          controller.buildWindow = (id, { minimized }) => frame(id, { minimized, draft: "", usedAt: clock++ })
+          controller.windowsTarget = { append: (built) => { windows.push(built); controller.windowTargetConnected(built) } }
+          controller.focusInside = () => {}
+          controller.windowUrlValue = "/messages/__id__?window=1"
+          controller.visited = []
+          controller.visit = (url) => controller.visited.push(url)
+          return controller
+        }
+        const typeInto = (id, text) => { windows.find((w) => w.dataset.conversationId === id).input.value = text }
+        const focusOn = (id) => { document.activeElement = windows.find((w) => w.dataset.conversationId === id).input }
+        const row = () => windows.map((w) => w.dataset.conversationId +
+          (w.classes.has("chats-window--squeezed") ? ":folded" : w.classes.has("chats-window--minimized") ? ":min" : ""))
+        const width = (controller) => windows.reduce((total, w) => total + controller.slot(w), 0)
+        const click = (controller, id) => controller.delegate({
+          button: 0,
+          preventDefault() {},
+          target: { closest: (selector) => (selector === "[data-chats-dock-conversation-id]"
+            ? { dataset: { chatsDockConversationId: id }, href: `/messages/${id}` } : null) }
+        })
+
+        // The one-window width (768px).
+        controller = opening(768)
+        controller.openWindow("1", { focus: true }); typeInto("1", "first draft")
+        controller.openWindow("2", { focus: true }); typeInto("2", "second draft"); focusOn("2")
+        assert.deepStrictEqual(row(), ["1:folded", "2"], "the window in use folds beside the new one")
+        assert(width(controller) <= controller.room)
+
+        assert.strictEqual(controller.openWindow("3", { focus: true }), false,
+                           "a third can't fit even with both in use folded: declined")
+        assert.deepStrictEqual(row(), ["1:folded", "2"], "and a declined open changes nothing")
+        click(controller, "3")
+        assert.deepStrictEqual(controller.visited, ["/messages/3"], "the row's link opens the conversation's page")
+        click(controller, "4")
+        assert.deepStrictEqual(controller.visited, ["/messages/3", "/messages/4"])
+        assert.deepStrictEqual(row(), ["1:folded", "2"])
+
+        // The two-window width (1280px).
+        controller = opening(1280)
+        controller.openWindow("1", { focus: true }); typeInto("1", "a")
+        controller.openWindow("2", { focus: true }); typeInto("2", "b")
+        assert.deepStrictEqual(row(), ["1", "2"])
+        controller.openWindow("3", { focus: true }); typeInto("3", "c"); focusOn("3")
+        assert.deepStrictEqual(row(), ["1:folded", "2", "3"], "three in use: the least recently used folds")
+        assert(width(controller) <= controller.room)
+
+        assert.strictEqual(controller.openWindow("4", { focus: true }), false, "a fourth would pass the cap: declined")
+        click(controller, "4")
+        assert.deepStrictEqual(controller.visited, ["/messages/4"])
+        assert.deepStrictEqual(row(), ["1:folded", "2", "3"], "nothing closed, nothing past the cap")
+
+        typeInto("2", "") // window 2 is no longer in use: it can make room now
+        controller.openWindow("4", { focus: true })
+        assert.deepStrictEqual(row(), ["1:folded", "3", "4"], "the window not in use goes, the cap holds")
+        assert(width(controller) <= controller.room)
+
+        // A narrower viewport folds windows in use that no longer fit.
+        controller = opening(1280)
+        controller.openWindow("1", { focus: true }); typeInto("1", "a")
+        controller.openWindow("2", { focus: true }); typeInto("2", "b"); focusOn("2")
+        assert.deepStrictEqual(row(), ["1", "2"])
+        window.innerWidth = 768
+        controller.resized()
+        assert.deepStrictEqual(row(), ["1:folded", "2"], "the one without the focus folds first")
+        assert(width(controller) <= controller.room)
+        window.innerWidth = 700
+        controller.resized()
+        assert.deepStrictEqual(row(), ["1:folded", "2:folded"], "then the focused one, rather than overflow")
+        assert(width(controller) <= controller.room)
+
+        controller = opening(1280)
+        ;["1", "2", "3"].forEach((id) => { controller.openWindow(id, { focus: true }); typeInto(id, "kept") })
+        focusOn("3")
+        window.innerWidth = 768
+        controller.resized()
+        assert.deepStrictEqual(row(), ["1:folded", "2:folded", "3:folded"], "three in use at one window's width")
+        assert(width(controller) <= controller.room)
+        assert.strictEqual(windows.length, 3, "and none of them closed")
 
         // --- a live message pops a window up -----------------------------------
 

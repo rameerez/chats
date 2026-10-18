@@ -67,7 +67,7 @@ class ConversationsFlowTest < ActionDispatch::IntegrationTest
     assert_equal 0, @alice.unread_chats_count, "the visit itself reads"
   end
 
-  test "a conversation nobody has written in is not listed, and still opens" do
+  test "a conversation with no messages is not listed, and still opens" do
     # @conversation was opened in setup and nobody wrote: no "No messages
     # yet" row, and no empty-state lie either — there is nothing to show.
     login_as @alice

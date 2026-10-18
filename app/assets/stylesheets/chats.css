@@ -1043,6 +1043,7 @@ turbo-frame[id^="chats_page_"] {
   --chats-dock-panel-height: 560px;
   --chats-dock-window-width: 336px;
   --chats-dock-window-height: 480px;
+  --chats-dock-squeezed-width: 104px; /* a window folded to make room */
   --chats-dock-top-clearance: 24px;
   --chats-dock-radius: 12px;
   --chats-dock-bg: var(--chats-bg);
@@ -1086,12 +1087,6 @@ turbo-frame[id^="chats_page_"] {
   display: flex;
   align-items: flex-end;
   gap: var(--chats-dock-gap);
-  /* What's left beside the panel. Windows normally fit (the controller
-     closes the least recently used); when the ones it may not close (in
-     use) crowd the row, the folded ones narrow instead of spilling off the
-     left edge. */
-  max-width: calc(100vw - var(--chats-dock-inset) - var(--chats-safe-right) -
-                  var(--chats-dock-panel-width) - 2 * var(--chats-dock-gap));
 }
 .chats-window,
 .chats-dock__panel { pointer-events: auto; }
@@ -1135,15 +1130,13 @@ turbo-frame[id^="chats_page_"] {
 /* Folded to its header (and the home-indicator strip). A height, not a
    transform: the thread keeps its box and its scroll position, and its
    zero-height scroller is how the thread controller knows not to read. */
-.chats-window--minimized {
-  height: calc(var(--chats-dock-bar-height) + var(--chats-safe-bottom));
-  flex-shrink: 1;
-  min-width: 112px;
-}
-/* Folded only to make room (it was in use when another opened, and the row
-   is crowded): the header keeps the avatar, – and ×; the name stays in the
-   title's tooltip. */
-.chats-window--squeezed :is(.chats-window__identity, .chats-window__unread, .chats-window__menu, .chats-window__expand) {
+.chats-window--minimized { height: calc(var(--chats-dock-bar-height) + var(--chats-safe-bottom)); }
+/* Folded to make room (it was in use when another opened, and the row is
+   full): the width the controller budgets for it, the avatar (which expands
+   it) and ×. The name stays in the title's tooltip. */
+.chats-window--squeezed { width: var(--chats-dock-squeezed-width); }
+.chats-window--squeezed :is(.chats-window__identity, .chats-window__unread, .chats-window__menu,
+                            .chats-window__expand, .chats-window__minimize) {
   display: none;
 }
 /* Nothing of the thread keeps a height while folded, padding included, so

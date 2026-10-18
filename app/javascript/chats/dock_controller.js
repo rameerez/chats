@@ -125,7 +125,10 @@ export default class extends Controller {
     const opener = event.target.closest("[data-chats-dock-conversation-id]")
     if (opener) {
       event.preventDefault()
-      this.openWindow(String(opener.dataset.chatsDockConversationId), { focus: true, opener })
+      const id = String(opener.dataset.chatsDockConversationId)
+      // No room even with every window in use folded: the link does what a
+      // link does, and opens the conversation's page.
+      if (this.openWindow(id, { focus: true, opener }) === false) this.visit(opener.href || this.threadUrl(id))
       return
     }
 
@@ -138,6 +141,8 @@ export default class extends Controller {
   }
 
   // Opened by the viewer unless `active: false` (a pop-up, a restore).
+  // Returns the window, null when the page already shows the conversation,
+  // or false when there is no room for it (see makeRoom).
   openWindow(id, { minimized = false, focus = false, active = true, opener = null } = {}) {
     if (this.renderedOnPage(id)) {
       // Already on the page: go to it rather than open a second copy.
@@ -153,7 +158,7 @@ export default class extends Controller {
       return open
     }
 
-    if (!this.makeRoom(null, { force: active })) return null
+    if (!this.makeRoom(null, { force: active })) return false
 
     const frame = this.buildWindow(id, { minimized, active, focus })
     if (opener) this.openers.set(frame, opener)
@@ -174,7 +179,13 @@ export default class extends Controller {
     this.windowTargets.forEach((other) => {
       if (other !== frame && other.dataset.conversationId === id) this.removeWindow(other)
     })
-    this.makeRoom(frame, { force: true })
+    // A window the server sent (`dock: true`) and nothing can make room
+    // for: the conversation's page instead.
+    if (!this.makeRoom(frame, { force: true })) {
+      frame.remove()
+      this.visit(this.threadUrl(id))
+      return
+    }
 
     if (!frame.hasAttribute("data-entered")) {
       frame.setAttribute("data-entered", "")
@@ -235,42 +246,124 @@ export default class extends Controller {
     return frame
   }
 
-  // Make room for one more window (or, with +keeping+, for that one):
-  // close the least recently used window that isn't IN USE. A window in use
-  // — it has the focus, or unsent text — is never closed to make room. When
-  // only such windows are left, a window the viewer is opening (`force`)
-  // folds them instead (minimized, kept, beside the new one; chats.css lets
-  // folded windows narrow so the row still fits), and a pop-up gives up.
+  // Make room for one more window (or, with +keeping+, for that one), or
+  // say there is none. Two limits, both absolute:
+  //
+  //   * the cap — never more than `windows` windows, expanded or folded;
+  //   * the width — every window's slot (336px expanded or minimized, the
+  //     104px folded header of a squeezed one, each with its gap) fits
+  //     beside the panel.
+  //
+  // Room is made by closing the least recently used window that isn't IN
+  // USE. A window in use — it has the focus, or unsent text — is never
+  // closed: a window the viewer is opening (`force`) folds it to its
+  // narrow header instead, least recently used first and the focused one
+  // last, and a pop-up gives up. When even that isn't enough, there is no
+  // room, and the caller opens the conversation's page instead.
   makeRoom(keeping, { force = false } = {}) {
-    const limit = keeping ? this.fit : this.fit - 1
-    while (this.windowTargets.length > limit) {
+    const others = () => this.windowTargets.filter((frame) => frame !== keeping)
+    const incoming = this.slot(keeping)
+
+    // Could it fit at all — every window not in use closed, and (opening)
+    // every one in use folded? If not, change nothing.
+    const kept = others().filter((frame) => this.inUse(frame))
+    if (kept.length + 1 > this.windowsValue) return false
+    if (!this.compact) {
+      const least = kept.reduce((total, frame) => total + (force ? this.squeezedWidth + this.gap : this.slot(frame)), 0)
+      if (least + incoming > this.room) return false
+    }
+
+    while (others().length + 1 > this.windowsValue) {
+      const victim = this.leastRecentlyUsed(keeping)
+      if (!victim) return false
+      this.removeWindow(victim)
+    }
+    if (this.compact) return true // one at a time on a phone: only the cap
+
+    while (!this.fits(others(), incoming)) {
       const victim = this.leastRecentlyUsed(keeping)
       if (victim) {
         this.removeWindow(victim)
         continue
       }
-      if (!force) return false
-
-      this.windowTargets.filter((frame) => frame !== keeping).forEach((frame) => {
-        this.setMinimized(frame, true)
-        frame.classList.add(SQUEEZED)
-      })
-      return true
+      const fold = force && this.foldable(keeping)
+      if (!fold) return false
+      this.squeeze(fold)
     }
     return true
   }
 
-  // How many windows fit beside the panel right now. On a phone they are
-  // shown one at a time, so only the cap applies.
+  // After the viewport narrowed: close what isn't in use, fold what is,
+  // until the row fits again. Returns whether anything changed.
+  reflow() {
+    let changed = false
+    while (!this.fits(this.windowTargets)) {
+      const victim = this.leastRecentlyUsed(null) || this.foldable(null)
+      if (!victim) break
+      if (this.inUse(victim)) {
+        this.squeeze(victim)
+      } else {
+        this.removeWindow(victim)
+      }
+      changed = true
+    }
+    return changed
+  }
+
+  // Folded to make room: minimized, at the narrow header width.
+  squeeze(frame) {
+    this.setMinimized(frame, true)
+    frame.classList.add(SQUEEZED)
+  }
+
+  // The next window in use that can still give width back: not squeezed
+  // yet, least recently used first, the one with the focus last.
+  foldable(keeping) {
+    return this.windowTargets
+      .filter((frame) => frame !== keeping && !frame.classList.contains(SQUEEZED))
+      .sort((a, b) => {
+        const focus = Number(a.contains(document.activeElement)) - Number(b.contains(document.activeElement))
+        return focus || Number(a.dataset.usedAt || 0) - Number(b.dataset.usedAt || 0)
+      })[0]
+  }
+
+  // The width a window takes in the row, its gap included; null is a new
+  // (expanded) one.
+  slot(frame) {
+    const width = frame?.classList.contains(SQUEEZED) ? this.squeezedWidth : this.windowWidth
+    return width + this.gap
+  }
+
+  fits(frames, incoming = 0) {
+    return frames.reduce((total, frame) => total + this.slot(frame), incoming) <= this.room
+  }
+
+  // What the row may take: the viewport, less the right inset, the panel
+  // and the 8px left margin the spec keeps (the fit formula's 312px).
+  get room() {
+    const panel = this.panelTarget.offsetWidth || this.pixels("--chats-dock-panel-width", 288)
+    return window.innerWidth - this.pixels("--chats-dock-inset", 16) - panel - this.gap
+  }
+
+  get gap() {
+    return this.pixels("--chats-dock-gap", 8)
+  }
+
+  get windowWidth() {
+    return this.pixels("--chats-dock-window-width", 336)
+  }
+
+  get squeezedWidth() {
+    return this.pixels("--chats-dock-squeezed-width", 104)
+  }
+
+  // How many expanded windows fit beside the panel right now
+  // (min(windows, floor((vw − 312) / 344))). On a phone they are shown one
+  // at a time, so only the cap applies.
   get fit() {
     if (this.compact) return this.windowsValue
 
-    const inset = this.pixels("--chats-dock-inset", 16)
-    const gap = this.pixels("--chats-dock-gap", 8)
-    const panel = this.panelTarget.offsetWidth || this.pixels("--chats-dock-panel-width", 288)
-    const width = this.pixels("--chats-dock-window-width", 336)
-    const room = Math.floor((window.innerWidth - inset - panel - gap) / (width + gap))
-    return Math.max(1, Math.min(this.windowsValue, room))
+    return Math.max(1, Math.min(this.windowsValue, Math.floor(this.room / (this.windowWidth + this.gap))))
   }
 
   // --- Live ------------------------------------------------------------------
@@ -427,7 +520,8 @@ export default class extends Controller {
     this.closeWindow(this.frameOf(event.target))
   }
 
-  // Phones: back to the list the window came from.
+  // Phones: back to the list the window came from. syncSheet() gives the
+  // list back its focusability; the focus goes to its header.
   back(event) {
     const frame = this.frameOf(event.target)
     frame?.classList.remove(FRONT)
@@ -713,13 +807,12 @@ export default class extends Controller {
     this.syncSheet()
   }
 
-  // A narrower viewport closes windows down to what fits, least recently
-  // used first, never the focused one.
+  // A narrower viewport: back down to what fits (see reflow).
   resized = () => {
     if (this.compact) return
     cancelAnimationFrame(this.resizeFrame)
     this.resizeFrame = requestAnimationFrame(() => {
-      if (this.windowTargets.length > this.fit && this.makeRoom(this.focusedWindow(), { force: false })) this.save()
+      if (this.reflow()) this.save()
     })
   }
 
@@ -735,10 +828,12 @@ export default class extends Controller {
   }
 
   // On a phone, an open sheet is modal: the page behind can't scroll or
-  // take the focus.
+  // take the focus — and neither can the list behind a window in front of
+  // it, until Back.
   syncSheet() {
-    const open = Boolean(this.compact) && !this.element.hidden &&
-      (this.panelTarget.open || this.windowTargets.some((frame) => frame.classList.contains(FRONT)))
+    const front = Boolean(this.compact) && this.windowTargets.some((frame) => frame.classList.contains(FRONT))
+    const open = Boolean(this.compact) && !this.element.hidden && (this.panelTarget.open || front)
+    this.panelTarget.inert = open && front
     document.documentElement.classList.toggle("chats-dock-sheet-open", open)
     if (open) {
       if (this.inerted.length) return
@@ -784,10 +879,6 @@ export default class extends Controller {
     return frame.classList.contains(MINIMIZED)
   }
 
-  focusedWindow() {
-    return this.windowTargets.find((frame) => frame.contains(document.activeElement)) || null
-  }
-
   leastRecentlyUsed(keeping) {
     return this.windowTargets
       .filter((frame) => frame !== keeping && !this.inUse(frame))
@@ -804,6 +895,21 @@ export default class extends Controller {
   renderedOnPage(id) {
     return Array.from(document.querySelectorAll(`[id="${CSS.escape(this.domId("messages", id))}"]`))
       .some((element) => !this.element.contains(element))
+  }
+
+  // The conversation's own page (the window's URL, without `window=1`).
+  threadUrl(id) {
+    const url = new URL(this.windowUrlValue.replace("__id__", encodeURIComponent(id)), window.location.href)
+    url.searchParams.delete("window")
+    return url.toString()
+  }
+
+  visit(url) {
+    if (window.Turbo?.visit) {
+      window.Turbo.visit(url)
+    } else {
+      window.location.href = url
+    }
   }
 
   // dom_id(conversation, prefix), as the server writes it.

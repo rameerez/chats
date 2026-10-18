@@ -12,7 +12,7 @@ module Chats
   #
   # Rows are `Chats::Conversation | Chats::InboxGroup`, sorted by last
   # activity descending. Grouping happens HERE and nowhere else, and so does
-  # the rule that a conversation nobody has written in is never listed.
+  # the rule that a conversation with no messages is never listed.
   #
   # == Why `inbox_limit` bounds ROWS, not conversations
   #
@@ -130,8 +130,9 @@ module Chats
     # top), memoized so it is built ONCE per inbox however many legs the
     # row query is split into (the stack aggregates build their own).
     #
-    # Only conversations somebody wrote in (Conversation.with_messages): one
-    # that was opened and never used is not listed — not as a row, not in a
+    # Only conversations with at least one message (Conversation.
+    # with_messages, system messages and tombstones included): one that was
+    # opened and never used is not listed — not as a row, not in a
     # stack, not in search, not in the `?with=` view. It still OPENS, because
     # authorization reads `viewer.chats`, not this.
     def base_relation
