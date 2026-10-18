@@ -20,8 +20,8 @@ module Chats
   #      broadcast would force per-viewer renders of per-viewer partials;
   #      a refresh makes each client re-request the page and get a correct,
   #      personalized render with morphing + scroll preservation for free.
-  #      Each refresh is tagged with the originating request id, so the tab
-  #      that caused the change skips its own. https://turbo.hotwired.dev/handbook/streams
+  #      At most one is queued per messager at a time (see
+  #      refresh_inbox_of). https://turbo.hotwired.dev/handbook/streams
   #
   #   3. The per-messager BADGE stream (`[messager, :chats_badge]`,
   #      subscribable from ANY page via the `chats_unread_badge` helper —
@@ -65,6 +65,10 @@ module Chats
     BADGE_PARTIAL = "chats/shared/unread_badge"
     DOCK_UPDATE_PARTIAL = "chats/dock/update"
     READ_STATE_PARTIAL = "chats/conversations/read_state"
+    # The inbox stream's whole payload. Built once, with no request id.
+    INBOX_REFRESH = %(<turbo-stream action="refresh" method="morph" scroll="preserve"></turbo-stream>)
+    # How long a queued inbox refresh stands for the writes after it.
+    INBOX_REFRESH_PENDING = 2.seconds
 
     class << self
       def message_created(message)
@@ -137,17 +141,44 @@ module Chats
       # one first parks the refresh for half a second in an in-process
       # timer (Turbo::Debouncer, a Concurrent::ScheduledTask) and only then
       # enqueues the job, so a deploy or a crash inside that half second
-      # drops the refresh with nothing left to retry it. Its debounce only
-      # ever merged refreshes from the same thread anyway. Bursts merge on
-      # the client instead: Turbo runs one page refresh for refreshes that
-      # arrive within 150 ms of each other (Session#pageRefreshDebouncePeriod),
-      # and chats--refresh-inbox reruns one that landed mid-visit, which
-      # Turbo would otherwise ignore.
+      # drops the refresh with nothing left to retry it.
       #
-      # `method: morph, scroll: preserve` ride on the tag, so the inbox
-      # morphs in place whatever the host layout's refresh meta says.
+      # One job per messager at a time. A refresh carries no data — the
+      # client re-requests its inbox — so while one is queued and hasn't
+      # started, it covers every write that commits before it runs: a burst
+      # (five messages in a 100-person group) is one job per participant,
+      # not five. A marker in Rails.cache says one is queued; the job removes
+      # it as it STARTS, before it broadcasts, so a write that still finds
+      # the marker has committed before that broadcast, and a write after
+      # it queues the next job. Every way the marker can go wrong costs an
+      # extra job, never a missed refresh: a cache without it (null store,
+      # a per-process memory store, an eviction) just doesn't coalesce, and
+      # the marker expires after INBOX_REFRESH_PENDING, so a job lost from
+      # the queue holds nothing back for longer than that.
+      # Refreshes that still arrive close together merge on the client:
+      # Turbo runs one page refresh for refreshes within 150 ms of each
+      # other (Session#pageRefreshDebouncePeriod), and chats--refresh-inbox
+      # reruns one that landed mid-visit, which Turbo would ignore.
       def refresh_inbox_of(messager)
-        Turbo::Streams::BroadcastStreamJob.perform_later([messager, :chats_inbox], content: inbox_refresh_tag)
+        marker = inbox_refresh_marker(messager)
+        return unless Rails.cache.write(marker, true, unless_exist: true, expires_in: INBOX_REFRESH_PENDING)
+
+        begin
+          Chats::InboxRefreshJob.perform_later(messager)
+        rescue StandardError
+          Rails.cache.delete(marker) # nothing is queued: the next write must queue one
+          raise
+        end
+      end
+
+      # The job's half (Chats::InboxRefreshJob): take the marker down, then
+      # broadcast. `method: morph, scroll: preserve` ride on the tag, so the
+      # inbox morphs in place whatever the host layout's refresh meta says.
+      # No request id: one refresh may answer writes from several requests,
+      # and a tab that skipped it as "its own" would miss the others'.
+      def refresh_inbox_now(messager)
+        Rails.cache.delete(inbox_refresh_marker(messager))
+        Turbo::StreamsChannel.broadcast_stream_to(messager, :chats_inbox, content: INBOX_REFRESH)
       end
 
       # The unread badges of +messager+: the nav badge (stream 3) and the
@@ -190,15 +221,12 @@ module Chats
 
       private
 
-      # The inbox stream's whole payload: a page refresh, tagged with the
-      # request that caused it.
-      def inbox_refresh_tag
-        Turbo::StreamsChannel.turbo_stream_refresh_tag(method: :morph, scroll: :preserve).to_str
+      def inbox_refresh_marker(messager)
+        "chats:inbox-refresh:#{Chats.messager_key(messager)}"
       end
 
       # New activity: every active participant's inbox refreshes (including
-      # the sender's — their OTHER tabs/devices need the new ordering; the
-      # originating tab skips its own refresh via Turbo's request-id dedup),
+      # the sender's — their other tabs and devices need the new ordering),
       # and every participant except the sender gets a fresh unread badge.
       # Everyone else — the sender, and every seat on an edit or a delete —
       # gets the dock's list refresh alone.

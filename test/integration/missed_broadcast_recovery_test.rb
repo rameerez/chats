@@ -216,15 +216,16 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     assert_select "aside.chats-dock[data-chats--dock-badge-url-value='/messages/badge']"
   end
 
-  test "a new message's inbox refresh carries the sending request's id, so the tab that sent it skips its own" do
+  test "a new message's inbox refresh names no request: it may stand for other requests' writes too" do
     login_as @bob
     post "/messages/#{@conversation.id}/messages", params: { message: { body: "from my tab" } },
                                                    headers: { "X-Turbo-Request-Id" => "tab-42" }
 
-    jobs = enqueued_jobs.select { |job| job["job_class"] == "Turbo::Streams::BroadcastStreamJob" }
-    contents = jobs.map { |job| ActiveJob::Arguments.deserialize(job["arguments"]).last[:content] }
-    assert_equal 2, contents.size, "both participants' inboxes"
-    assert(contents.all? { |content| content.include?(%(request-id="tab-42")) })
+    streams = capture_turbo_stream_broadcasts([@bob, :chats_inbox]) do
+      perform_enqueued_jobs only: Chats::InboxRefreshJob
+    end
+    assert_nil streams.sole["request-id"],
+               "a tab that skipped it as its own would miss what others wrote in the same window"
   end
 
   private
