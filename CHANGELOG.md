@@ -106,8 +106,9 @@ to configure, no polling.**
   a burst is one job per recipient. A lost marker costs an extra job, never
   a missed refresh, and the marker expires after two seconds. Since another
   write may count on a refresh whose enqueue is still in flight, a failed
-  enqueue is retried once, then the refresh is broadcast on the spot (the
-  error goes to `Rails.error`, not up through the write that committed). The refresh
+  enqueue is retried once, then the refresh is broadcast on the spot. Every
+  refusal goes to `Rails.error` (raised, `false`, or a job the adapter
+  declined), never up through the write that committed. The refresh
   tag carries `method="morph" scroll="preserve"`, so the inbox morphs
   whatever the host layout's refresh meta says, and no request id, since
   it may stand for several requests' writes.
@@ -121,7 +122,16 @@ to configure, no polling.**
   a moment to the microsecond plus the ids on screen at it (`after_ids=`,
   `changed_ids=`): a message missed in the very instant of one on screen,
   or a change missed inside the same millisecond as one on screen (the old
-  cursor rounded up to the millisecond), is no longer lost. An empty
+  cursor rounded up to the millisecond), is no longer lost. The cursors
+  are reconciled moments: a complete render sets them (the page, a window,
+  a history re-render), and so does a catch-up that arrived (its
+  `chats_caught_up` action); a live bubble never moves them, since it can
+  arrive after one that was missed (a message missed at 10:15, then one
+  live at 10:20). What arrived live is named instead, at most 200 ids
+  (`after_ids`, `changed_ids`, each id at most 64 characters); past that,
+  or with `full=1`, the history is re-rendered. Kept on the element
+  (`data-chats-reconciled`), so a dock window moved by a Turbo visit, or a
+  restored snapshot, keeps them. An empty
   thread, which used to ask nothing, asks from the epoch: its first message
   may be the one it missed.
 - **The thread's catch-up is complete.** `GET /:id/refresh` now also
