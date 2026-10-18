@@ -4,6 +4,10 @@
 /coverage/
 /doc/
 /pkg/
+# Built packages (`gem build`): never tracked, never packaged — the
+# gemspec's files come from `git ls-files`, so a tracked one ships inside
+# the next release (0.6.0 shipped seven).
+*.gem
 /spec/reports/
 /tmp/
 /dist/
