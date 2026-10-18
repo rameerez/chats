@@ -11,7 +11,7 @@ It's **Hotwire-native**: messages stream live over Turbo Streams + Action Cable,
 
 Every consumer app eventually needs DMs, and everyone rebuilds the same conversation/participant/message schema, the same Action Cable plumbing, and the same "report this message, block this user" story. `chats` is that whole rebuild, done once, done right.
 
-**Contents:** [Example](#-example) · [Quickstart](#quickstart) · [Data model](#-the-data-model) · [The macros](#-the-macros) · [Real-time](#-real-time-the-hotwire-way) · [Trust & Safety](#%EF%B8%8F-trust--safety-snaps-onto-the-moderate-gem) · [Events](#-events-subscribe-to-the-domain-moments) · [Headless messagers](#-headless-messagers-desks-bots-storefronts) · [Official accounts](#-official-accounts-the-verified-badge) · [Grouped inbox](#%EF%B8%8F-grouped-inbox-rows) · [Locked conversations](#-locked-conversations) · [Signed messages](#%EF%B8%8F-signed-messages) · [Action buttons](#-action-buttons) · [View slots](#-view-slots) · [Profile links](#-profile-links) · [Theming](#-make-it-yours) · [Configuration reference](#configuration-reference) · [The full Ruby API](#-the-full-ruby-api) · [View helpers](#-view-helpers) · [Errors](#errors) · [Locales](#locales) · [Upgrading](#upgrading) · [Testing](#testing)
+**Contents:** [Example](#-example) · [Quickstart](#quickstart) · [Data model](#-the-data-model) · [The macros](#-the-macros) · [Real-time](#-real-time-the-hotwire-way) · [Trust & Safety](#%EF%B8%8F-trust--safety-snaps-onto-the-moderate-gem) · [Events](#-events-subscribe-to-the-domain-moments) · [Headless messagers](#-headless-messagers-desks-bots-storefronts) · [Official accounts](#-official-accounts-the-verified-badge) · [Grouped inbox](#%EF%B8%8F-grouped-inbox-rows) · [Locked conversations](#-locked-conversations) · [Signed messages](#%EF%B8%8F-signed-messages) · [Action buttons](#-action-buttons) · [View slots](#-view-slots) · [Messaging dock](#-messaging-dock) · [Profile links](#-profile-links) · [Theming](#-make-it-yours) · [Configuration reference](#configuration-reference) · [The full Ruby API](#-the-full-ruby-api) · [View helpers](#-view-helpers) · [Errors](#errors) · [Locales](#locales) · [Upgrading](#upgrading) · [Testing](#testing)
 
 ## 👨‍💻 Example
 
@@ -70,6 +70,8 @@ mount Chats::Engine => "/messages"
 
 That's it. `/messages` is now a working, real-time inbox: threads, bubbles, reactions, read receipts, typing indicators. The engine inherits your `ApplicationController` (so your auth, layout, and locale apply automatically — Devise works out of the box), and its bundled Stimulus controllers register themselves through your existing importmap setup. Zero JavaScript changes.
 
+An inbox lists the conversations somebody has **written in**. Opening a conversation (`chat_with`, the Message button) creates it, but until a first message exists it appears nowhere — not in the inbox, its stacks, search, the dock or any count — so nobody's inbox fills with "No messages yet" rows. It still opens when you go to it, which is where the first message gets written.
+
 Drop a "Message" button anywhere — it renders only when the viewer is allowed to message that person:
 
 ```erb
@@ -82,9 +84,15 @@ And a live unread badge in your nav:
 <%= chats_unread_badge %>
 ```
 
+Or give every page LinkedIn-style floating chat windows with one line in your layout — see [the messaging dock](#-messaging-dock):
+
+```erb
+<%= chats_dock %>
+```
+
 ## What `chats` does (and doesn't) do
 
-**Does:** direct 1:1 threads, group conversations, image (or any) attachments via ActiveStorage, emoji reactions, read receipts ("Seen"), unread counts and live badges, typing indicators, message editing, soft deletion (WhatsApp-style tombstones), system messages your app posts into threads, action buttons under messages ("Pay now", "Join my room"), per-sender rate limiting, inbox search, infinite scroll-up pagination, optional encryption at rest, and small adapter seams for moderation + notifications.
+**Does:** direct 1:1 threads, group conversations, image (or any) attachments via ActiveStorage, emoji reactions, read receipts ("Seen"), unread counts and live badges, typing indicators, message editing, soft deletion (WhatsApp-style tombstones), system messages your app posts into threads, action buttons under messages ("Pay now", "Join my room"), a LinkedIn-style messaging dock of floating chat windows, per-sender rate limiting, inbox search, infinite scroll-up pagination, optional encryption at rest, and small adapter seams for moderation + notifications.
 
 **Doesn't:** chatbots/LLM agents, workspaces/tenancy, voice/video, public channels, federation. It's peer-to-peer (and group) human messaging — not a Slack clone, not a support-ticketing tool.
 
@@ -149,6 +157,7 @@ All three are inert by default (the label falls back to the record's `to_s`, not
 - **Bubbles are broadcast viewer-agnostic** — one render shared by every subscriber. A tiny Stimulus controller aligns own-vs-other client-side by comparing sender keys. This is what makes single-render broadcasts possible at all.
 - **The inbox** receives Turbo 8 page *refreshes* (morphing, scroll-preserving) instead of surgically patched rows: inbox rows are intensely per-viewer (unread badges, bold states, ordering), so each client re-requests and gets a correct, personalized render. Refreshes are debounced and tagged so the tab that caused the change skips its own.
 - **Unread badges** get their own stream (`chats_unread_badge` helper) so any page can host a live badge without inheriting inbox refreshes.
+- **The messaging dock** has one more per-messager stream (`[messager, :chats_dock]`): the same badge moment, whose replaced badge also names the conversation that changed and whether its window should pop open. The dock reacts to that one element; no polling, no channel of its own.
 - **Typing indicators** are a Turbo Stream *custom action* — ephemeral, nothing persisted, no Action Cable channel class, no connection identification requirements.
 - **Cable down?** Everything still works request/response. Real-time is an enhancement, not a requirement.
 
@@ -527,6 +536,64 @@ Ejecting a whole screen to add one row or one button is too coarse. The bundled 
 
 An engine mounted on top of chats ships its own `app/views/chats/slots/…`; the host's file wins by view-path order. `rails generate chats:views` is still there for wholesale restyling.
 
+## 🪟 Messaging dock
+
+LinkedIn and Steam don't send you to another page to answer a message: chats live in small windows in the bottom-right corner while you keep doing what you were doing. One line in your layout, for signed-in viewers, gives your app the same:
+
+```erb
+<%# app/views/layouts/application.html.erb, before </body> %>
+<%= chats_dock %>
+```
+
+![The messaging dock](docs/screenshots/dock-desktop.png)
+
+*Two conversations open in floating windows (one with an action button), and the panel with the recent conversations.*
+
+- **The bar** sits in the corner: your avatar, "Messages" and the live unread badge.
+- **The panel** opens from it: a search field (when `config.search` is on), your most recent conversations exactly as the inbox renders them (stacks, verified badges, previews, unread counts) and a "See all messages" link to the full inbox. It is a `<details>`, so it opens without JavaScript, and every row is a real link to its thread.
+- **A window** opens when you click a row: the same thread the full page shows (live messages, read receipts, typing, the long-press menu, attachments, action buttons, your `composer_actions`, the locked composer) under a compact header with ↗ (open the full page), – (minimize; clicking the header does it too) and × (close). The newest window sits next to the panel. Opening one more than fit closes the oldest.
+- **Live**: when a message arrives, the dock's badge and list update, and the conversation's window **pops open**. Never for your own messages, never for a conversation you muted, never over a window you're using: when the dock is full, a new conversation only takes the place of a minimized window. A minimized window that receives a message gets a highlighted header instead.
+- **Reading** happens when a window is on screen. A minimized window doesn't mark anything as read until you expand it.
+- **It stays put**: the dock is `data-turbo-permanent`, so Turbo Drive carries its open windows, drafts and scroll positions from page to page. Which windows are open, and which are minimized, is also kept in `localStorage` (one key per messager), so a full reload brings them back. If the browser refuses storage, the dock just doesn't remember.
+
+On a phone (below `--chats-dock-breakpoint`, 640px) the bar becomes a round button with the badge, the panel a full-screen sheet, and a conversation **one full-screen window** with ‹ to go back to the list. The composer stays above the keyboard. Messages don't pop windows open on a phone: the badge on the button tells you.
+
+<img src="docs/screenshots/dock-phone-button.png" alt="A phone: the dock is a round button with an unread badge in the corner" width="240"> <img src="docs/screenshots/dock-phone-panel.png" alt="A phone: the dock's panel fills the screen with the recent conversations" width="240"> <img src="docs/screenshots/dock-phone-window.png" alt="A phone: one conversation fills the screen, with the composer at the bottom" width="240">
+
+**Open a window from your own pages.** `dock: true` on the Message button opens the conversation in the dock instead of navigating to it:
+
+```erb
+<%= chat_button_to @player, dock: true %>
+```
+
+It needs `chats_dock` on the same page: without the dock, the button's response has nowhere to go and nothing happens.
+
+**Options:**
+
+```erb
+<%= chats_dock windows: 2, recent: 8 %>   <%# windows open at once (3), conversations in the panel (10) %>
+<%= chats_dock everywhere: true %>        <%# also on the engine's own pages (see below) %>
+```
+
+**Not on your messaging pages.** `chats_dock` renders nothing on the engine's own pages (the inbox and the thread already are the messaging UI), and a page that renders a conversation never gets a window for it too: the live updates find a thread by its DOM ids, which must exist once. If you have messaging pages of your own, don't render the dock there. `everywhere: true` renders it on the engine's pages as well.
+
+**Theme it** like the rest of chats:
+
+```css
+:root {
+  --chats-dock-z: 50;               /* above your page, below your modals */
+  --chats-dock-width: 18rem;        /* the panel */
+  --chats-dock-panel-height: 32rem;
+  --chats-window-width: 20rem;
+  --chats-window-height: 26.25rem;
+  --chats-dock-bar-height: 3.25rem; /* the bar and every window header */
+  --chats-dock-offset: 1rem;        /* distance from the right edge */
+  --chats-dock-breakpoint: 640px;   /* below it, the phone layout */
+}
+```
+
+The `dock_panel_footer` [slot](#-view-slots) puts your own link next to "See all messages". `rails generate chats:views` ejects the dock's partials (`chats/dock/`) along with everything else. Escape closes the window you're typing in, or the panel; all labels are localized under `chats.dock.*`.
+
 ## 🔗 Profile links
 
 `chats` never assumes your app has a `user_path`. Tell it where a messager lives and names become links; leave it alone and they render as plain text:
@@ -559,7 +626,7 @@ Want full control? Eject the views Devise-style and restyle with your own stack 
 rails generate chats:views
 ```
 
-Override any bundled Stimulus controller by pinning the same importmap key — host pins win. The current keys are `controllers/chats/thread_controller`, `controllers/chats/composer_controller`, `controllers/chats/debounced_submit_controller`, and `controllers/chats/refresh_inbox_controller`.
+Override any bundled Stimulus controller by pinning the same importmap key — host pins win. The current keys are `controllers/chats/thread_controller`, `controllers/chats/composer_controller`, `controllers/chats/debounced_submit_controller`, `controllers/chats/refresh_inbox_controller`, and `controllers/chats/dock_controller`.
 
 ## Configuration reference
 
@@ -624,7 +691,8 @@ alice.chat_with(bob, about: ride)             # the DM about that ride
 alice.chat_with(bob, carol, title: "Trip")    # a group (alice is owner)
 alice.message!(bob, "hi", about: ride)        # send (resolves the thread)
 alice.message!(conversation, "hi", files: []) # send into a conversation
-alice.chats                                   # inbox relation, newest first
+alice.chats                                   # every conversation she's in (what she may open), newest first
+alice.chats.with_messages                     # ...the ones somebody wrote in: what lists show
 alice.unread_chats_count                      # conversations with unread messages
 alice.message!(bob, "hi", author: lucia)      # written by lucia, sent from alice's seat
 alice.message!(bob, "Let's play!",            # with one button under it
@@ -673,6 +741,7 @@ Chats::Conversation.direct_between!(alice, bob, about: ride)   # find-or-create;
 Chats::Conversation.group!(alice, [bob, carol], title: "Trip")
 Chats::Conversation.direct .groups .about(ride) .recent_first
 Chats::Conversation.inbox_for(alice) .excluding_blocked_for(alice) .unread_by(alice)
+Chats::Conversation.with_messages                              # somebody wrote in it (every list reads through this)
 Chats::Conversation.unread_counts_for(alice, conversations)    # { id => count } in one query
 conversation.direct? / conversation.group?
 conversation.participant_for(alice)                            # the seat, or nil
@@ -694,6 +763,7 @@ Chats::Participant.active .muted
 
 # The inbox
 inbox = Chats::Inbox.for(alice, query: "trip", with: sgid)   # search, or filtered to one counterpart's stack
+Chats::Inbox.for(alice, limit: 10)                           # the first rows only (the dock's recent list)
 inbox.rows  inbox.each  inbox.to_a  inbox.size  inbox.any?  inbox.empty?  inbox.filtered?
 inbox.conversations                                          # the flat, unstacked list
 inbox.unread_counts  inbox.unread_count_for(conversation)  inbox.unread_count
@@ -725,8 +795,9 @@ All available in the bundled views **and** in your own templates:
 
 | helper | renders |
 |---|---|
-| `chat_button_to(other, about:, label:, **html)` | a "Message" button, only when the viewer may message them |
+| `chat_button_to(other, about:, label:, dock:, **html)` | a "Message" button, only when the viewer may message them; `dock: true` opens a dock window instead of navigating |
 | `chats_unread_badge(messager = viewer)` | the live unread badge with its own stream |
+| `chats_dock(windows: 3, recent: 10, everywhere: false)` | the [messaging dock](#-messaging-dock): bar, panel and floating windows |
 | `chats_messager_name(messager, css_class:)` | the name, linked through `messager_url`, badged when verified |
 | `chats_messager_avatar(messager)` / `chats_conversation_avatar(conversation, viewer)` | avatar (URL, attachment, variant or initials) |
 | `chats_verified_badge(messager)` | the official-account mark, or nil |
@@ -745,7 +816,7 @@ See the end of [the full Ruby API](#-the-full-ruby-api): `Chats::Error` → `Blo
 
 ## Locales
 
-`en` and `es` ship with the gem under `chats.*` (`inbox`, `thread`, `conversation`, `verified`, `message`, `composer`, `buttons`, `flashes`). Your own locale
+`en` and `es` ship with the gem under `chats.*` (`inbox`, `thread`, `conversation`, `verified`, `message`, `composer`, `dock`, `buttons`, `flashes`). Your own locale
 files **outrank** the gem's — Rails loads every engine's locales first and the
 app's last (a 0.2.0 fix; the gem used to re-append its files after yours and
 silently win) — so override any key in your `es.yml` and the gem's copy loses.
@@ -763,7 +834,7 @@ rails generate chats:upgrade   # 0.2.0: message authorship columns · 0.4.0: the
 rails db:migrate
 ```
 
-0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
+0.5.0 needs no migration: the messaging dock is opt-in (`chats_dock`). Two things change on their own: a conversation nobody has written in is no longer listed (it used to show as a "No messages yet" row), and the thread body moved into `chats/conversations/_thread.html.erb`; read the 0.5.0 [CHANGELOG](CHANGELOG.md) entry if you ejected `show.html.erb`. 0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
 
 ## Database support
 

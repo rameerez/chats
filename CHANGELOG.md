@@ -4,6 +4,132 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-18
+
+The messaging dock. LinkedIn and Steam keep your conversations in small
+windows in the bottom-right corner while you go on using the app; one line
+in a layout, `<%= chats_dock %>`, now does that. **No migration.** The dock
+is opt-in, but two things change without asking, both under Changed: a
+conversation nobody has written in is no longer listed, and the thread body
+moved into a partial.
+
+### Added
+- **`chats_dock`**, the messaging dock. A fixed bottom-right element,
+  `aside#chats_dock` (`data-turbo-permanent`, so Turbo Drive carries its
+  open windows, drafts, scroll positions and subscriptions from page to
+  page), holding the floating windows (`#chats_dock_windows`, newest nearest
+  the panel) and the panel. The panel is a `<details>`: its header is the
+  bar (the viewer's avatar, "Messages", a live unread badge), and open it
+  has a search field (when `config.search`), the viewer's most recent
+  inbox rows (stacks, verified badges, previews and unread counts, as the
+  inbox renders them) and a "See all messages" link. It opens without
+  JavaScript and its rows are real links to the thread; the
+  `chats--dock` controller makes a plain click open a window instead.
+  Options: `windows:` (3, how many can be open; never more than fit beside
+  the panel, and opening another closes the oldest), `recent:` (10, rows in
+  the panel) and `everywhere:` (see below). Renders nothing for a signed-out
+  visitor and nothing on the engine's own pages.
+- **Floating windows.** A window is a turbo frame
+  (`dom_id(conversation, :window)`) loading `GET /:id?window=1`, which,
+  from inside a frame, renders the SAME thread body as the page (live
+  bubbles, read state, typing, the long-press menu, the composer or the
+  locked composer, `composer_actions`) under a compact header: avatar,
+  name (linked through `messager_url`), verified badge, subject, and open
+  full page ↗, minimize –, close ×. Clicking the header minimizes it too;
+  a minimized window keeps its content and only folds to its header. A
+  window never reads on render: the thread reads once it is on screen, so
+  a window restored minimized after a reload doesn't swallow the badge.
+  The dock never opens a window for a conversation the page itself shows
+  (the streams address the thread's DOM ids, which must exist once).
+  Which windows are open, and minimized, is kept in `localStorage` under a
+  key per messager, so a reload brings them back; every access is guarded,
+  and a browser that refuses storage only means the dock forgets. Escape
+  closes the window the focus is in (or the panel), and a window opened by
+  a click puts the focus in its composer.
+- **Live pop-ups, server-driven.** `Chats::Broadcasts.update_badge_of(
+  messager, conversation:, pop_up:)` also replaces `#chats_dock_badge` on
+  a new per-messager stream, **`[messager, :chats_dock]`**
+  (`chats/dock/_badge`: the count plus `data-changed`,
+  `data-latest-conversation-id` and `data-pop-up`). When the replaced badge
+  connects, the dock reloads its recent list and, with `data-pop-up`,
+  opens that conversation's window. Pop-up follows
+  `Participant#notifiable_for?`: never the sender (who gets no dock
+  broadcast at all, as with the nav badge), never a muted seat, never a
+  headless messager. The badge itself stays truthful for a muted seat.
+  A pop-up never closes a window someone has open: with the dock full it
+  only takes the place of a minimized window, minimized. No polling.
+- **Phones.** Below `--chats-dock-breakpoint` (640px) the dock is a round
+  button with the badge (clear of the safe areas), the panel a full-screen
+  sheet, and a conversation one full-screen window with ‹ back to the
+  list, sized to the visual viewport so the composer stays above the
+  keyboard. Messages don't pop windows open on a phone. Media queries can't
+  read custom properties, so the controller reads the breakpoint and sets
+  `.chats-dock--compact`; without JavaScript a phone gets the desktop bar.
+- **`chat_button_to(other, dock: true)`** posts `dock=1`, and
+  `ConversationsController#create` answers a Turbo Stream that appends the
+  conversation's window to `#chats_dock_windows` (replacing one with the
+  same id). It belongs with `chats_dock`: on a page without the dock the
+  stream has no target and does nothing. Without Turbo, and without
+  `dock`, the redirect is unchanged.
+- **`GET /dock`** (`dock_conversations_path`), the panel's recent list:
+  `Chats::Inbox` with `?q=` and `?recent=` (1 to 50), rendered into the
+  `chats_dock_list` frame without a layout.
+- **`Chats::Inbox.for(viewer, limit:)`**: how many rows come back
+  (`config.inbox_limit` by default, never more). A smaller limit is a
+  smaller query; a search still looks through the whole `inbox_limit`
+  window and then returns at most `limit` matches.
+- **`Chats::Conversation.with_messages`**: conversations somebody has
+  written in (`last_message_id IS NOT NULL`, which the denormalized pointer
+  already gives).
+- **The `dock_panel_footer` slot** (receives `viewer:`): your own link next
+  to "See all messages".
+- CSS variables `--chats-dock-z` (50), `--chats-dock-width`,
+  `--chats-dock-panel-height`, `--chats-dock-bar-height`,
+  `--chats-dock-offset`, `--chats-dock-breakpoint`, `--chats-window-width`
+  and `--chats-window-height`; `prefers-reduced-motion` turns the slide-in
+  off. Strings under `chats.dock.*` in `en` and `es`. The controller is
+  pinned as `controllers/chats/dock_controller`, and `rails generate
+  chats:views` has a `dock` group (`app/views/chats/dock/`).
+
+### Changed
+- **A conversation nobody has written in is never listed.** Opening a
+  conversation (`chat_with`, the Message button) creates it, and until now
+  the inbox listed it straight away as a "No messages yet" row. Every list
+  now reads through `Chats::Conversation.with_messages`: the inbox rows,
+  a stack's rows and its `open_count` / `unread_count`, search, the
+  `?with=` view and the dock. **If your inbox showed rows for threads
+  that were opened and never used, it no longer does.** The conversation
+  still opens when addressed directly (the thread page and its dock
+  window work), because `Messager#chats`, the relation every engine lookup
+  authorizes through, is unchanged; use `chats.with_messages` for lists of
+  your own. `unread_chats_count` already agreed (an empty conversation has
+  nothing unread).
+- **The thread body moved into `chats/conversations/_thread.html.erb`.**
+  It holds the `chats--thread` element and everything inside it except the
+  header: the `turbo_stream_from`, the scroller with the older-pages frame
+  and the «new messages» line, read state, typing, the long-press popup,
+  the photo preview and the composer. It renders as a partial layout whose
+  `yield` is the header, with locals `conversation:`, `messages:`, `more:`,
+  `first_unread_id:`, `counterpart:` and `read_pending:`. `show.html.erb`
+  is now its header wrapped in that partial; the page's DOM is unchanged
+  except for a new `data-chats--thread-read-pending-value="false"`. **If
+  you ejected `show.html.erb`**, your copy keeps rendering the page as
+  before. Dock windows render the gem's `_thread` (or yours, if you eject
+  it), so a restyle that lives in your `show.html.erb` doesn't reach them:
+  move it into an ejected `_thread.html.erb` to style both.
+- The inbox row partials (`_conversation_row`, `_group`) take an optional
+  `dock:` local that adds the window-opening action to their link. Rows
+  ejected earlier still work in the dock; they navigate to the thread
+  instead of opening a window.
+- The long-press Edit event (`chats:edit-message`) now carries its thread
+  element, and a composer only starts editing for a message of its own
+  thread, since a page can hold several threads now. The check lives in
+  the controller, so ejected composer views get it too; a host that pinned
+  its own `composer_controller` reacts to every thread's Edit, as before.
+- The dummy app has a real importmap setup (Turbo, Stimulus, the stock
+  eager loader) and a host home page with the dock, which is how the
+  screenshots were taken.
+
 ## [0.4.2] - 2026-10-17
 
 ### Changed
