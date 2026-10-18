@@ -21,6 +21,10 @@
 <%# `deletion: :hard` only: every message from the client's oldest bubble on
     that still exists (the chats_prune action, registered by the thread
     controller, removes the rest). %>
+<%# Where the client stands now (ConversationsController#caught_up_cursors):
+    its cursors move only when an answer like this one arrives. %>
+<%= @caught_up %>
+
 <% if @present %>
   <%= turbo_stream_action_tag :chats_prune,
         target: dom_id(@conversation, :history),

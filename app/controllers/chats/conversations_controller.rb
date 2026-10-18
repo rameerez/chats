@@ -10,6 +10,10 @@ module Chats
     # How far before its list of what exists a catch-up stops naming
     # deletions (see #present_messages).
     PRESENT_MARGIN = 10.seconds
+    # The most ids a catch-up cursor may name, and the longest id (a UUID is
+    # 36): a client past either gets its history re-rendered instead.
+    CURSOR_IDS_LIMIT = 200
+    CURSOR_ID_LENGTH = 64
 
     before_action :set_conversation, only: %i[show read typing leave mute unmute refresh]
     helper_method :chats_counterpart
@@ -120,6 +124,11 @@ module Chats
     def refresh
       head :no_content and return if params[:changed].blank? && params[:since].blank?
 
+      # A client whose cursors name more than the limit (a busy thread whose
+      # live bubbles piled up since it last caught up, or a forged request)
+      # is answered with what is cheap at any size: the latest page.
+      return render_from_scratch if cursors_over_limit?
+
       scope = rendered_messages
       new_messages, @updated_messages = catch_up_on(scope)
       @new_messages = new_messages.oldest_first.limit(Chats.config.messages_per_page + 1).to_a
@@ -131,12 +140,9 @@ module Chats
       # had its id (no `history=1`) gets the page refresh it always got;
       # `request_id: nil`, because Turbo skips a refresh tagged with a request
       # of its own, and this one answers the client's own catch-up.
-      if @new_messages.size > Chats.config.messages_per_page
-        return render_latest_history if params[:history].present?
+      return render_from_scratch if @new_messages.size > Chats.config.messages_per_page
 
-        return render turbo_stream: turbo_stream.refresh(request_id: nil)
-      end
-
+      @caught_up = caught_up_cursors if params[:changed].present?
       @present = present_messages if Chats.config.deletion == :hard && params[:from].present?
       render "chats/conversations/refresh", formats: :turbo_stream
     end
@@ -242,9 +248,59 @@ module Chats
       end
     end
 
-    # The moment and the ids seen at it, from `<name>=µs` and `<name>_ids=1,2`.
+    # The moment and the ids seen with it, from `<name>=µs` and `<name>_ids=1,2`.
     def cursor(name)
       [time_from_us(params[name]), params[:"#{name}_ids"].to_s.split(",")]
+    end
+
+    def cursors_over_limit?
+      return true if params[:full].present?
+
+      %i[after_ids changed_ids].any? do |name|
+        ids = params[name].to_s.split(",")
+        ids.size > CURSOR_IDS_LIMIT || ids.any? { |id| id.size > CURSOR_ID_LENGTH }
+      end
+    end
+
+    # Where the client stands once it has rendered this answer: what it was
+    # sent is now known to be on screen, so the cursors move to it. Sent
+    # back with the answer (the chats_caught_up action), because only an
+    # answer that arrived may move them.
+    def caught_up_cursors
+      after = cursor(:after).first
+      changed_at, changed_seen = cursor(:changed)
+      sent = @new_messages + @updated_messages.to_a
+      after = [after, *@new_messages.map(&:created_at)].max
+
+      newest = sent.map(&:updated_at).max
+      changed_seen = [] if newest && newest > changed_at
+      changed_at = [changed_at, newest].compact.max
+      changed_seen |= sent.select { |message| message.updated_at == changed_at }.map { |message| message.id.to_s }
+
+      cursors_tag(after, changed_at, changed_seen)
+    end
+
+    def cursors_tag(after, changed_at, changed_seen)
+      helpers.turbo_stream_action_tag(
+        :chats_caught_up,
+        target: helpers.dom_id(@conversation, :messages),
+        "data-after": microseconds(after), "data-changed": microseconds(changed_at),
+        "data-changed-ids": changed_seen.join(",")
+      )
+    end
+
+    def microseconds(time)
+      (time.to_i * 1_000_000) + time.usec
+    end
+
+    # The history at its latest page, or, for a thread view ejected before
+    # the history had its id (no `history=1`), the page refresh it always
+    # got. `request_id: nil`: Turbo skips a refresh tagged with a request of
+    # its own, and this one answers the client's own catch-up.
+    def render_from_scratch
+      return render_latest_history if params[:history].present?
+
+      render turbo_stream: turbo_stream.refresh(request_id: nil)
     end
 
     # The conversation's messages with everything a bubble renders.
@@ -272,17 +328,24 @@ module Chats
     # The thread's history at its latest page, for a catch-up more than a
     # page behind: the same messages, frame chain and «new messages» line
     # the thread opens with (chats/conversations/_history).
+    #
+    # A complete render, so it carries its own cursors: the newest creation
+    # and the newest change on the page.
     def render_latest_history
       messages, more = latest_page_of(rendered_messages)
       participant = @conversation.participant_for(chats_current_messager)
-
-      render turbo_stream: turbo_stream.update(
+      newest_change = messages.map(&:updated_at).max || Time.zone.at(0)
+      history = turbo_stream.update(
         helpers.dom_id(@conversation, :history),
         partial: "chats/conversations/history",
         locals: { conversation: @conversation, messages: messages, more: more,
                   first_unread_id: first_unread_id(participant, messages),
                   counterpart: chats_counterpart, window: false }
       )
+      cursors = cursors_tag(messages.map(&:created_at).max || Time.zone.at(0), newest_change,
+                            messages.select { |message| message.updated_at == newest_change }.map { |m| m.id.to_s })
+
+      render turbo_stream: helpers.safe_join([history, cursors])
     end
 
     # Under `deletion: :hard` a deleted message leaves nothing to replace:

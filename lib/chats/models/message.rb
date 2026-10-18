@@ -164,16 +164,16 @@ module Chats
     }
 
     # Catch-up scopes for ConversationsController#refresh (the stale-thread
-    # recovery path — see the thread controller's catch-up). A cursor is a
-    # moment, to the microsecond, and the ids of the messages the client
-    # already has AT that moment: two rows can share a timestamp, and a
-    # moment alone can't tell the one on screen from the one that was missed.
-    # The client keeps two, its newest creation and its newest change:
-    #   created_after(at, seen:)   — created later, or at that moment and not
-    #                                among the ones seen: appended;
+    # recovery path — see the thread controller's catch-up), on the client's
+    # two cursors. Each is a moment, to the microsecond, up to which the
+    # client KNOWS it has everything (a complete render, or a catch-up that
+    # succeeded — never a live bubble, which can arrive past one it missed),
+    # with the ids it has on screen from that moment on:
+    #   created_after(at, seen:)   — created at or after that moment and not
+    #                                on screen: appended;
     #   created_through(at, seen:) — the complement: what the client has;
-    #   updated_after(at, seen:)   — changed later, or at that moment and not
-    #                                among the ones seen.
+    #   updated_after(at, seen:)   — changed after that moment, or at it and
+    #                                not among the ones seen in that version.
     # Replacements are created_through(after).updated_after(changed): changes
     # to what is on screen, never a second copy of what is appended — a Turbo
     # append of an existing dom_id would MOVE that bubble to the end. Two
@@ -182,10 +182,10 @@ module Chats
     # Pattern from Basecamp's Campfire (Rooms::RefreshesController):
     # https://github.com/basecamp/once-campfire
     scope :created_after, lambda { |at, seen: []|
-      where(arel_table[:created_at].gt(at)).or(where(created_at: at).where.not(id: seen))
+      where(arel_table[:created_at].gteq(at)).where.not(id: seen)
     }
     scope :created_through, lambda { |at, seen: []|
-      where(arel_table[:created_at].lt(at)).or(where(created_at: at, id: seen))
+      where(arel_table[:created_at].lt(at)).or(where(id: seen))
     }
     scope :updated_after, lambda { |at, seen: []|
       where(arel_table[:updated_at].gt(at)).or(where(updated_at: at).where.not(id: seen))

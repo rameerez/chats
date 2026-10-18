@@ -60,9 +60,10 @@ class ThreadRefreshTest < ActionDispatch::IntegrationTest
     assert_equal "text/vnd.turbo-stream.html", response.media_type
     streams = css_select("turbo-stream")
     targets = streams.map { |stream| [stream["action"], stream["target"]] }
-    assert_equal [["update", dom_id(@conversation, :history)]], targets,
-                 "the history only: never a page refresh, which would clear the composer's draft " \
-                 "(and, in a dock window, refresh the host's whole page)"
+    assert_equal [["update", dom_id(@conversation, :history)], ["chats_caught_up", dom_id(@conversation, :messages)]],
+                 targets,
+                 "the history only, and where it leaves the cursors: never a page refresh, which would clear " \
+                 "the composer's draft (and, in a dock window, refresh the host's whole page)"
 
     # Exactly the latest page, in order, with the scroll-up chain anchored at
     # its oldest message, so nothing between it and what was rendered is lost.

@@ -22,6 +22,8 @@ const PRESS_MOVE_TOLERANCE_PX = 12
 // last few pixels home. Keep this a hair ABOVE the CSS transform duration.
 const POPUP_TRANSITION_MS = 280
 const MAX_RENDERED_MESSAGES = 300
+// Keep in step with ConversationsController::CURSOR_IDS_LIMIT.
+const CURSOR_IDS = 200
 const TRIM_LEEWAY = 20
 
 // chats--thread: everything live about an open conversation.
@@ -92,6 +94,8 @@ export default class extends Controller {
   connect() {
     this.registerTypingStreamAction()
     this.registerPruneStreamAction()
+    this.registerCaughtUpStreamAction()
+    this.caughtUp({ detail: this.storedCursors() || this.cursorsOfRender() })
     // The dock's engagement gate: the window frame around a dock thread.
     // No gate (the thread page) means always engaged.
     this.gate = this.element.closest("[data-chats-active]")
@@ -129,6 +133,7 @@ export default class extends Controller {
     }
     this.element.addEventListener("click", this.suppressClickCapture, true)
     this.element.addEventListener("chats:prune", this.prune)
+    this.element.addEventListener("chats:caught-up", this.caughtUp)
     this.stopRecovery = recoverMissedBroadcasts(this.element, () => this.refreshThread())
     this.watchScreenPresence()
   }
@@ -141,6 +146,7 @@ export default class extends Controller {
     clearTimeout(this.readTimer)
     this.stopRecovery?.()
     this.element.removeEventListener("chats:prune", this.prune)
+    this.element.removeEventListener("chats:caught-up", this.caughtUp)
     this.presenceObserver?.disconnect()
     this.gate?.removeEventListener("chats:activated", this.flushPendingRead)
     this.element.removeEventListener("click", this.suppressClickCapture, true)
@@ -155,7 +161,7 @@ export default class extends Controller {
   // --- Bubbles ---------------------------------------------------------------
 
   messageTargetConnected(element) {
-    this.trackLoadCursor(element)
+    this.trackLegacyCursor(element)
     this.classify(element)
     if (this.booting) return
     // Live appends can land out of order (multi-worker hosts broadcast from
@@ -510,54 +516,91 @@ export default class extends Controller {
   // --- Stale-thread refresh (catch up after sleep/disconnect) --------------------
 
   // Two cursors, because "new" and "changed" are different questions: the
-  // newest creation on screen (`after`: anything newer is appended) and the
-  // newest change on screen (`changed`: anything changed since is
-  // replaced). One can't answer both: a message created at 10:15 and
-  // missed, while a bubble on screen was edited at 10:20, is older than the
-  // newest change. Each is a moment to the microsecond the database keeps
-  // (an integer below 2^53, exact as a Number) and the ids already on
-  // screen at that moment: two rows can share a timestamp, and the moment
-  // alone can't tell the one shown from the one missed.
-  trackLoadCursor(element) {
-    const id = element.dataset.messageId
-    this.createdCursor = this.advance(this.createdCursor, Number(element.dataset.createdAtUs || 0), id)
-    this.changedCursor = this.advance(this.changedCursor, Number(element.dataset.updatedAtUs || 0), id)
-    // Bubbles ejected before they carried the cursors above: the one
-    // millisecond cursor they had.
+  // newest creation (`after`: anything newer is appended) and the newest
+  // change (`changed`: anything changed since is replaced). One can't
+  // answer both: a message created at 10:15 and missed, while a bubble on
+  // screen was edited at 10:20, is older than the newest change. Each is a
+  // moment to the microsecond the database keeps (an integer below 2^53,
+  // exact as a Number).
+  //
+  // They are RECONCILED moments: how far the thread knows it has
+  // everything. A complete render sets them (the page, a window, a history
+  // re-render: the server sends those with it), and so does a catch-up
+  // that arrived (the chats_caught_up action); a live bubble never moves
+  // them, because it can arrive past one that was missed (a message missed
+  // at 10:15, then one live at 10:20: a cursor at 10:20 would skip 10:15
+  // for good). What arrived live is named instead, so it isn't sent again:
+  // every bubble on screen created since `after`, and every one whose
+  // version is exactly the `changed` moment. They live on the element
+  // (data-chats-reconciled): the dock moves its windows, and a Turbo
+  // snapshot is restored, without losing them.
+  cursorsOfRender() {
+    const created = this.messageTargets.map((message) => Number(message.dataset.createdAtUs || 0))
+    const updated = this.messageTargets.map((message) => Number(message.dataset.updatedAtUs || 0))
+    const changed = Math.max(0, ...updated)
+    return {
+      after: Math.max(0, ...created),
+      changed,
+      changedIds: this.messageTargets.filter((_, index) => updated[index] === changed).map((message) => message.dataset.messageId)
+    }
+  }
+
+  caughtUp = (event) => {
+    this.reconciled = event.detail
+    this.element.dataset.chatsReconciled = JSON.stringify(event.detail)
+  }
+
+  storedCursors() {
+    try {
+      return JSON.parse(this.element.dataset.chatsReconciled || "null")
+    } catch {
+      return null
+    }
+  }
+
+  // Bubbles ejected before they carried the cursors above: the one
+  // millisecond cursor they had, which moves with every bubble.
+  trackLegacyCursor(element) {
     const legacy = Number(element.dataset.updatedAtMs || 0)
     if (legacy > (this.legacyCursor || 0)) this.legacyCursor = legacy
   }
 
-  advance(cursor = { at: 0, ids: new Set() }, at, id) {
-    if (!at || !id || at < cursor.at) return cursor
-    if (at > cursor.at) return { at, ids: new Set([id]) }
-    cursor.ids.add(id)
-    return cursor
-  }
-
-  // What the stream missed: messages created after the newest one on screen
-  // (appended), ones on screen changed since (replaced: edits, tombstones,
-  // reactions), the read state, and — when messages are hard-deleted —
-  // which rendered bubbles still exist. An empty thread asks from the
-  // epoch: its first message may be the one it missed. `from` is the
-  // oldest rendered bubble, so the server can name every bubble that should
-  // be on screen. A thread more than a page behind gets its history
-  // re-rendered at the latest page instead (`history`: this thread's
-  // scroller has the id that takes it; one ejected before it did gets a
-  // page refresh); it then opens at the bottom, as a fresh thread does.
-  refreshThread() {
+  // What the stream missed: messages created after the reconciled moment
+  // and not on screen (appended), ones on screen changed since (replaced:
+  // edits, tombstones, reactions), the read state, and — when messages are
+  // hard-deleted — which rendered bubbles still exist. An empty thread asks
+  // from the epoch: its first message may be the one it missed. `from` is
+  // the oldest rendered bubble, so the server can name every bubble that
+  // should be on screen. A thread more than a page behind, or naming more
+  // than CURSOR_IDS bubbles, gets its history re-rendered at the latest
+  // page instead (`history`: this thread's scroller has the id that takes
+  // it; one ejected before it did gets a page refresh); it then opens at
+  // the bottom, as a fresh thread does, and asks once more from there, for
+  // anything that arrived live while the history was being re-rendered.
+  refreshThread({ followUp = true } = {}) {
     if (!this.refreshUrlValue) return
 
     const params = new URLSearchParams()
-    if (this.createdCursor?.at || !this.legacyCursor) {
-      const created = this.createdCursor || { at: 0, ids: new Set() }
-      const changed = this.changedCursor || { at: 0, ids: new Set() }
-      params.set("after", created.at)
-      if (created.ids.size) params.set("after_ids", [...created.ids].join(","))
-      params.set("changed", changed.at)
-      if (changed.ids.size) params.set("changed_ids", [...changed.ids].join(","))
-    } else {
+    if (this.legacyCursor && !this.messageTargets.some((message) => message.dataset.createdAtUs)) {
       params.set("since", this.legacyCursor)
+    } else {
+      const { after = 0, changed = 0, changedIds = [] } = this.reconciled || {}
+      const afterIds = this.messageTargets
+        .filter((message) => Number(message.dataset.createdAtUs || 0) >= after)
+        .map((message) => message.dataset.messageId)
+      const seenChanged = new Set(changedIds)
+      this.messageTargets.forEach((message) => {
+        if (Number(message.dataset.updatedAtUs || 0) === changed) seenChanged.add(message.dataset.messageId)
+      })
+
+      params.set("after", after)
+      params.set("changed", changed)
+      if (afterIds.length > CURSOR_IDS || seenChanged.size > CURSOR_IDS) {
+        params.set("full", "1")
+      } else {
+        if (afterIds.length) params.set("after_ids", afterIds.join(","))
+        if (seenChanged.size) params.set("changed_ids", [...seenChanged].join(","))
+      }
     }
     const oldest = this.messageTargets[0]
     if (oldest?.dataset.createdAtUs) params.set("from", oldest.dataset.createdAtUs)
@@ -565,7 +608,10 @@ export default class extends Controller {
     const last = this.messageTargets[this.messageTargets.length - 1]
 
     return renderStreamFrom(`${this.refreshUrlValue}?${params}`).then(() => {
-      if (last && !last.isConnected) this.scrollToBottom()
+      if (!last || last.isConnected) return
+
+      this.scrollToBottom()
+      if (followUp) return this.refreshThread({ followUp: false })
     })
   }
 
@@ -580,6 +626,23 @@ export default class extends Controller {
       if (Number(message.dataset.createdAtUs || Infinity) > event.detail.until) return
       if (!present.has(message.id)) message.remove()
     })
+  }
+
+  // The cursors a catch-up (or a history re-render) leaves the thread at.
+  registerCaughtUpStreamAction() {
+    const Turbo = window.Turbo
+    if (!Turbo || Turbo.StreamActions.chats_caught_up) return
+
+    Turbo.StreamActions.chats_caught_up = function () {
+      const detail = {
+        after: Number(this.getAttribute("data-after") || 0),
+        changed: Number(this.getAttribute("data-changed") || 0),
+        changedIds: (this.getAttribute("data-changed-ids") || "").split(",").filter(Boolean)
+      }
+      this.targetElements.forEach((target) => {
+        target.dispatchEvent(new CustomEvent("chats:caught-up", { bubbles: true, detail }))
+      })
+    }
   }
 
   registerPruneStreamAction() {

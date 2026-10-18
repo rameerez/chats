@@ -208,14 +208,91 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
     assert_includes replace.to_html, "🎉"
   end
 
-  test "an up-to-date client gets the read state and nothing else" do
+  test "an up-to-date client gets the read state and its cursors back, and nothing else" do
     message = @bob.message!(@conversation, "all caught up")
+    cursors = cursor_after(message)
 
     login_as @alice
-    get "/messages/#{@conversation.id}/refresh", params: cursor_after(message),
-                                                 headers: { "Accept" => TURBO_STREAM }
+    get "/messages/#{@conversation.id}/refresh", params: cursors, headers: { "Accept" => TURBO_STREAM }
 
-    assert_equal [["replace", dom_id(@conversation, :read_state)]], actions_and_targets(css_select("turbo-stream"))
+    expected = [["replace", dom_id(@conversation, :read_state)], ["chats_caught_up", dom_id(@conversation, :messages)]]
+    assert_equal expected, actions_and_targets(css_select("turbo-stream"))
+    assert_equal({ after: cursors[:after], changed: cursors[:changed], changed_ids: [message.id.to_s] }, caught_up)
+  end
+
+  test "the answer moves the cursors to what it sent: the newest creation and the newest change in it" do
+    shown = @bob.message!(@conversation, "shown")
+    cursors = cursor_after(shown)
+    travel 1.second
+    appended = @bob.message!(@conversation, "missed")
+    travel 1.second
+    shown.edit!("edited while away")
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: cursors, headers: { "Accept" => TURBO_STREAM }
+
+    assert_equal({ after: microseconds(appended.reload.created_at), changed: microseconds(shown.reload.updated_at),
+                   changed_ids: [shown.id.to_s] }, caught_up)
+  end
+
+  # --- what arrived live never moves the cursors (the client keeps them; these
+  # are what it sends after a live bubble, and what it gets back) -------------
+
+  test "a message missed, then one live: the missed one comes, the live one isn't sent again" do
+    shown = travel_to(Time.zone.parse("2026-10-18 10:00")) { @bob.message!(@conversation, "shown") }
+    rendered = cursor_after(shown)
+    missed = travel_to(Time.zone.parse("2026-10-18 10:15")) { @bob.message!(@conversation, "missed at 10:15") }
+    arrived = travel_to(Time.zone.parse("2026-10-18 10:20")) { @bob.message!(@conversation, "live at 10:20") }
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh",
+        params: rendered.merge(after_ids: [shown.id, arrived.id].join(",")), # the cursor stays at 10:00; 10:20 is named
+        headers: { "Accept" => TURBO_STREAM }
+
+    assert_equal [dom_id(missed)], appended_ids(css_select("turbo-stream[action='append']").sole)
+  end
+
+  test "an edit missed, then one live: the missed one comes" do
+    shown = @bob.message!(@conversation, "shown")
+    other = @bob.message!(@conversation, "other")
+    rendered = cursor_after(other)
+    travel_to(Time.zone.parse("2026-10-18 10:15")) { shown.edit!("missed edit at 10:15") }
+    travel_to(Time.zone.parse("2026-10-18 10:20")) { other.edit!("live edit at 10:20") }
+
+    login_as @alice
+    get "/messages/#{@conversation.id}/refresh", params: rendered, headers: { "Accept" => TURBO_STREAM }
+
+    assert_includes replaced_messages, dom_id(shown)
+    assert_includes response.body, "missed edit at 10:15"
+  end
+
+  # --- cursors past the limit -----------------------------------------------------
+
+  test "cursors naming more than 200 ids, or an id longer than any key, get the whole history instead" do
+    shown = @bob.message!(@conversation, "shown")
+    login_as @alice
+
+    [
+      cursor_after(shown).merge(after_ids: Array.new(201) { |index| index + 1 }.join(",")),
+      cursor_after(shown).merge(changed_ids: Array.new(201) { |index| index + 1 }.join(",")),
+      cursor_after(shown).merge(after_ids: "9" * 65),
+      cursor_after(shown).merge(full: 1)
+    ].each do |cursors|
+      get "/messages/#{@conversation.id}/refresh", params: cursors.merge(history: 1),
+                                                   headers: { "Accept" => TURBO_STREAM }
+      assert_equal [["update", dom_id(@conversation, :history)], ["chats_caught_up", dom_id(@conversation, :messages)]],
+                   actions_and_targets(css_select("turbo-stream")), cursors.keys.inspect
+
+      get "/messages/#{@conversation.id}/refresh", params: cursors, headers: { "Accept" => TURBO_STREAM }
+      assert_equal %(<turbo-stream action="refresh"></turbo-stream>), response.body.strip,
+                   "a thread ejected before the history had its id gets the page refresh"
+    end
+
+    get "/messages/#{@conversation.id}/refresh",
+        params: cursor_after(shown).merge(after_ids: Array.new(200) { |index| index + 1 }.join(",")),
+        headers: { "Accept" => TURBO_STREAM }
+    assert css_select("turbo-stream[action='chats_caught_up']").one?, "200 is still an incremental catch-up"
+    assert_empty css_select("turbo-stream[action='update']")
   end
 
   test "catching up reads nothing" do
@@ -332,6 +409,13 @@ class MissedBroadcastRecoveryTest < ActionDispatch::IntegrationTest
   end
 
   private
+
+  # The cursors the answer leaves the client at (its chats_caught_up action).
+  def caught_up
+    tag = css_select("turbo-stream[action='chats_caught_up']").sole
+    { after: Integer(tag["data-after"]), changed: Integer(tag["data-changed"]),
+      changed_ids: tag["data-changed-ids"].split(",") }
+  end
 
   # The bubbles a catch-up replaced (the read state is always replaced).
   def replaced_messages
