@@ -16,7 +16,7 @@ class RecoveryTest < ActiveSupport::TestCase
   def run_recovery(script)
     run_node(<<~JAVASCRIPT)
       const page = browser.install()
-      const { recoverMissedBroadcasts, renderStreamFrom } = loader.loadRecovery()
+      const { cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom } = loader.loadRecovery()
       function watch(sources, options) {
         const caught = { count: 0 }
         caught.stop = recoverMissedBroadcasts(page.element({ sources }), () => caught.count++, options)
@@ -340,87 +340,127 @@ class RecoveryTest < ActiveSupport::TestCase
     JAVASCRIPT
   end
 
-  test "renderStreamFrom resolves only once Turbo has applied what it rendered, however long that takes" do
-    # Turbo adds each <turbo-stream> to <html>, performs it a repaint later,
-    # and removes it. However late that is, the promise waits for it: a
-    # caller that reads the page afterwards reads what the answer did.
+  # renderStreamFrom against a fake of Turbo's stream engine (page.turboStreams):
+  # streams join <html>, are announced, and are performed when the test says.
+  def run_streams(script)
     run_recovery(<<~JAVASCRIPT)
       (async () => {
-        const streams = []
-        document.documentElement.querySelectorAll = (selector) =>
-          (selector === ":scope > turbo-stream" ? streams.filter((stream) => stream.isConnected) : [])
-        window.Turbo.renderStreamMessage = () => {
-          const stream = { isConnected: true }
-          streams.push(stream)
-          const event = page.documentEvents.dispatch("turbo:before-stream-render",
-                                                     { target: stream, detail: { render: async () => {} } })
-          stream.apply = () => event.detail.render(stream)
-        }
-
-        let resolved = null
-        renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => { resolved = rendered })
-        page.respond(page.requests[0])
-        await page.settle()
-        page.advance(5_000); await page.settle()
-        assert.strictEqual(resolved, null, "not while the stream waits to be performed, even past 2s")
-
-        renderStreamFrom("/messages/7/refresh?after=0")
-        assert.strictEqual(page.requests.length, 2, "past 2s, an unapplied answer no longer stands in for a new request")
-
-        await streams[0].apply()                    // performed at last…
-        streams[0].isConnected = false              // …and removed
-        page.mutate(document.documentElement)
-        await page.settle()
-        assert.strictEqual(resolved, true)
+        const turbo = page.turboStreams()
+        const answer = (index) => page.respond(page.requests[index], {
+          body: '<turbo-stream action="append" target="messages"><template>x</template></turbo-stream>' +
+                '<turbo-stream action="chats_caught_up" target="messages"></turbo-stream>'
+        })
+        #{script}
       })().catch((error) => { console.error(error); process.exit(1) })
     JAVASCRIPT
   end
 
-  test "renderStreamFrom checks again as Turbo applies each stream, and drops them if no longer wanted" do
-    run_recovery(<<~JAVASCRIPT)
-      (async () => {
-        const performed = []
-        const streams = []
-        document.documentElement.querySelectorAll = (selector) =>
-          (selector === ":scope > turbo-stream" ? streams.filter((stream) => stream.isConnected) : [])
-        // What Turbo does: announce the stream as it joins the page, and later
-        // call whatever render the listeners left in the event.
-        window.Turbo.renderStreamMessage = () => {
-          const stream = { isConnected: true }
-          streams.push(stream)
-          const event = page.documentEvents.dispatch("turbo:before-stream-render",
-                                                     { target: stream, detail: { render: async () => performed.push(stream) } })
-          stream.apply = async () => { await event.detail.render(stream); stream.isConnected = false; page.mutate(document.documentElement) }
-        }
+  test "a request that hangs (a network interruption) is aborted after 15s, and the next catch-up asks again" do
+    run_streams(<<~JAVASCRIPT)
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => { resolved = rendered })
+      renderStreamFrom("/messages/7/refresh?after=0")
+      assert.strictEqual(page.requests.length, 1, "while it is in flight, it stands in for the same request")
 
-        let wanted = true
-        let resolved = null
-        renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
-        page.respond(page.requests[0])
-        await page.settle()
-        assert.strictEqual(page.documentEvents.count("turbo:before-stream-render"), 0, "the guard is only there while rendering")
+      page.advance(14_999); await page.settle()
+      assert.strictEqual(page.requests[0].aborted, false)
+      page.advance(1); await page.settle()
+      assert.strictEqual(page.requests[0].aborted, true)
+      assert.strictEqual(resolved, false)
 
-        wanted = false                              // the thread rendered again before Turbo got to the stream
-        await streams[0].apply()
-        await page.settle()
-        assert.deepStrictEqual(performed, [], "the old stream did nothing")
-        assert.strictEqual(resolved, false)
-      })().catch((error) => { console.error(error); process.exit(1) })
+      renderStreamFrom("/messages/7/refresh?after=0")
+      assert.strictEqual(page.requests.length, 2, "the slot is free again")
     JAVASCRIPT
   end
 
-  test "renderStreamFrom drops an answer no longer wanted when it arrives" do
-    run_recovery(<<~JAVASCRIPT)
-      (async () => {
-        let wanted = true
-        let resolved = null
-        renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
-        wanted = false
-        page.respond(page.requests[0])
+  test "it resolves only once Turbo has applied what it rendered, however long that takes" do
+    run_streams(<<~JAVASCRIPT)
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0").then((rendered) => { resolved = rendered })
+      answer(0)
+      await page.settle()
+      assert.strictEqual(turbo.pending().length, 2)
+
+      page.advance(5_000); await page.settle()
+      assert.strictEqual(resolved, null, "not while its streams wait to be performed, even past 2s")
+      renderStreamFrom("/messages/7/refresh?after=0")
+      assert.strictEqual(page.requests.length, 2, "past 2s, an unapplied answer no longer stands in for a new request")
+      assert.strictEqual(page.requests[0].aborted, false, "and an answered request is never aborted")
+
+      await turbo.applyStreams(); await page.settle()
+      assert.strictEqual(resolved, true)
+      assert.strictEqual(turbo.performed.length, 2)
+    JAVASCRIPT
+  end
+
+  test "streams still waiting when their page is rendered again are dropped, and nothing is left watching" do
+    run_streams(<<~JAVASCRIPT)
+      const watchingBefore = page.observerCount()
+      let wanted = true
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted }).then((rendered) => { resolved = rendered })
+      answer(0)
+      await page.settle()
+      assert.strictEqual(page.observerCount(), watchingBefore + 1)
+
+      wanted = false                                  // the thread rendered again…
+      page.mutate(document.documentElement)           // …and <html> changed as it did
+      await page.settle()
+      assert.strictEqual(resolved, false)
+      assert.strictEqual(turbo.pending().length, 0, "its leftover streams are gone")
+      assert.strictEqual(page.observerCount(), watchingBefore, "and nothing watches for them")
+
+      await turbo.applyStreams()
+      assert.strictEqual(turbo.performed.length, 0, "a stream Turbo still had queued does nothing")
+    JAVASCRIPT
+  end
+
+  test "at most one unapplied answer per key: a newer one, or cancelStreamsFor, drops the older's leftovers" do
+    run_streams(<<~JAVASCRIPT)
+      const thread = {}
+      const watchingBefore = page.observerCount()
+      const results = []
+      for (let index = 0; index < 5; index++) {
+        renderStreamFrom(`/messages/7/refresh?after=${index}`, { key: thread }).then((rendered) => results.push(rendered))
+        answer(index)
         await page.settle()
-        assert.strictEqual(resolved, false)
-        assert.strictEqual(page.rendered.length, 0)
-      })().catch((error) => { console.error(error); process.exit(1) })
+      }
+      assert.deepStrictEqual(results, [false, false, false, false], "each newer answer cancelled the one before")
+      assert.strictEqual(turbo.pending().length, 2, "only the newest answer's streams wait")
+      assert.strictEqual(page.observerCount(), watchingBefore + 1)
+
+      cancelStreamsFor(thread)                        // the thread disconnects
+      await page.settle()
+      assert.deepStrictEqual(results, [false, false, false, false, false])
+      assert.strictEqual(turbo.pending().length, 0)
+      assert.strictEqual(page.observerCount(), watchingBefore)
+    JAVASCRIPT
+  end
+
+  test "an answer no longer wanted when it arrives is never rendered" do
+    run_streams(<<~JAVASCRIPT)
+      let resolved = null
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => false }).then((rendered) => { resolved = rendered })
+      answer(0)
+      await page.settle()
+      assert.strictEqual(resolved, false)
+      assert.strictEqual(turbo.streams.length, 0)
+    JAVASCRIPT
+  end
+
+  test "a host's own stream, rendered in the same moment, is never held back by an answer's guard" do
+    run_streams(<<~JAVASCRIPT)
+      let wanted = true
+      renderStreamFrom("/messages/7/refresh?after=0", { when: () => wanted })
+      answer(0)
+      await page.settle()
+      turbo.foreign()                                 // the host renders a stream of its own
+      wanted = false                                  // and the thread renders again before Turbo applies anything
+
+      await turbo.applyStreams()
+      const performed = turbo.performed.map((stream) => stream.attributes)
+      assert.deepStrictEqual(performed, [{ action: "append" }], "the host's stream ran; the answer's didn't")
+      assert.ok(turbo.streams.slice(0, 2).every((stream) => stream.attributes["data-chats-answer"]), "the answer's were marked")
     JAVASCRIPT
   end
 
@@ -433,7 +473,8 @@ class RecoveryTest < ActiveSupport::TestCase
         assert.strictEqual(page.requests[0].options.headers.Accept, "text/vnd.turbo-stream.html")
         page.respond(page.requests[0], { body: "<turbo-stream action=\\"replace\\"></turbo-stream>" })
         await page.settle()
-        assert.deepStrictEqual(page.rendered, ["<turbo-stream action=\\"replace\\"></turbo-stream>"])
+        assert.strictEqual(page.rendered.length, 1)
+        assert.match(page.rendered[0], /^<turbo-stream data-chats-answer="[^"]+" action=\\"replace\\"><\\/turbo-stream>$/, "rendered, marked as this answer's")
 
         renderStreamFrom("/messages/badge")
         assert.strictEqual(page.requests.length, 2, "once answered, the next one is a new request")

@@ -11,7 +11,7 @@ const read = (name) => fs.readFileSync(path.join(root, name), "utf8")
 // chats/recovery's exports.
 function loadRecovery() {
   const source = read("recovery.js").replace(/^export /gm, "")
-  return new Function(`${source}\nreturn { recoverMissedBroadcasts, renderStreamFrom }`)()
+  return new Function(`${source}\nreturn { cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom }`)()
 }
 
 // A controller class, extending +Controller+ (a bare class by default),

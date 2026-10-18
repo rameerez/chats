@@ -74,8 +74,17 @@ function install() {
     }
   }
 
+  // fetch() answers when the test says (page.respond), and honours an
+  // AbortController's signal as the real one does.
   const requests = []
-  global.fetch = (url, options) => new Promise((resolve) => requests.push({ url, options, resolve }))
+  global.fetch = (url, options) => new Promise((resolve, reject) => {
+    const request = { url, options, resolve, reject, aborted: false }
+    requests.push(request)
+    options?.signal?.addEventListener("abort", () => {
+      request.aborted = true
+      reject(new DOMException("The operation was aborted.", "AbortError"))
+    })
+  })
 
   const monitor = { checks: 0, visibilityDidChange() { this.checks++ } }
 
@@ -105,6 +114,9 @@ function install() {
     },
 
     pendingTimers: () => timers.length,
+
+    // How many MutationObservers are watching something.
+    observerCount: () => observers.size,
 
     // Tells the MutationObservers watching +target+ that it changed.
     mutate: (target) => mutated(target),
@@ -164,6 +176,60 @@ function install() {
         headers: { get: (name) => (name.toLowerCase() === "content-type" ? type : null) },
         text: () => Promise.resolve(body)
       })
+    },
+
+    // Turbo's stream engine, as far as chats/recovery can tell: each
+    // <turbo-stream> joins <html>, is announced (turbo:before-stream-render,
+    // whose detail.render a listener may wrap), and is performed and removed
+    // when the test says (page.applyStreams) — a repaint later, in Turbo.
+    turboStreams() {
+      const streams = []
+      const performed = []
+      const announce = (stream) => {
+        const event = documentEvents.dispatch("turbo:before-stream-render", {
+          target: stream,
+          detail: { render: async () => performed.push(stream) }
+        })
+        stream.render = () => event.detail.render(stream)
+        return event
+      }
+      const stream = (attributes) => {
+        const node = {
+          localName: "turbo-stream",
+          isConnected: true,
+          attributes,
+          getAttribute: (name) => attributes[name] ?? null,
+          remove() { this.isConnected = false }
+        }
+        streams.push(node)
+        return node
+      }
+
+      window.Turbo.renderStreamMessage = (html) => {
+        for (const [, attributes] of html.matchAll(/<turbo-stream([^>]*)>/g)) {
+          const parsed = Object.fromEntries([...attributes.matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value]))
+          announce(stream(parsed))
+        }
+      }
+      document.documentElement.querySelectorAll = (selector) => {
+        const mark = selector.match(/data-chats-answer="([^"]*)"/)?.[1]
+        return streams.filter((node) => node.isConnected && (!mark || node.attributes["data-chats-answer"] === mark))
+      }
+
+      return {
+        streams,
+        performed,
+        pending: () => streams.filter((node) => node.isConnected),
+        // A host's own stream, rendered by Turbo like any other.
+        foreign: () => announce(stream({ action: "append" })),
+        async applyStreams() {
+          for (const node of streams.filter((candidate) => candidate.isConnected)) {
+            await node.render()
+            node.isConnected = false
+          }
+          mutated(document.documentElement)
+        }
+      }
     },
 
     // Lets every resolved promise run its callbacks.

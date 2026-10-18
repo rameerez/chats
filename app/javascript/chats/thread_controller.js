@@ -1,5 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
-import { recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
+import { cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
 
 // Stale-thread catch-up + DOM budget (both patterns from Basecamp's
 // Campfire, https://github.com/basecamp/once-campfire — its
@@ -149,6 +149,7 @@ export default class extends Controller {
     document.removeEventListener("visibilitychange", this.visibilityChanged)
     clearTimeout(this.readTimer)
     this.stopRecovery?.()
+    cancelStreamsFor(this.element) // what this render asked for is not wanted any more
     this.element.removeEventListener("chats:prune", this.prune)
     this.element.removeEventListener("chats:caught-up", this.caughtUp)
     this.presenceObserver?.disconnect()
@@ -627,7 +628,7 @@ export default class extends Controller {
 
     // Resolves once Turbo has applied the answer, so `last` is gone by then
     // if the history was re-rendered.
-    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, { when: current }).then((rendered) => {
+    return renderStreamFrom(`${this.refreshUrlValue}?${params}`, { when: current, key: this.element }).then((rendered) => {
       if (!rendered || !last || last.isConnected) return
 
       this.element.dataset.chatsRender = newRender() // the re-rendered history is a new render

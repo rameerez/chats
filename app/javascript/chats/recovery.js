@@ -68,87 +68,134 @@ export function recoverMissedBroadcasts(element, catchUp, { sources = SOURCE } =
 }
 
 // GET +url+ as a Turbo Stream and render it, as long as `when` says it is
-// still wanted (its page wasn't rendered again meanwhile). Asked when the
-// answer arrives, and again by every stream of it at the moment Turbo is
-// about to apply it, a repaint later: a page visit or a frame reload in
-// that gap gives the old streams a new page to land on, and they are
-// dropped instead. Resolves once Turbo has applied all of it, to true, or
-// to false when nothing was applied — never before: a caller that reads
-// the page afterwards reads what the answer did. The same request made
-// twice at once is made once; after APPLY_WITHIN_MS a request whose answer
-// Turbo hasn't applied yet no longer stands in for a new one. Anything but
-// a Turbo Stream (a sign-in page after the session expired, an error page)
-// is ignored: the next catch-up tries again.
+// still wanted (its page wasn't rendered again meanwhile): asked when the
+// answer arrives, and again by each of its streams at the moment Turbo
+// applies it, a repaint later — a page visit or a frame reload in that gap
+// would otherwise hand the old streams the new page.
+//
+// Resolves once Turbo has applied all of it, to true, or to false when
+// nothing was (unwanted, cancelled, failed) — never before, however late
+// Turbo gets to it: a caller that reads the page afterwards reads what the
+// answer did. Bounded everywhere a request can stall:
+//   * a request that hasn't answered within REQUEST_WITHIN_MS is aborted
+//     (a fetch can hang across a network interruption);
+//   * the same request made twice at once is made once, but an answer
+//     Turbo hasn't applied within APPLY_WITHIN_MS no longer stands in for a
+//     new one;
+//   * one unapplied answer per `key` (the URL, or what the caller names —
+//     the thread names itself): a newer answer for it cancels the older
+//     one's leftover streams, and so does cancelStreamsFor(key), which the
+//     thread calls as it disconnects.
+// Anything but a Turbo Stream (a sign-in page after the session expired, an
+// error page) is ignored: the next catch-up tries again.
 const requests = new Map()
+const answers = new Map() // key → the answer still being applied
+const REQUEST_WITHIN_MS = 15_000
 const APPLY_WITHIN_MS = 2_000
 
-export function renderStreamFrom(url, { when = () => true } = {}) {
+export function renderStreamFrom(url, { when = () => true, key = url } = {}) {
   if (requests.has(url)) return requests.get(url)
 
+  const abort = new AbortController()
+  const hung = setTimeout(() => abort.abort(), REQUEST_WITHIN_MS)
   const release = () => { if (requests.get(url) === request) requests.delete(url) }
-  const request = fetch(url, { headers: { Accept: "text/vnd.turbo-stream.html" }, credentials: "same-origin" })
+  const request = fetch(url, {
+    headers: { Accept: "text/vnd.turbo-stream.html" },
+    credentials: "same-origin",
+    signal: abort.signal
+  })
     .then((response) => (isTurboStream(response) ? response.text() : ""))
     .then((html) => {
+      clearTimeout(hung)
       if (!html || !when()) return false
 
       setTimeout(release, APPLY_WITHIN_MS)
-      return renderWhile(html, when)
+      return apply(html, when, key)
     })
     .catch(() => false)
-    .finally(release)
+    .finally(() => {
+      clearTimeout(hung)
+      release()
+    })
   requests.set(url, request)
   return request
 }
 
-// Turbo announces each stream it is given (turbo:before-stream-render,
-// synchronously, as the stream joins the page) and lets the listener wrap
-// how it renders: ours renders it only if `when` still holds when Turbo
-// gets to it.
-function renderWhile(html, when) {
-  if (!window.Turbo?.renderStreamMessage) return Promise.resolve(false)
-
-  let applied = false
-  const guard = (event) => {
-    const render = event.detail?.render
-    if (typeof render !== "function") return
-
-    event.detail.render = async (stream) => {
-      if (!when()) return
-      applied = true
-      await render(stream)
-    }
-  }
-
-  const waiting = new Set(pendingStreams())
-  document.addEventListener("turbo:before-stream-render", guard)
-  try {
-    window.Turbo.renderStreamMessage(html)
-  } finally {
-    document.removeEventListener("turbo:before-stream-render", guard)
-  }
-  const ours = pendingStreams().filter((stream) => !waiting.has(stream))
-
-  return removed(ours).then(() => applied || !ours.length)
+// Drops what is left of +key+'s answer: streams Turbo hasn't applied yet
+// never will be.
+export function cancelStreamsFor(key) {
+  answers.get(key)?.cancel()
 }
 
-// Each stream removes itself from <html> once Turbo has performed it (or
-// skipped it).
-function removed(streams) {
-  return new Promise((resolve) => {
-    const gone = () => streams.every((stream) => !stream.isConnected)
-    if (gone()) return resolve()
+// Every stream of an answer carries its mark (data-chats-answer), so the
+// page-wide guard below wraps those and no others: a host's own stream,
+// rendered at the same moment, is none of its business.
+let answerCount = 0
 
-    const observer = new MutationObserver(() => {
-      if (!gone()) return
-      observer.disconnect()
-      resolve()
-    })
-    observer.observe(document.documentElement, { childList: true })
+function apply(html, when, key) {
+  if (!window.Turbo?.renderStreamMessage) return Promise.resolve(false)
+  guardStreams()
+  cancelStreamsFor(key)
+
+  const mark = `${Date.now().toString(36)}-${++answerCount}`
+  return new Promise((resolve) => {
+    const answer = {
+      when,
+      applied: false,
+      cancelled: false,
+      settle(result) {
+        this.observer?.disconnect()
+        if (answers.get(key) === this) answers.delete(key)
+        marked.delete(mark)
+        resolve(result)
+      },
+      cancel() {
+        this.cancelled = true
+        streamsMarked(mark).forEach((stream) => stream.remove())
+        this.settle(false)
+      }
+    }
+    answers.set(key, answer)
+    marked.set(mark, answer)
+
+    window.Turbo.renderStreamMessage(html.replace(/<turbo-stream\b/g, `<turbo-stream data-chats-answer="${mark}"`))
+    const waited = streamsMarked(mark).length > 0 // an answer with no stream has nothing left to apply
+
+    // Each stream removes itself from <html> once Turbo has performed it
+    // (or skipped it). A page re-rendered meanwhile cancels the rest.
+    const check = () => {
+      if (answer.cancelled) return
+      if (!streamsMarked(mark).length) return answer.settle(answer.applied || !waited)
+      if (!when()) answer.cancel()
+    }
+    answer.observer = new MutationObserver(check)
+    answer.observer.observe(document.documentElement, { childList: true })
+    check()
   })
 }
 
-function pendingStreams() {
-  return Array.from(document.documentElement.querySelectorAll?.(":scope > turbo-stream") || [])
+const marked = new Map() // mark → its answer
+let guarding = false
+
+function guardStreams() {
+  if (guarding) return
+  guarding = true
+
+  document.addEventListener("turbo:before-stream-render", (event) => {
+    const answer = marked.get(event.target?.getAttribute?.("data-chats-answer"))
+    const render = event.detail?.render
+    if (!answer || typeof render !== "function") return
+
+    event.detail.render = async (stream) => {
+      if (answer.cancelled || !answer.when()) return
+      answer.applied = true
+      await render(stream)
+    }
+  })
+}
+
+function streamsMarked(mark) {
+  return Array.from(document.documentElement.querySelectorAll?.(`:scope > turbo-stream[data-chats-answer="${mark}"]`) || [])
 }
 
 function isTurboStream(response) {
