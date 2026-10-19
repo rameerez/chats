@@ -51,6 +51,7 @@ es:
       save: "Guardar"
       react: "Reaccionar"
       toggle_reaction: "Reaccionar con %{emoji}"
+      menu: "Opciones del mensaje"
     composer:
       editing: "Editar mensaje"
       cancel_edit: "Cancelar edición"

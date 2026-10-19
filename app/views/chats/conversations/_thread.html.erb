@@ -68,6 +68,7 @@
       "chats--thread-refresh-url-value": refresh_conversation_path(conversation),
       "chats--thread-thread-url-value": conversation_path(conversation),
       "chats--thread-copied-label-value": t("chats.message.copied"),
+      "chats--thread-menu-label-value": t("chats.message.menu"),
       # A plain data attribute (not a Stimulus value): host CSS/JS keys its
       # own block/report affordances off it. False for a messager declared
       # `acts_as_messager blockable: false`.
@@ -94,9 +95,12 @@
       pressed bubble's clone morphs to the center, the reactions pill sits
       above it and the contextual menu below. Slots are filled by cloning
       the bubble's <template data-chats-message-menu>. %>
+  <%# Modal on every screen (the backdrop covers the thread; a tap or a
+      click on it closes): chats--thread keeps the focus inside while open. %>
   <div class="chats-popup"
        role="dialog"
        aria-modal="true"
+       aria-label="<%= t("chats.message.menu") %>"
        data-chats--thread-target="popup"
        hidden>
     <div class="chats-popup__backdrop" data-action="click->chats--thread#closePopup"></div>

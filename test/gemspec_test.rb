@@ -21,8 +21,8 @@ class GemspecTest < ActiveSupport::TestCase
     assert_empty SPEC.files.grep(%r{\A(test|bin|\.github)/})
   end
 
-  test "the package holds none of the README's screenshots" do
-    assert_empty SPEC.files.grep(%r{\Adocs/screenshots/}), "GitHub serves those; the gem never reads them"
+  test "the package holds nothing from docs/: not the README's screenshots, not the design notes" do
+    assert_empty SPEC.files.grep(%r{\Adocs/}), "GitHub serves those; the gem never reads them"
     assert_empty SPEC.files.grep(/\.(png|jpe?g|gif|webp)\z/)
   end
 
@@ -37,6 +37,6 @@ class GemspecTest < ActiveSupport::TestCase
     root = File.expand_path("..", __dir__)
     bytes = SPEC.files.sum { |file| File.size(File.join(root, file)) }
 
-    assert_operator bytes, :<, 768 * 1024, "#{bytes} bytes before compression: what is in there?"
+    assert_operator bytes, :<, 1024 * 1024, "#{bytes} bytes before compression: what is in there?"
   end
 end

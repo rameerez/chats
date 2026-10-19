@@ -4,6 +4,57 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-10-19
+
+**0.7.2**: **No migration, nothing to configure.**
+
+### Added
+
+- **The `message_menu` slot**: `chats/slots/_message_menu.html.erb` renders
+  inside each message's menu, after Copy, Edit and Delete, so a Report needs
+  no ejected partial and no link under every bubble. It gets `message:`
+  only (the bubble is one render for everybody). Items are
+  `chats-popup__item` links or `button_to` forms, which survive the popup's
+  clone of the menu's `<template>`; `data-chats-other-only` keeps one off the
+  viewer's own messages, `data-chats-own-only` off everybody else's (both
+  already honoured, now documented). The Trust & Safety recipe uses it.
+- **"⋯" beside each bubble on a desktop**, on its inner edge, opening the
+  same popup as a right-click. Only under `(hover: hover) and (pointer:
+  fine)`: a touch screen never draws it and long-presses. Keyboard: the
+  thread's "⋯" buttons are one tab stop (roving tabindex: the newest
+  message's), ArrowUp / ArrowDown move along them, Enter opens the menu with
+  the focus on its first item, Escape closes it and returns the focus. A
+  stream replacing the focused "⋯"'s bubble (an edit, a reaction) leaves the
+  focus on the replacement's, a removal on the nearest message's. The
+  markup stays viewer-agnostic; the name (`chats.message.menu`) is stamped
+  in the reader's language by `chats--thread` (`menuLabel`). A touch laptop
+  whose main pointer is a trackpad shows it too; its screen long-presses.
+- **The popup keeps the focus.** It was already `role="dialog"
+  aria-modal="true"` (its backdrop covers the thread, on touch as on a
+  desk), but Tab walked out to the page behind it. Tab / Shift+Tab now cycle
+  its reactions and items, ArrowUp / ArrowDown / Home / End move along the
+  items (`role="menu"`), and the dialog is named (`chats.message.menu`).
+
+### Changed
+
+- The package leaves all of `docs/` behind, the design notes with the
+  screenshots: nothing inside the gem reads them.
+- **Choosing a link in the menu closes it**, as a form button did: the dock
+  is carried from page to page, and its popup stayed open over the next one.
+- **A menu the visibility gates leave empty is not drawn** (no empty card).
+- **A cloned form carries the page's CSRF token.** The menu's forms are
+  rendered once, often by a broadcast outside any session; the popup now puts
+  the page's `csrf-token` in each cloned form's hidden input (adding one if
+  there was none), so a native submit, with Turbo off around the thread,
+  passes forgery protection too.
+- **The popup's keys go with it**, however it goes: a dock window closed with
+  its menu open left a document listener swallowing the page's Tab.
+
+If you ejected `chats/messages/_message.html.erb`, it keeps working; copy
+the new `button.chats-message__menu-trigger` (after `.chats-message__bubble`)
+and the `chats_slot :message_menu` line (end of `.chats-popup__menu`) to get
+them. `.chats-message__bubble-row` is now `position: relative`.
+
 ## [0.7.1] - 2026-10-19
 
 ### Changed

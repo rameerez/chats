@@ -36,6 +36,48 @@ class SlotsAndSignaturesTest < ActionDispatch::IntegrationTest
     assert_equal 2, css_select("[data-dummy-slot=message_meta]").size
   end
 
+  test "the message_menu slot renders in each bubble's menu, after the gem's own items" do
+    conversation = @alice.chat_with(@bob)
+    message = @bob.message!(conversation, "report me")
+    login_as @alice
+
+    get "/messages/#{conversation.id}"
+
+    menu = css_select("##{ActionView::RecordIdentifier.dom_id(message)} template[data-chats-message-menu]").first
+    items = Nokogiri::HTML::DocumentFragment.parse(menu.inner_html).css(".chats-popup__menu > *").to_a
+    assert_equal %w[message_menu message_menu_form], items.last(2).map { |item| item["data-dummy-slot"] },
+                 "the host's items come last"
+    report, pin = items.last(2)
+    assert_equal "/?reported=#{message.id}", report["href"]
+    assert_equal "true", report["data-chats-other-only"]
+    assert_equal "/test_pin/#{message.id}", pin["action"]
+    assert_operator items.size, :>, 2, "the gem's own items are still there"
+  end
+
+  test "the message_menu slot renders in a broadcast bubble too" do
+    conversation = @alice.chat_with(@bob)
+    message = @bob.message!(conversation, "live")
+
+    html = ApplicationController.render(partial: "chats/messages/message", locals: { message: message })
+
+    assert_includes html, %(data-dummy-slot="message_menu")
+    assert_includes html, "data-chats-message-menu-trigger"
+  end
+
+  test "a deleted message has no menu, so neither the slot nor the trigger" do
+    conversation = @alice.chat_with(@bob)
+    message = @bob.message!(conversation, "gone")
+    message.soft_delete!
+    login_as @alice
+
+    get "/messages/#{conversation.id}"
+
+    assert_select "##{ActionView::RecordIdentifier.dom_id(message)}" do
+      assert_select "template[data-chats-message-menu]", 0
+      assert_select "[data-chats-message-menu-trigger]", 0
+    end
+  end
+
   test "the conversation_header_actions slot renders block affordances only for blockable counterparts" do
     with_bob = @alice.chat_with(@bob)
     with_desk = @alice.chat_with(@desk)

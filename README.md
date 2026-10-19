@@ -259,24 +259,7 @@ Use **`:flag`, never `:block`** for chat: you don't gag someone mid-conversation
 
 ### 3. The report affordance — mind the broadcast
 
-Put a report link on every bubble **someone else** sent. One nuance matters: `chats` renders each bubble **once per broadcast, viewer-agnostically** (that's what makes real-time fan-out cheap), so anything depending on `current_user` at render time — like moderate's `report_link` helper, which checks `report_visible_to?(viewer)` — would silently vanish from live-appended bubbles. Use the **signed-target URL** instead (viewer-independent), and hide it on own bubbles with the same client-side mechanism the gem uses for edit/delete:
-
-```erb
-<%# in your ejected chats/messages/_message.html.erb, inside .chats-popup__menu
-    in the <template data-chats-message-menu> (the long-press menu) %>
-<% if message.sender %>
-  <%= link_to "Report",
-        main_app.new_abuse_report_path(
-          target: message.to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE),
-          field: "body"
-        ),
-        class: "chats-popup__item", role: "menuitem",
-        data: { chats_other_only: true } %>
-        <%# data-chats-other-only: the popup drops it from your own bubbles;
-            moderate's controller re-checks report_visible_to? server-side,
-            so hiding is cosmetic %>
-<% end %>
-```
+Put a report link in the menu of every message **someone else** sent: the [`message_menu` slot](#items-in-a-messages-menu-the-message_menu-slot)'s example is exactly that. One nuance matters: `chats` renders each bubble **once per broadcast, viewer-agnostically** (that's what makes real-time fan-out cheap), so anything depending on `current_user` at render time — like moderate's `report_link` helper, which checks `report_visible_to?(viewer)` — would silently vanish from live-appended bubbles. Use the **signed-target URL** (viewer-independent) and `data-chats-other-only` (the popup drops the item from your own messages); moderate's controller re-checks `report_visible_to?` server-side, so hiding is cosmetic.
 
 And give direct threads a **block** action in the thread menu (your ejected `show.html.erb`) pointing at your moderate-backed blocks endpoint. One UX trap: blocking hides the very thread the user is standing in — redirect to the inbox, not back.
 
@@ -298,7 +281,7 @@ Moderate::Flag.flag!(
 - [ ] `blocked_messager_ids` → `Moderate.blocked_ids_for`
 - [ ] `Chats::Message` reportable (`:body`, and `:files` if attachments are on)
 - [ ] body + files filter policies in `:flag` mode
-- [ ] report link on foreign bubbles (signed target, broadcast-safe)
+- [ ] report item in the menu of foreign messages (`message_menu` slot, signed target, broadcast-safe)
 - [ ] block action on direct threads (redirecting away from the hidden thread)
 - [ ] admin queue handles chat flags/reports (it does, automatically — verify with one test)
 - [ ] a test that a block placed mid-conversation stops the next send
@@ -577,6 +560,7 @@ Ejecting a whole screen to add one row or one button is too coarse. The bundled 
 | `composer_actions` | a row of your own buttons above the composer's input, outside its form (gets `conversation:`; gone when the thread locks) |
 | `locked_composer` | the locked composer's body |
 | `message_meta` | after each bubble's timestamp |
+| `message_menu` | inside each message's menu, after Copy, Edit and Delete (gets `message:`; see [below](#items-in-a-messages-menu-the-message_menu-slot)) |
 | `dock_panel_footer` | beside "See all messages" in the [messaging dock](#-messaging-dock)'s panel (gets `viewer:`) |
 
 ```erb
@@ -585,6 +569,29 @@ Ejecting a whole screen to add one row or one button is too coarse. The bundled 
 ```
 
 An engine mounted on top of chats ships its own `app/views/chats/slots/…`; the host's file wins by view-path order. `rails generate chats:views` is still there for wholesale restyling.
+
+### Items in a message's menu: the `message_menu` slot
+
+Every message has a menu (Telegram's): a long-press on a touch screen, a right-click, or the **"⋯"** beside the bubble while the pointer is on it (a fine pointer that hovers only; a touch screen never shows it). A touch laptop whose main pointer is a trackpad shows the "⋯" too, and its screen still long-presses. The keyboard reaches it: a thread's "⋯" buttons are one tab stop (the newest message's), ArrowUp / ArrowDown move along them, and a stream replacing the focused one's bubble (an edit, a reaction) leaves the focus on its replacement. Enter opens the menu, a modal dialog: the focus is on its first item, Tab cycles the reactions and the items without leaving it, the arrows (and Home / End) move along the items, and Escape closes it and gives the focus back. The `message_menu` slot puts your items in that menu, after the gem's:
+
+```erb
+<%# app/views/chats/slots/_message_menu.html.erb %>
+<% if message.sender %>
+  <%= link_to "Report",
+        main_app.new_abuse_report_path(target: message.to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE), field: "body"),
+        class: "chats-popup__item", role: "menuitem",
+        data: { chats_other_only: true, turbo_frame: "_top" } %>
+<% end %>
+```
+
+<img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/message-menu-desktop.png" alt="A desktop thread: a received message's menu, with Copy and a host's Report, opened from the ⋯ beside the bubble" width="480">
+
+- **A link or a `button_to` form** with the `chats-popup__item` class (`chats-popup__item--danger` for a destructive one). The slot renders inside an inert `<template>` the thread controller **clones** into the popup on open: a link survives that, and so does a form: the clone carries the page's own CSRF token (the `csrf-param` / `csrf-token` metas, put in its hidden input), so it passes forgery protection even from a bubble a broadcast rendered outside the viewer's session, with Turbo or without it. The item is in the page only while the menu is open, so script that looks for it looks in the popup. Choosing one closes the menu.
+- **The same for every viewer.** The bubble is rendered once per broadcast for everybody, so the partial gets `message:` and no `current_user`. **`data-chats-other-only`** keeps an item off the viewer's own messages, **`data-chats-own-only`** off everybody else's (Edit and Delete use it). Both are cosmetic: the endpoint still decides.
+- **`data-turbo-frame="_top"`** on a link that leaves the thread: a thread can sit in a frame (the two-pane page's pane, a dock window), and a link in a frame navigates the frame.
+- **The broadcast's language.** A live bubble is rendered in the locale of the request that sent it, so a multilingual app re-labels its item in the browser from the reader's thread page, as the gem does for the "⋯" button's name.
+
+A deleted message and a system note have no menu. In a [locked conversation](#-locked-conversations) it keeps Copy and your items; the endpoint decides what a lock refuses.
 
 ## 🪟 Two panes
 
