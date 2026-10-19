@@ -1175,6 +1175,10 @@ turbo-frame[id^="chats_page_"] {
   --chats-dock-focus: var(--chats-accent);
   /* --chats-dock-title-font: unset on purpose; titles inherit the host font. */
   --chats-dock-launcher-size: 56px;
+  /* 0.7.0, the tray: an open item is a window's width, the panel's height */
+  --chats-tray-panel-width: var(--chats-dock-window-width);
+  --chats-tray-panel-height: var(--chats-dock-panel-height);
+  --chats-tray-launcher-size: 48px;   /* an item's round button on a phone */
   --chats-dock-sheet-header-height: 56px;
   --chats-dock-duration: 200ms;
   --chats-dock-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1207,7 +1211,8 @@ turbo-frame[id^="chats_page_"] {
   gap: var(--chats-dock-gap);
 }
 .chats-window,
-.chats-dock__panel { pointer-events: auto; }
+.chats-dock__panel,
+.chats-tray__item { pointer-events: auto; }
 
 /* Inset: every surface clips (overflow: hidden), so an outside ring is cut. */
 .chats-dock :focus-visible {
@@ -1218,7 +1223,8 @@ turbo-frame[id^="chats_page_"] {
 /* --- Surfaces (panel and windows share one skin) -------------------------------- */
 
 .chats-window,
-.chats-dock__panel {
+.chats-dock__panel,
+.chats-tray__item {
   background: var(--chats-dock-bg);
   border: 1px solid var(--chats-dock-edge);
   border-bottom: 0;
@@ -1270,6 +1276,7 @@ turbo-frame[id^="chats_page_"] {
 /* --- The bar (the panel's <summary>) and window headers -------------------------- */
 
 .chats-dock__bar,
+.chats-tray__launcher,
 .chats-window__header {
   flex: 0 0 var(--chats-dock-bar-height);
   height: var(--chats-dock-bar-height);
@@ -1278,7 +1285,8 @@ turbo-frame[id^="chats_page_"] {
   background: var(--chats-dock-header-bg);
   border-bottom: 1px solid var(--chats-dock-edge);
 }
-.chats-dock__toggle {
+.chats-dock__toggle,
+.chats-tray__launcher {
   gap: 10px;
   color: inherit;
   padding: 0 8px 0 12px;
@@ -1286,11 +1294,13 @@ turbo-frame[id^="chats_page_"] {
   cursor: pointer;
   user-select: none;
 }
-.chats-dock__toggle::-webkit-details-marker { display: none; }
-.chats-dock__panel:not([open]) .chats-dock__toggle { border-bottom-color: transparent; }
+:is(.chats-dock__toggle, .chats-tray__launcher)::-webkit-details-marker { display: none; }
+.chats-dock__panel:not([open]) .chats-dock__toggle,
+.chats-tray__item:not([open]) .chats-tray__launcher { border-bottom-color: transparent; }
 .chats-dock__toggle .chats-avatar { width: 32px; height: 32px; font-size: 0.8rem; }
 .chats-dock__icon { display: none; width: 26px; height: 26px; flex-shrink: 0; }
-.chats-dock__title {
+.chats-dock__title,
+.chats-tray__title {
   flex: 1;
   min-width: 0;
   font-family: var(--chats-dock-title-font);
@@ -1301,7 +1311,9 @@ turbo-frame[id^="chats_page_"] {
   text-overflow: ellipsis;
 }
 .chats-dock__chevron,
-.chats-dock__close-glyph {
+.chats-dock__close-glyph,
+.chats-tray__chevron,
+.chats-tray__close-glyph {
   flex: 0 0 32px;
   width: 32px;
   height: 32px;
@@ -1311,16 +1323,21 @@ turbo-frame[id^="chats_page_"] {
   color: var(--chats-text-muted);
 }
 .chats-dock__chevron svg,
-.chats-dock__close-glyph svg {
+.chats-dock__close-glyph svg,
+.chats-tray__chevron svg,
+.chats-tray__close-glyph svg {
   width: 18px;
   height: 18px;
   transition: transform var(--chats-dock-duration) var(--chats-dock-ease);
 }
 @media (hover: hover) {
-  .chats-dock__toggle:hover .chats-dock__chevron { background: var(--chats-dock-hover); color: var(--chats-text); }
+  .chats-dock__toggle:hover .chats-dock__chevron,
+  .chats-tray__launcher:hover .chats-tray__chevron { background: var(--chats-dock-hover); color: var(--chats-text); }
 }
-.chats-dock__panel[open] .chats-dock__chevron svg { transform: rotate(180deg); }
-.chats-dock__close-glyph { display: none; }
+.chats-dock__panel[open] .chats-dock__chevron svg,
+.chats-tray__item[open] .chats-tray__chevron svg { transform: rotate(180deg); }
+.chats-dock__close-glyph,
+.chats-tray__close-glyph { display: none; }
 
 /* Badges in the dock: one size, a hair smaller than the inbox's. */
 .chats-dock .chats-badge {
@@ -1342,9 +1359,10 @@ turbo-frame[id^="chats_page_"] {
   display: flex;
   flex-direction: column;
 }
-.chats-dock__panel[open] .chats-dock__body {
+:is(.chats-dock__panel, .chats-tray__item)[open] :is(.chats-dock__body, .chats-tray__body) {
   animation: chats-dock-rise var(--chats-dock-duration) var(--chats-dock-ease);
 }
+
 .chats-dock__search { padding: 8px 12px 4px; }
 .chats-dock__search .chats-search__input { padding: 0.45rem 0.8rem; font-size: 0.8125rem; }
 .chats-dock__results {
@@ -1403,6 +1421,66 @@ turbo-frame[id^="chats_page_"] {
 .chats-dock__skeleton span::after { content: ""; height: 10px; border-radius: 4px; background: var(--chats-surface); }
 .chats-dock__skeleton span::before { width: 45%; }
 .chats-dock__skeleton span::after { width: 80%; }
+
+/* --- The tray (0.7.0) --------------------------------------------------------------
+   The items a host puts in the corner (chats_dock { … } or chats_tray { … }),
+   between the windows and the panel. An item is a <details>: closed, a tab on
+   the bottom edge as tall as the bar; open, a panel with the same skin and the
+   bar on top. The windows' row gets what the tray leaves (dock_controller.js,
+   room), so nothing ever overlaps. A corner holding only the tray
+   (.chats-dock--tray-only) is the same element class: same variables, same
+   place. */
+
+.chats-tray {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--chats-dock-gap);
+}
+.chats-tray__item {
+  position: relative;
+  flex-shrink: 0;
+  padding-bottom: var(--chats-safe-bottom);
+}
+.chats-tray__item[open] {
+  width: var(--chats-tray-panel-width);
+  height: min(var(--chats-tray-panel-height),
+              calc(100dvh - var(--chats-dock-offset) - var(--chats-dock-top-clearance)));
+}
+.chats-tray__item:not([open]) .chats-tray__launcher { padding: 0 14px 0 12px; gap: 8px; }
+.chats-tray__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.chats-tray__icon :is(svg, img) { width: 100%; height: 100%; }
+.chats-tray__label {
+  font-family: var(--chats-dock-title-font);
+  font-size: 0.875rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+/* Closed, the tab's words; open, the panel's title and the way to close it. */
+.chats-tray__item[open] .chats-tray__label,
+.chats-tray__item:not([open]) :is(.chats-tray__title, .chats-tray__chevron) { display: none; }
+.chats-tray__title { display: flex; align-items: center; gap: 4px; }
+/* Positioned, as the panel's body is (a <details>' content sits in a UA slot
+   box). The item's content fills it: a frame, a column. */
+.chats-tray__body {
+  position: absolute;
+  inset: var(--chats-dock-bar-height) 0 var(--chats-safe-bottom) 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.chats-tray__body > turbo-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 
 /* --- Windows --------------------------------------------------------------------- */
 
@@ -1634,10 +1712,60 @@ turbo-frame[id^="chats_page_"] {
   }
   .chats-dock--no-launcher .chats-dock__panel:not([open]) { display: none; }
   /* Anything full-screen up: the launcher would only cover it. */
-  .chats-dock:has(.chats-window--front) .chats-dock__panel:not([open]) { display: none; }
+  .chats-dock:has(.chats-window--front, .chats-tray__item[open]) .chats-dock__panel:not([open]) { display: none; }
+
+  /* The tray: its closed items are smaller round buttons stacked above the
+     dock's (in its place when there is none), the same accent-free surface
+     as a window. `launcher: false` takes them away with the dock's. */
+  .chats-tray {
+    position: fixed;
+    z-index: 3;
+    right: calc(16px + var(--chats-safe-right));
+    bottom: calc(16px + var(--chats-dock-offset) + var(--chats-safe-bottom));
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 12px;
+  }
+  .chats-dock:not(.chats-dock--no-launcher, .chats-dock--tray-only) .chats-tray {
+    bottom: calc(28px + var(--chats-dock-launcher-size) + var(--chats-dock-offset) + var(--chats-safe-bottom));
+  }
+  .chats-tray__item:not([open]) {
+    width: var(--chats-tray-launcher-size);
+    height: var(--chats-tray-launcher-size);
+    padding: 0;
+    border: 1px solid var(--chats-dock-edge);
+    border-radius: 999px;
+    box-shadow: 0 6px 20px rgba(17, 24, 39, 0.28);
+    overflow: visible;
+  }
+  .chats-tray__item:not([open]) .chats-tray__launcher {
+    position: relative;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+  }
+  .chats-tray__item:not([open]) .chats-tray__icon { width: 22px; height: 22px; }
+  .chats-tray__item:not([open]) .chats-tray__label {
+    /* Still read out ("Need help?, 2 unread"), just not shown. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .chats-tray__item:not([open]) .chats-badge { position: absolute; top: -4px; right: -4px; }
+  .chats-dock--no-launcher .chats-tray__item:not([open]) { display: none; }
+  .chats-dock:has(.chats-dock__panel[open], .chats-window--front, .chats-tray__item[open]) .chats-tray__item:not([open]) {
+    display: none;
+  }
 
   /* Open: the full-screen sheet; a window sits on top of the list. */
   .chats-dock__panel[open],
+  .chats-tray__item[open],
   .chats-window {
     position: fixed;
     left: 0;
@@ -1655,26 +1783,40 @@ turbo-frame[id^="chats_page_"] {
     padding-bottom: var(--chats-safe-bottom);
     animation: chats-dock-sheet-up 260ms cubic-bezier(0.32, 0.72, 0, 1);
   }
-  .chats-dock__panel[open] .chats-dock__body { animation: none; }
+  .chats-tray__item[open] { animation: chats-dock-sheet-up 260ms cubic-bezier(0.32, 0.72, 0, 1); }
+  :is(.chats-dock__panel, .chats-tray__item)[open] :is(.chats-dock__body, .chats-tray__body) { animation: none; }
   .chats-window { z-index: 2; }
   .chats-window:not(.chats-window--front) { display: none; }
   .chats-window--front.chats-window--entering { animation: chats-dock-push 260ms cubic-bezier(0.32, 0.72, 0, 1); }
 
-  .chats-dock__body {
+  .chats-dock__body,
+  .chats-tray__body {
     inset: calc(var(--chats-safe-top) + var(--chats-dock-sheet-header-height)) var(--chats-safe-right)
            var(--chats-safe-bottom) var(--chats-safe-left);
   }
   .chats-dock__panel[open] .chats-dock__bar,
+  .chats-tray__item[open] .chats-tray__launcher,
   .chats-window__header {
     flex-basis: var(--chats-dock-sheet-header-height);
     height: var(--chats-dock-sheet-header-height);
     box-shadow: none;
   }
-  .chats-dock__panel[open] .chats-dock__toggle { padding: 0 6px 0 16px; }
-  .chats-dock__panel[open] .chats-dock__title { font-size: 1.125rem; font-weight: 800; }
+  .chats-dock__panel[open] .chats-dock__toggle,
+  .chats-tray__item[open] .chats-tray__launcher { padding: 0 6px 0 16px; }
+  .chats-dock__panel[open] .chats-dock__title,
+  .chats-tray__item[open] .chats-tray__title { font-size: 1.125rem; font-weight: 800; }
   .chats-dock__panel[open] :is(.chats-dock__toggle .chats-avatar, .chats-dock__chevron) { display: none; }
-  .chats-dock__panel[open] .chats-dock__close-glyph { display: inline-grid; flex-basis: 44px; width: 44px; height: 44px; }
-  .chats-dock__panel[open] .chats-dock__close-glyph svg { width: 22px; height: 22px; }
+  .chats-tray__item[open] :is(.chats-tray__icon, .chats-tray__chevron) { display: none; }
+  .chats-dock__panel[open] .chats-dock__close-glyph,
+  .chats-tray__item[open] .chats-tray__close-glyph {
+    display: inline-grid;
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+  }
+  .chats-dock__panel[open] .chats-dock__close-glyph svg,
+  .chats-tray__item[open] .chats-tray__close-glyph svg { width: 22px; height: 22px; }
+
   .chats-dock__search { padding: 8px 16px; }
   /* 16px or iOS Safari zooms the page on focus. */
   .chats-dock__search .chats-search__input { font-size: 16px; padding: 0.55rem 0.9rem; }

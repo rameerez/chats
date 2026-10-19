@@ -98,7 +98,10 @@ module Chats
       broadcast_read_state if Chats.config.read_receipts
       Chats::Broadcasts.refresh_inbox_of(messager)
       Chats::Broadcasts.update_badge_of(messager)
-      Chats.notify(:conversation_read, conversation: conversation, participant: self) if had_unread
+      if had_unread
+        Chats.notify(:conversation_read, conversation: conversation, participant: self)
+        Chats.notify(:unread_changed, messager: messager, conversation: conversation)
+      end
       self
     end
 

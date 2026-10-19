@@ -13,6 +13,10 @@
     account's page (sign out and in, an account switcher) never matches and
     never carries one person's windows into another's page.
 
+    Between the windows and the panel, the TRAY (chats/tray/_tray): the
+    items the host's block gave `chats_dock { … }`, e.g. support_desk's
+    "Need help?". Nothing at all without a block.
+
     The panel is a <details>: it opens and closes with no JavaScript at all,
     and its rows, search and links are real links and forms. The chats--dock
     controller (dock_controller.js) does the rest. Its live signal is the
@@ -50,7 +54,8 @@
                 "click@document->chats--dock#delegate " \
                 "turbo:before-stream-render@document->chats--dock#beforeStreamRender " \
                 "turbo:load@document->chats--dock#pageChanged turbo:render@document->chats--dock#pageChanged " \
-                "turbo:frame-load@document->chats--dock#pageFrameLoaded"
+                "turbo:frame-load@document->chats--dock#pageFrameLoaded " \
+                "chats--tray:open->chats--dock#trayOpened"
       } do %>
   <%= turbo_stream_from viewer, :chats_dock %>
   <%= render "chats/dock/signal" %>
@@ -60,6 +65,8 @@
   <%# What a window shows before its thread arrives, and if it can't. %>
   <template data-chats--dock-target="loadingShell"><%= render "chats/dock/window_shell", state: :loading %></template>
   <template data-chats--dock-target="failedShell"><%= render "chats/dock/window_shell", state: :failed %></template>
+
+  <% if (tray = local_assigns[:tray]) %><%= render "chats/tray/tray", tray: tray, owner: key %><% end %>
 
   <details class="chats-dock__panel"
            data-chats--dock-target="panel"

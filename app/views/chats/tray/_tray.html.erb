@@ -1,0 +1,20 @@
+<%# The tray: the items a host puts in the corner (`chats_dock { … }`, or
+    `chats_tray { … }` on its own), left to right in the block's order,
+    between the dock's windows and its panel. Each item is a
+    `chats_tray_item`; the chats--tray controller (tray_controller.js) runs
+    them all: one open at a time, the phone sheet, Escape, memory, badges.
+
+    Locals: tray (the items' HTML), owner (whose memory: the viewer's key,
+    or "guest"), standalone (true when there is no dock around it). %>
+<% standalone = local_assigns.fetch(:standalone, false) %>
+<%= tag.div tray,
+      class: "chats-tray",
+      data: {
+        controller: "chats--tray",
+        "chats--dock-target": ("tray" unless standalone),
+        "chats--tray-owner-value": owner,
+        "chats--tray-standalone-value": standalone,
+        action: "keydown->chats--tray#keydown " \
+                "turbo:load@document->chats--tray#pageChanged turbo:render@document->chats--tray#pageChanged " \
+                "turbo:frame-load@document->chats--tray#frameLoaded"
+      } %>

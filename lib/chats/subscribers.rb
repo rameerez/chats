@@ -25,11 +25,15 @@ module Chats
     #   :conversation_created  conversation:              a conversation just came into being
     #   :participant_left      participant:               someone left a group
     #   :conversation_read     conversation:, participant: a read consumed unread content
+    #   :unread_changed        messager:, conversation:    a messager's unread count there may
+    #                                                      have moved (any message, system ones
+    #                                                      included, or a read that consumed some)
     EVENTS = {
       message_created: :message,
       conversation_created: :conversation,
       participant_left: :participant,
-      conversation_read: nil
+      conversation_read: nil,
+      unread_changed: nil
     }.freeze
 
     # The events the deprecated `config.notifier=` hook is subscribed to:

@@ -14,7 +14,12 @@
 
     <%# What the README tells a host to add: the dock renders for signed-in
         viewers, and on none of the engine's own pages — unless a browser
-        test sets the `dock_everywhere` cookie (`everywhere: true`). %>
-    <%= chats_dock(**@dock_options.to_h, everywhere: cookies[:dock_everywhere].present?) %>
+        test sets the `dock_everywhere` cookie (`everywhere: true`). The
+        `dock_tray` cookie puts a host's own launcher in its tray (its value
+        is the launcher's badge), which shows to signed-out visitors too. %>
+    <%= chats_dock(**@dock_options.to_h, everywhere: cookies[:dock_everywhere].present?) do %>
+      <%= render "layouts/help_item", count: cookies[:dock_tray].to_i if cookies[:dock_tray].present? %>
+    <% end %>
+
   </body>
 </html>

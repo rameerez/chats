@@ -270,6 +270,12 @@ module Chats
       # and every participant except the sender gets a fresh unread badge.
       # Everyone else — the sender, and every seat on an edit or a delete —
       # gets the dock's list refresh alone.
+      #
+      # The badge moving is also a domain moment, `:unread_changed`, for
+      # every badge chats doesn't draw itself (a product gem's own count, a
+      # native app's). Emitted here because this is where it happens for
+      # every message, system ones included, which `:message_created`
+      # deliberately skips.
       def fan_out_inboxes(conversation, skip_badge_for: nil, badges: true, message: nil)
         conversation.participants.active.includes(:messager).each do |participant|
           messager = participant.messager
@@ -278,7 +284,9 @@ module Chats
           refresh_inbox_of(messager)
           if badges && messager != skip_badge_for
             update_badge_of(messager, conversation: conversation, message: message, participant: participant)
+            Chats.notify(:unread_changed, messager: messager, conversation: conversation)
           else
+
             update_dock_of(messager, conversation: conversation)
           end
         end

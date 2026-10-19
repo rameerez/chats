@@ -13,7 +13,7 @@ class SubscribersTest < ActiveSupport::TestCase
   # --- registration ---------------------------------------------------------
 
   test "every documented event is registrable and unknown ones fail loudly" do
-    assert_equal %i[message_created conversation_created participant_left conversation_read],
+    assert_equal %i[message_created conversation_created participant_left conversation_read unread_changed],
                  Chats::Subscribers::EVENTS.keys
 
     Chats::Subscribers::EVENTS.each_key { |event| Chats.on(event) { nil } }
@@ -145,6 +145,39 @@ class SubscribersTest < ActiveSupport::TestCase
   end
 
   # --- the deprecated single hook -------------------------------------------
+
+  test "unread_changed: every seat but the sender's on any message, system ones included, and a consuming read" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, conversation:| received << [messager.name, conversation] }
+    conversation = @alice.chat_with(@bob)
+
+    @bob.message!(conversation, "hola")
+    assert_equal [["Alice", conversation]], received, "the sender's own count doesn't move"
+
+    received.clear
+    conversation.post_system_message!("Ride cancelled")
+    assert_equal [%w[Alice Bob], [conversation, conversation]], received.sort_by(&:first).transpose,
+                 "a system message is unread for everyone, and message_created skips it"
+
+    received.clear
+    conversation.mark_read_by!(@alice)
+    assert_equal [["Alice", conversation]], received
+    received.clear
+    conversation.participant_for(@alice).read!(at: 1.minute.from_now)
+    assert_empty received, "a read with nothing left to consume moves nothing"
+  end
+
+  test "unread_changed never fires for a seat that left" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+
+    group = @alice.chat_with(@bob, @carol, title: "Trip")
+    group.participant_for(@carol).leave!
+
+    @alice.message!(group, "hola")
+
+    assert_equal %w[Bob], received
+  end
 
   test "config.notifier receives the 0.1.1 events only, and says it is deprecated" do
     events = []

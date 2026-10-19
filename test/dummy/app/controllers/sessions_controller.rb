@@ -14,7 +14,9 @@ class SessionsController < ApplicationController
   def home
     @people = current_user ? User.where.not(id: current_user.id).order(:id).limit(5) : []
     # The browser tests try the dock's options (`?dock_windows=4`).
-    @dock_options = params[:dock_windows].present? ? { windows: params[:dock_windows].to_i } : {}
+    @dock_options = {}
+    @dock_options[:windows] = params[:dock_windows].to_i if params[:dock_windows].present?
+    @dock_options[:launcher] = false if params[:dock_launcher] == "0"
   end
 
   # Any status, for the browser tests of a window whose load fails.
