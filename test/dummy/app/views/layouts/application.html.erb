@@ -19,6 +19,7 @@
         is the launcher's badge), which shows to signed-out visitors too. %>
     <%= chats_dock(**@dock_options.to_h, everywhere: cookies[:dock_everywhere].present?) do %>
       <%= render "layouts/help_item", count: cookies[:dock_tray].to_i if cookies[:dock_tray].present? %>
+      <%= render "layouts/feedback_item" if cookies[:dock_tray_items] == "2" %>
     <% end %>
 
   </body>

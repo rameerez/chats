@@ -323,7 +323,7 @@ Chats.on(:unread_changed)       { |messager:, conversation:| MyBadge.refresh(mes
 | `:conversation_created` | `conversation` | once per conversation, never when an existing one is resumed |
 | `:participant_left` | `participant` | someone left a group |
 | `:conversation_read` | `conversation:, participant:` | a read advanced the horizon past unread content |
-| `:unread_changed` | `messager:, conversation:` | a messager's unread count there may have moved: any message (system ones included) for every seat but the sender's, and a read that consumed some. What a badge chats doesn't draw (a product gem's, a native app's) listens to |
+| `:unread_changed` | `messager:, conversation:` | a messager's unread count there may have moved: any message (system ones included) for every seat but the sender's, and a read that consumed some. What a badge chats doesn't draw (a product gem's, a native app's) listens to. **Once per eligible seat**: a message in a 100-person group calls it 99 times, synchronously, in the write's `after_commit`, so a subscriber filters on the conversation first (no query) and enqueues or coalesces its work (support_desk's: one small job, for the case's one requester) |
 
 Four properties, all of which matter the first time something goes wrong at 3am:
 
@@ -702,7 +702,9 @@ A product often has more than one thing living in that corner: a "Need help?" la
 - **Closed**, an item is a tab on the bottom edge, as tall as the bar: its icon, its words, its badge. **Open**, it is a panel with the dock's skin (the window's width, the panel's height) and its title on the bar.
 - **Nothing overlaps.** The windows get the width the tray leaves, measured: an item opening takes its room the way a narrower screen would (an idle window closes, one in use folds, unsent text is kept). **One menu at a time**: opening an item closes the Messages panel and the other way round. Windows stay.
 - **On a phone** the items are 48px round buttons stacked above the dock's, and an open one is the same full-screen sheet as the dock's: everything around it `inert`, the page still, the composer on the keyboard. `launcher: false` takes the tray's buttons away with the dock's.
-- **Escape** closes the open item and gives the focus back to its tab. Which item was open is remembered on a desk (`chats:tray:v1:<key>`), never on a phone.
+- **Room.** An open item is as wide as the corner leaves it: the screen less the insets, the Messages panel and every other item, measured as it opens (`--chats-tray-room`). When that is under `--chats-tray-min-width` (280px), it opens as the full-screen sheet, as on a phone.
+- **Escape** closes the open item and gives the focus back to its tab. Which item was open is remembered on a desk (`chats:tray:v1:<key>`), never on a phone (nor when it opened as a desk's sheet).
+- **Visits.** The tray rides along with the dock from page to page, and takes each new page's items: one the page no longer renders goes, a new one comes in, and one still there takes the page's words, badge, badge URL, stream and panel. Only its open state stays, and, while it is open, a frame of its panel the new page renders too (by id): what is being read or written there.
 - **Signed out**, or with no dock at all, the items still render, in a corner of their own: `chats_dock { … }` with nobody signed in renders its block alone, and `chats_tray { … }` is that corner for a host with no messaging dock. Same element class, so the same variables and the same place. On the engine's own pages, and on any page with `data-chats-dock-hide`, the tray goes with the dock.
 
 ![The tray: an item open beside a window](docs/screenshots/tray-desktop.png)
@@ -728,12 +730,12 @@ What an item's content can count on, all declared in markup:
 |---|---|
 | `data-chats-active` / `data-chats-minimized` on the item | the read gate a dock window has: a chats thread inside a closed item never marks anything read, and a read that waited happens when it opens |
 | `chats_tray_badge(count, id:)` | hidden at zero; your stream replaces it by `id` |
-| `badge_url:` | asked again (a Turbo Stream) when the item's stream may have missed a broadcast: a reconnect, a return to the tab |
+| `badge_url:` | asked again (a Turbo Stream) when the item's stream may have missed a broadcast: a reconnect, a return to the tab. Same origin only: the answer is applied to the page, so a URL on another origin is refused (and said in the console) |
 | `data-chats-tray-refresh` on content | its frame reloads when the badge's count moves (now if open, when it opens if closed) |
 | `turbo-frame[data-chats-tray-home]` | goes back to that URL rather than show a conversation the page (or a dock window) already shows: a thread's ids must exist once |
 | `chats--tray:open` / `chats--tray:close` | dispatched on the item (`detail: { key }`), for your own code |
 
-The tray's variables sit with the dock's on `.chats-dock`: `--chats-tray-panel-width` (a window's, 336px), `--chats-tray-panel-height` (the panel's, 560px) and `--chats-tray-launcher-size` (48px, the round buttons). The classes are its own (`.chats-tray__launcher`, `.chats-tray__title`…), so a host's selectors for the dock's bar still find exactly one.
+The tray's variables sit with the dock's on `.chats-dock`: `--chats-tray-panel-width` (a window's, 336px), `--chats-tray-panel-height` (the panel's, 560px), `--chats-tray-min-width` (280px: less room, and an item opens as the sheet) and `--chats-tray-launcher-size` (48px, the round buttons). The classes are its own (`.chats-tray__launcher`, `.chats-tray__title`…), so a host's selectors for the dock's bar still find exactly one.
 
 ## 🔗 Profile links
 

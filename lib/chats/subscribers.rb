@@ -27,7 +27,13 @@ module Chats
     #   :conversation_read     conversation:, participant: a read consumed unread content
     #   :unread_changed        messager:, conversation:    a messager's unread count there may
     #                                                      have moved (any message, system ones
-    #                                                      included, or a read that consumed some)
+    #                                                      included, or a read that consumed some).
+    #                                                      ONCE PER ELIGIBLE SEAT: a message in a
+    #                                                      100-seat group calls it 99 times,
+    #                                                      synchronously, in the after_commit of
+    #                                                      the write. Subscribers stay cheap
+    #                                                      (filter on the conversation first, no
+    #                                                      query) and enqueue, or coalesce.
     EVENTS = {
       message_created: :message,
       conversation_created: :conversation,

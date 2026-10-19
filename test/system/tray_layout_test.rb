@@ -163,6 +163,55 @@ class TrayLayoutTest < ActionDispatch::SystemTestCase
     assert_no_selector ".chats-tray__item", visible: :all
   end
 
+  test "a visit to a page with other words and badge for the same item: both follow, an open frame survives" do
+    sign_in_at(1280)
+    find(".chats-tray__launcher").click
+    find("#dummy_help_question").send_keys("my order never came")
+    page.execute_script("window.__frame = document.getElementById('dummy_help_frame')")
+
+    set_cookie("dock_tray", "5")
+    set_cookie("dock_tray_label", "Ask us")
+    page.execute_script("Turbo.visit('/')")
+
+    assert_selector "#dummy_help_badge", text: "5"
+    assert_selector ".chats-tray__label", text: "Ask us", visible: :all
+    assert_selector ".chats-tray__item[open]"
+    assert page.evaluate_script("document.getElementById('dummy_help_frame') === window.__frame"),
+           "the open frame is the same live element"
+    assert_equal "my order never came", find("#dummy_help_question").value
+
+    find(".chats-tray__launcher").click # closed: the next visit renders its panel afresh
+    assert_no_selector ".chats-tray__item[open]"
+    set_cookie("dock_tray", "1")
+    page.execute_script("Turbo.visit('/')")
+    assert_selector "#dummy_help_badge", text: "1", visible: :all
+    assert page.evaluate_script("document.getElementById('dummy_help_frame') !== window.__frame")
+  end
+
+  test "two items in the corner at 700px: closed they fit; opened, one takes the sheet, and at 1280 it fits beside" do
+    sign_in_at(700, items: "2")
+
+    assert_selector ".chats-tray__item", count: 2
+    assert_nothing_overlaps
+
+    find("#chats_tray_help .chats-tray__launcher").click
+    assert_selector "#chats_tray_help.chats-tray__item--sheet[open]"
+    settle
+    sheet = rect("#chats_tray_help")
+    assert_equal [0, 0, 700, 900], [sheet["left"], sheet["top"], sheet["width"], sheet["height"]].map(&:round),
+                 "no room beside the bar and the other tab: the sheet"
+    assert_selector ".dummy-home[inert]", visible: :all
+    find("#chats_tray_help .chats-tray__close-glyph").click
+    assert_no_selector ".dummy-home[inert]", visible: :all
+
+    resize(1280)
+    find("#chats_tray_help .chats-tray__launcher").click
+    settle
+    assert_no_selector "#chats_tray_help.chats-tray__item--sheet"
+    assert_in_delta 336, rect("#chats_tray_help")["width"], 1
+    assert_nothing_overlaps
+  end
+
   test "signed out, the tab stands alone in the corner" do
     resize(1280)
     visit "/"
@@ -209,7 +258,11 @@ class TrayLayoutTest < ActionDispatch::SystemTestCase
     %w[1 true yes].include?(ENV["CI"].to_s.downcase)
   end
 
-  def sign_in_at(width, height: 900, mobile: false, query: "")
+  def set_cookie(name, value)
+    page.driver.browser.manage.add_cookie(name: name, value: value)
+  end
+
+  def sign_in_at(width, height: 900, mobile: false, query: "", items: nil)
     resize(width, height: height, mobile: mobile)
     visit "/"
     page.evaluate_async_script(<<~JS, @alice.to_global_id.to_s)
@@ -218,6 +271,7 @@ class TrayLayoutTest < ActionDispatch::SystemTestCase
       fetch("/test_login", { method: "POST", body: new URLSearchParams({ messager_gid: arguments[0] }) }).then(() => done());
     JS
     page.driver.browser.manage.add_cookie(name: "dock_tray", value: "2")
+    page.driver.browser.manage.add_cookie(name: "dock_tray_items", value: items) if items
     visit "/#{query}"
     assert_selector ".chats-dock[data-mode]"
     assert_selector ".chats-tray__item", visible: :all

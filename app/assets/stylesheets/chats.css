@@ -1179,6 +1179,7 @@ turbo-frame[id^="chats_page_"] {
   --chats-tray-panel-width: var(--chats-dock-window-width);
   --chats-tray-panel-height: var(--chats-dock-panel-height);
   --chats-tray-launcher-size: 48px;   /* an item's round button on a phone */
+  --chats-tray-min-width: 280px;      /* less room than this: an item opens as the sheet */
   --chats-dock-sheet-header-height: 56px;
   --chats-dock-duration: 200ms;
   --chats-dock-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1443,20 +1444,13 @@ turbo-frame[id^="chats_page_"] {
   flex-shrink: 0;
   padding-bottom: var(--chats-safe-bottom);
 }
-/* Never wider than what the corner leaves it: the screen less the insets and,
-   in the dock, the Messages panel beside it (a narrow desk, several items). */
+/* Never wider than what the corner leaves it (`--chats-tray-room`, measured by
+   chats--tray as it opens: the screen less the insets, the dock's panel and
+   every other item). Under --chats-tray-min-width it opens as the sheet. */
 .chats-tray__item[open] {
-  width: min(var(--chats-tray-panel-width),
-             calc(100vw - 2 * var(--chats-dock-inset) - var(--chats-dock-panel-width) - var(--chats-dock-gap)));
+  width: min(var(--chats-tray-panel-width), var(--chats-tray-room, var(--chats-tray-panel-width)));
   height: min(var(--chats-tray-panel-height),
               calc(100dvh - var(--chats-dock-offset) - var(--chats-dock-top-clearance)));
-}
-/* A corner of its own has no panel beside it. (Desks only: a phone's sheet is
-   the whole screen, below.) */
-@media (min-width: 700px) and (min-height: 500px) {
-  .chats-dock--tray-only .chats-tray__item[open] {
-    width: min(var(--chats-tray-panel-width), calc(100vw - 2 * var(--chats-dock-inset)));
-  }
 }
 .chats-tray__item:not([open]) .chats-tray__launcher { padding: 0 14px 0 12px; gap: 8px; }
 .chats-tray__icon {
@@ -1777,7 +1771,6 @@ turbo-frame[id^="chats_page_"] {
 
   /* Open: the full-screen sheet; a window sits on top of the list. */
   .chats-dock__panel[open],
-  .chats-tray__item[open],
   .chats-window {
     position: fixed;
     left: 0;
@@ -1795,39 +1788,31 @@ turbo-frame[id^="chats_page_"] {
     padding-bottom: var(--chats-safe-bottom);
     animation: chats-dock-sheet-up 260ms cubic-bezier(0.32, 0.72, 0, 1);
   }
-  .chats-tray__item[open] { animation: chats-dock-sheet-up 260ms cubic-bezier(0.32, 0.72, 0, 1); }
-  :is(.chats-dock__panel, .chats-tray__item)[open] :is(.chats-dock__body, .chats-tray__body) { animation: none; }
+  .chats-dock__panel[open] .chats-dock__body { animation: none; }
   .chats-window { z-index: 2; }
   .chats-window:not(.chats-window--front) { display: none; }
   .chats-window--front.chats-window--entering { animation: chats-dock-push 260ms cubic-bezier(0.32, 0.72, 0, 1); }
 
-  .chats-dock__body,
-  .chats-tray__body {
+  .chats-dock__body {
     inset: calc(var(--chats-safe-top) + var(--chats-dock-sheet-header-height)) var(--chats-safe-right)
            var(--chats-safe-bottom) var(--chats-safe-left);
   }
   .chats-dock__panel[open] .chats-dock__bar,
-  .chats-tray__item[open] .chats-tray__launcher,
   .chats-window__header {
     flex-basis: var(--chats-dock-sheet-header-height);
     height: var(--chats-dock-sheet-header-height);
     box-shadow: none;
   }
-  .chats-dock__panel[open] .chats-dock__toggle,
-  .chats-tray__item[open] .chats-tray__launcher { padding: 0 6px 0 16px; }
-  .chats-dock__panel[open] .chats-dock__title,
-  .chats-tray__item[open] .chats-tray__title { font-size: 1.125rem; font-weight: 800; }
+  .chats-dock__panel[open] .chats-dock__toggle { padding: 0 6px 0 16px; }
+  .chats-dock__panel[open] .chats-dock__title { font-size: 1.125rem; font-weight: 800; }
   .chats-dock__panel[open] :is(.chats-dock__toggle .chats-avatar, .chats-dock__chevron) { display: none; }
-  .chats-tray__item[open] :is(.chats-tray__icon, .chats-tray__chevron) { display: none; }
-  .chats-dock__panel[open] .chats-dock__close-glyph,
-  .chats-tray__item[open] .chats-tray__close-glyph {
+  .chats-dock__panel[open] .chats-dock__close-glyph {
     display: inline-grid;
     flex-basis: 44px;
     width: 44px;
     height: 44px;
   }
-  .chats-dock__panel[open] .chats-dock__close-glyph svg,
-  .chats-tray__item[open] .chats-tray__close-glyph svg { width: 22px; height: 22px; }
+  .chats-dock__panel[open] .chats-dock__close-glyph svg { width: 22px; height: 22px; }
 
   .chats-dock__search { padding: 8px 16px; }
   /* 16px or iOS Safari zooms the page on focus. */
@@ -1861,6 +1846,39 @@ turbo-frame[id^="chats_page_"] {
   /* The keyboard is up: the home-indicator strip is behind it. */
   .chats-dock--keyboard .chats-thread--window .chats-composer { padding-bottom: 8px; }
 }
+
+/* An item open as the sheet: on a phone, and on a desk whose corner can't fit
+   it (chats--tray sets the class: .chats-tray__item--sheet). The dock's own
+   sheet, for an item. */
+.chats-tray__item--sheet[open] {
+  position: fixed;
+  z-index: 3;
+  left: 0;
+  right: 0;
+  top: var(--chats-vv-top, 0px);
+  width: 100%;
+  height: var(--chats-vvh, 100dvh);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: var(--chats-safe-top) var(--chats-safe-right) var(--chats-safe-bottom) var(--chats-safe-left);
+  animation: chats-dock-sheet-up 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.chats-tray__item--sheet[open] .chats-tray__body {
+  inset: calc(var(--chats-safe-top) + var(--chats-dock-sheet-header-height)) var(--chats-safe-right)
+         var(--chats-safe-bottom) var(--chats-safe-left);
+  animation: none;
+}
+.chats-tray__item--sheet[open] .chats-tray__launcher {
+  flex-basis: var(--chats-dock-sheet-header-height);
+  height: var(--chats-dock-sheet-header-height);
+  padding: 0 6px 0 16px;
+  box-shadow: none;
+}
+.chats-tray__item--sheet[open] .chats-tray__title { font-size: 1.125rem; font-weight: 800; }
+.chats-tray__item--sheet[open] :is(.chats-tray__icon, .chats-tray__chevron) { display: none; }
+.chats-tray__item--sheet[open] .chats-tray__close-glyph { display: inline-grid; flex-basis: 44px; width: 44px; height: 44px; }
+.chats-tray__item--sheet[open] .chats-tray__close-glyph svg { width: 22px; height: 22px; }
 
 html.chats-dock-sheet-open { overflow: hidden; }
 

@@ -35,6 +35,16 @@ import { around, fitViewport, holdInert, lockScroll, releaseInert } from "chats/
 //                   also shown in an item: the item's
 //                   turbo-frame[data-chats-tray-home] goes back home. The
 //                   live streams address a thread's ids, which must exist once.
+//   * room          an open item is as wide as the corner leaves it: the
+//                   screen less the insets, the dock's panel and every other
+//                   item (`--chats-tray-room`, measured); when that is less
+//                   than `--chats-tray-min-width`, it opens as the sheet, as
+//                   on a phone (`.chats-tray__item--sheet`)
+//   * visits        the tray is carried from page to page (permanent), and
+//                   reconciled with the items the new page rendered: their
+//                   words, badges, badge URLs, streams and panels are the new
+//                   page's; only an item's open state, and a frame open in it
+//                   that the new page renders too (what is being read), stay
 //   * on its own    (`standalone`: a corner of its own, no dock around it)
 //                   it also hides on any page carrying [data-chats-dock-hide]
 //                   and fits the visual viewport, which the dock otherwise does
@@ -43,7 +53,10 @@ import { around, fitViewport, holdInert, lockScroll, releaseInert } from "chats/
 // pin (see config/importmap.rb and Chats::Engine).
 
 const SHEET = "(max-width: 699.98px), (max-height: 499.98px)" // keep in step with chats.css
+const AS_SHEET = "chats-tray__item--sheet"
 const REFRESH_DELAY_MS = 300
+// What a visit refreshes on a retained item, and what it never touches.
+const KEPT_ATTRIBUTES = new Set(["open", "data-chats-minimized", "data-chats-active", "class", "style"])
 
 export default class extends Controller {
   static targets = ["item", "badge"]
@@ -59,6 +72,7 @@ export default class extends Controller {
     this.corner = this.standaloneValue ? this.element.closest(".chats-dock") || this.element : null
     this.media = window.matchMedia(SHEET)
     this.media.addEventListener?.("change", this.layout)
+    window.addEventListener("resize", this.resized)
     if (this.corner) {
       window.visualViewport?.addEventListener("resize", this.fitViewport)
       window.visualViewport?.addEventListener("scroll", this.fitViewport)
@@ -74,6 +88,7 @@ export default class extends Controller {
 
   disconnect() {
     this.media?.removeEventListener?.("change", this.layout)
+    window.removeEventListener("resize", this.resized)
     window.visualViewport?.removeEventListener("resize", this.fitViewport)
     window.visualViewport?.removeEventListener("scroll", this.fitViewport)
     clearTimeout(this.refreshTimer)
@@ -86,6 +101,7 @@ export default class extends Controller {
   itemTargetConnected(item) {
     item.dataset.chatsActive = "true"
     item.toggleAttribute("data-chats-minimized", !item.open)
+    if (this.compact) item.classList.add(AS_SHEET)
   }
 
   // Every item's `toggle` (it doesn't bubble: each item names this action).
@@ -96,6 +112,7 @@ export default class extends Controller {
     item.toggleAttribute("data-chats-minimized", !item.open)
     if (item.open) {
       this.itemTargets.forEach((other) => { if (other !== item) other.open = false })
+      this.fit(item)
       this.dispatch("open", { target: item, detail: { key: item.dataset.chatsTrayKey } })
       item.dispatchEvent(new CustomEvent("chats:activated"))
       if (this.stale.has(item)) this.refresh(item)
@@ -172,9 +189,12 @@ export default class extends Controller {
     return Array.from(frames)
   }
 
+  // Each item's badge asked again. Only from this site: what comes back is a
+  // Turbo Stream applied to the page, so a badge URL on another origin (one
+  // that answers CORS) is refused, never fetched.
   catchUp() {
     this.itemTargets.forEach((item) => {
-      const url = item.dataset.chatsTrayBadgeUrl
+      const url = sameOrigin(item.dataset.chatsTrayBadgeUrl)
       if (url) renderStreamFrom(url)
     })
   }
@@ -182,9 +202,10 @@ export default class extends Controller {
   // --- Pages ---------------------------------------------------------------
 
   // A visit is about to render, and Turbo will keep this (permanent) tray
-  // rather than the one the new page rendered: make its items the new page's,
-  // by key. An item still there stays as it is (open, its frame, its badge);
-  // one the page no longer renders goes; a new one comes in, in its place.
+  // rather than the one the new page rendered: make its items the new
+  // page's, by key. One the page no longer renders goes; a new one comes in;
+  // one still there takes everything the new page says about it (see
+  // refreshItem), in the new page's order.
   reconcile(event) {
     const find = (id) => event.detail?.newBody?.querySelector?.(`[id="${cssEscape(id)}"]`)
     // The permanent element the tray rides in (the dock, or its own corner):
@@ -197,13 +218,56 @@ export default class extends Controller {
     const current = new Map(this.itemTargets.map((item) => [item.dataset.chatsTrayKey, item]))
     const wanted = incoming ? Array.from(incoming.querySelectorAll(":scope > .chats-tray__item")) : []
     const keys = new Set(wanted.map((item) => item.dataset.chatsTrayKey))
-    // The usual visit: the same items. Nothing moves (a move would reconnect their streams).
-    if (wanted.map((item) => item.dataset.chatsTrayKey).join("\n") === Array.from(current.keys()).join("\n")) return
+    const sameOrder = wanted.map((item) => item.dataset.chatsTrayKey).join("\n") === Array.from(current.keys()).join("\n")
 
     current.forEach((item, key) => { if (!keys.has(key)) item.remove() })
-    wanted.forEach((item) => {
-      const kept = current.get(item.dataset.chatsTrayKey)
-      this.element.append(kept || document.importNode(item, true)) // in the new page's order
+    wanted.forEach((fresh) => {
+      const kept = current.get(fresh.dataset.chatsTrayKey)
+      if (kept) this.refreshItem(kept, fresh)
+      // The new page's order. When it is the same, nothing moves: a move
+      // reconnects what is in the item (its streams, an open thread).
+      if (!kept || !sameOrder) this.element.append(kept || document.importNode(fresh, true))
+    })
+  }
+
+  // A retained item takes the new page's version of itself: its attributes
+  // (the badge URL among them), its tab (words, icon, badge, the badge's
+  // stream) and its panel. It keeps only what the viewer did: whether it is
+  // open, and, while it is open, a frame of its panel the new page renders
+  // too (by id), live, where it is: what they are reading or writing.
+  refreshItem(kept, fresh) {
+    Array.from(kept.attributes).forEach(({ name }) => {
+      if (!KEPT_ATTRIBUTES.has(name) && !fresh.hasAttribute(name)) kept.removeAttribute(name)
+    })
+    Array.from(fresh.attributes).forEach(({ name, value }) => {
+      if (!KEPT_ATTRIBUTES.has(name)) kept.setAttribute(name, value)
+    })
+
+    const summary = kept.querySelector(":scope > summary")
+    const freshSummary = fresh.querySelector(":scope > summary")
+    if (freshSummary && summary) {
+      summary.replaceWith(document.importNode(freshSummary, true))
+    } else if (freshSummary) {
+      kept.prepend(document.importNode(freshSummary, true))
+    }
+
+    const body = kept.querySelector(":scope > .chats-tray__body")
+    const freshBody = fresh.querySelector(":scope > .chats-tray__body")
+    if (!body || !freshBody) return
+    Array.from(freshBody.attributes).forEach(({ name, value }) => body.setAttribute(name, value))
+
+    const live = new Map()
+    if (kept.open) body.querySelectorAll(":scope > turbo-frame[id]").forEach((frame) => live.set(frame.id, frame))
+    const staying = new Set(Array.from(freshBody.children).filter((node) => live.has(node.id)).map((node) => live.get(node.id)))
+    Array.from(body.childNodes).forEach((node) => { if (!staying.has(node)) node.remove() })
+    let anchor = body.firstChild
+    Array.from(freshBody.childNodes).forEach((node) => {
+      const frame = node.id && live.get(node.id)
+      if (frame && staying.has(frame)) {
+        anchor = frame.nextSibling // it stays where it is
+      } else {
+        body.insertBefore(document.importNode(node, true), anchor)
+      }
     })
   }
 
@@ -250,20 +314,53 @@ export default class extends Controller {
 
     this.compact = compact
     if (this.corner) this.corner.dataset.mode = compact ? "sheet" : "dock"
+    this.itemTargets.forEach((item) => (item.open ? this.fit(item) : item.classList.toggle(AS_SHEET, compact)))
     this.fitViewport()
     this.syncSheet()
+  }
+
+  // The viewport changed size: the open item fits again (or becomes the sheet).
+  resized = () => {
+    const item = this.openItem
+    if (!item) return
+
+    this.fit(item)
+    this.syncSheet()
+  }
+
+  // How wide +item+ may open: the screen less the insets, the dock's panel
+  // and every other item with its gap. Too little (under
+  // --chats-tray-min-width), or a phone: the sheet.
+  fit(item) {
+    const room = this.roomFor(item)
+    item.style.setProperty("--chats-tray-room", `${Math.max(0, Math.floor(room))}px`)
+    item.classList.toggle(AS_SHEET, Boolean(this.compact) || room < this.pixels("--chats-tray-min-width", 280))
+  }
+
+  roomFor(item) {
+    const gap = this.pixels("--chats-dock-gap", 8)
+    const panel = this.element.closest(".chats-dock")?.querySelector(":scope > .chats-dock__panel")
+    let taken = 2 * this.pixels("--chats-dock-inset", 16) + (panel ? panel.offsetWidth + gap : 0)
+    this.itemTargets.forEach((other) => { if (other !== item) taken += other.offsetWidth + gap })
+    return window.innerWidth - taken
+  }
+
+  pixels(property, fallback) {
+    const value = getComputedStyle(this.element).getPropertyValue(property).trim()
+    return value.endsWith("px") ? parseFloat(value) : fallback
   }
 
   fitViewport = () => {
     if (this.corner) fitViewport(this.corner, this.compact)
   }
 
-  // On a phone, an open item is modal: everything around it is held inert,
-  // and the page doesn't scroll, until it closes.
+  // Open as the sheet (a phone, or a corner too narrow for it), an item is
+  // modal: everything around it is held inert, and the page doesn't scroll,
+  // until it closes.
   syncSheet() {
     const item = this.openItem
     const hidden = this.corner?.hidden || this.element.closest(".chats-dock")?.hidden
-    if (this.compact && item && !hidden) {
+    if (item?.classList.contains(AS_SHEET) && !hidden) {
       holdInert(this, around(item))
       lockScroll(this, true)
     } else {
@@ -284,8 +381,11 @@ export default class extends Controller {
 
   save() {
     const saved = this.read() || {}
-    // A sheet always starts closed: on a phone, only a desk's choice is kept.
-    this.write({ open: this.compact ? saved.open || null : this.openItem?.dataset.chatsTrayKey || null })
+    const open = this.openItem
+    // A sheet always starts closed: on a phone, only a desk's choice is kept,
+    // and an item that opened as the sheet on a narrow desk isn't remembered.
+    if (this.compact) return this.write({ open: saved.open || null })
+    this.write({ open: open && !open.classList.contains(AS_SHEET) ? open.dataset.chatsTrayKey : null })
   }
 
   // The item that was open, on a desk. A Turbo visit carries the live
@@ -320,6 +420,20 @@ export default class extends Controller {
     element.classList.add(className)
     setTimeout(() => element.classList.remove(className), duration)
   }
+}
+
+// +url+ resolved against the page, when it is on the page's own origin; null
+// (and said, in the console) when it is not.
+function sameOrigin(url) {
+  if (!url) return null
+  try {
+    const resolved = new URL(url, window.location.href)
+    if (resolved.origin === window.location.origin) return resolved.toString()
+  } catch {
+    // not a URL at all
+  }
+  console.error(`chats--tray: refusing a badge URL on another origin: ${url}`)
+  return null
 }
 
 function cssEscape(value) {

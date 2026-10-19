@@ -42,7 +42,14 @@ class TrayControllerTest < ActiveSupport::TestCase
           removeItem: (key) => { delete stored[key] }
         }
         let lockClass = false
-        global.window = { innerWidth: 1280, get localStorage() { return storage } }
+        global.window = {
+          innerWidth: 1280,
+          location: { href: "https://app.test/players", origin: "https://app.test" },
+          get localStorage() { return storage }
+        }
+        global.getComputedStyle = () => ({ getPropertyValue: () => "" })
+        const consoleErrors = []
+        console.error = (message) => consoleErrors.push(message)
         global.document = {
           activeElement: null,
           documentElement: { classList: { toggle: (name, on) => { if (name === "chats-dock-sheet-open") lockClass = on } } },
@@ -74,6 +81,15 @@ class TrayControllerTest < ActiveSupport::TestCase
             events,
             summary,
             inside,
+            offsetWidth: 120,
+            classes: new Set(),
+            classList: {
+              contains: (name) => element.classes.has(name),
+              toggle: (name, on) => (on ? element.classes.add(name) : element.classes.delete(name)),
+              add: (name) => element.classes.add(name)
+            },
+            styles: {},
+            style: { setProperty: (name, value) => { element.styles[name] = value } },
             hasAttribute: (name) => attributes.has(name),
             toggleAttribute: (name, on) => (on ? attributes.add(name) : attributes.delete(name)),
             dispatchEvent: (event) => events.push(event.type),
@@ -195,7 +211,41 @@ class TrayControllerTest < ActiveSupport::TestCase
         assert.strictEqual(reloaded, 2, "open: a count that moved reloads it now")
 
         controller.catchUp()
-        assert.deepStrictEqual(asked, ["/help/badge"], "a missed badge is asked again from the item's badge-url")
+        assert.deepStrictEqual(asked, ["https://app.test/help/badge"], "a missed badge is asked again from the item's badge-url")
+
+        // …from this site only: what comes back is applied to the page.
+        asked.length = 0
+        help.dataset.chatsTrayBadgeUrl = "https://evil.test/badge"
+        controller.catchUp()
+        help.dataset.chatsTrayBadgeUrl = "//evil.test/badge"
+        controller.catchUp()
+        assert.deepStrictEqual(asked, [], "a badge URL on another origin is never fetched")
+        assert.strictEqual(consoleErrors.length, 2, "and the console says so")
+        help.dataset.chatsTrayBadgeUrl = "/help/badge"
+
+        // --- room: as wide as the corner leaves it, else the sheet ------------------
+
+        const besideIt = item("feedback")
+        const opening = item("help", { open: true })
+        controller = tray([besideIt, opening])
+        window.innerWidth = 1280
+        controller.fit(opening)
+        assert.strictEqual(opening.styles["--chats-tray-room"], "1120px", "the screen less the insets and the other tab")
+        assert(!opening.classes.has("chats-tray__item--sheet"))
+        window.innerWidth = 450
+        controller.fit(opening)
+        assert(!opening.classes.has("chats-tray__item--sheet"), "290px is room enough (--chats-tray-min-width: 280px)")
+        window.innerWidth = 400
+        controller.fit(opening)
+        assert(opening.classes.has("chats-tray__item--sheet"), "240px is not: it opens as the sheet")
+        window.innerWidth = 1280
+        controller.fit(opening)
+        assert(!opening.classes.has("chats-tray__item--sheet"), "and back in the corner when the screen widens")
+        controller.save()
+        assert.strictEqual(JSON.parse(stored["chats:tray:v1:alice"]).open, "help")
+        opening.classes.add("chats-tray__item--sheet")
+        controller.save()
+        assert.strictEqual(JSON.parse(stored["chats:tray:v1:alice"]).open, null, "an item open as a desk's sheet isn't remembered")
 
         // --- never twice: an item yields a thread the page shows -------------------
 
@@ -271,12 +321,14 @@ class TrayControllerTest < ActiveSupport::TestCase
 
         // --- a visit reconciles the carried tray with the new page's items, by key -----
 
-        const keyed = (key) => ({ dataset: { chatsTrayKey: key }, toggleAttribute() {}, removed: false, remove() { this.removed = true } })
+        const keyed = (key) => ({ dataset: { chatsTrayKey: key }, toggleAttribute() {}, querySelector: () => null, removed: false, remove() { this.removed = true } })
         const kept = keyed("support")
         const gone = keyed("feedback")
         let appended = []
         controller = tray([kept, gone])
         controller.element = { id: "chats_tray_items_alice", append: (node) => appended.push(node), closest: () => null }
+        const refreshed = []
+        controller.refreshItem = (old, fresh) => refreshed.push([old.dataset.chatsTrayKey, fresh.dataset.chatsTrayKey])
         global.document.importNode = (node) => ({ imported: node.dataset.chatsTrayKey })
         const newPage = (keys) => ({
           querySelector: (selector) => (selector === '[id="chats_tray_items_alice"]'
@@ -284,6 +336,8 @@ class TrayControllerTest < ActiveSupport::TestCase
         })
         controller.reconcile({ detail: { newBody: newPage(["support", "feedback"]) } })
         assert.deepStrictEqual(appended, [], "the same items: nothing moves")
+        assert.deepStrictEqual(refreshed, [["support", "support"], ["feedback", "feedback"]],
+                               "but each takes the new page's version of itself (refreshItem, measured in Chrome)")
         controller.reconcile({ detail: { newBody: newPage(["changelog", "support"]) } })
         assert(gone.removed, "an item the new page doesn't render goes")
         assert.deepStrictEqual(appended.map((node) => node.imported || node.dataset.chatsTrayKey), ["changelog", "support"],

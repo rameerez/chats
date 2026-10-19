@@ -34,10 +34,19 @@ use it.**
   It hides on pages carrying `data-chats-dock-hide`, as the dock does.
 - **The tray follows the page it is carried to.** The dock and the tray-only
   corner are `data-turbo-permanent`, so Turbo keeps the old tray on a visit;
-  `chats--tray` reconciles it with the items the new page rendered, by key: an
-  item still there keeps its state (open, its frame, its badge), one the page
-  no longer renders goes, a new one comes in. An open item is never wider than
-  the corner leaves it (the screen less the insets and the Messages panel).
+  `chats--tray` reconciles it with the items the new page rendered, by key: one
+  the page no longer renders goes, a new one comes in, and one still there
+  takes the page's words, badge, badge URL, stream and panel, keeping only
+  its open state and, while open, a frame of its panel the page renders too
+  (by id): what is being read or written.
+- **Room.** An open item is as wide as the corner leaves it (the screen less
+  the insets, the Messages panel and every other item, measured as it opens:
+  `--chats-tray-room`); with less than `--chats-tray-min-width` (280px) it
+  opens as the full-screen sheet, as on a phone (`.chats-tray__item--sheet`,
+  which now carries the tray's sheet layout on phones too).
+- **Badge URLs are same-origin.** The catch-up applies what a badge URL
+  answers to the page, so `chats--tray` resolves it against the page and
+  refuses (with a console error) one on another origin.
 - **What an item's content can count on**, declared in markup: the read
   gate a dock window has (`data-chats-active`, `data-chats-minimized` while
   closed, `chats:activated` on open: a chats thread inside a closed item
@@ -52,7 +61,10 @@ use it.**
   count in a conversation may have moved: every message, system ones
   included (which `:message_created` skips on purpose), for every active
   seat but the sender's, and a read that consumed unread content. Product
-  gems keep their own badges live from it (support_desk's launcher does).
+  gems keep their own badges live from it (support_desk's launcher does). It
+  fires once per eligible seat, synchronously in the write's `after_commit`
+  (a message in a 100-person group: 99 calls), so subscribers filter cheaply
+  and enqueue or coalesce.
 - `--chats-tray-panel-width`, `--chats-tray-panel-height`,
   `--chats-tray-launcher-size`, declared with the dock's on `.chats-dock`.
 
