@@ -394,6 +394,14 @@ class TrayControllerTest < ActiveSupport::TestCase
         assert(!sameFrame(live, frameNode("other", "/support/")), "another id")
         assert(sameFrame(rendered(frameNode("static")), frameNode("static")), "no src either side: the same")
 
+        // A relative src is resolved against the page that rendered it, when it rendered it.
+        window.location.href = "https://app.test/a/"
+        const onA = rendered(frameNode("panel", "threads"))
+        window.location.href = "https://app.test/b/" // Turbo has moved the address to the new page
+        assert(!sameFrame(onA, frameNode("panel", "threads")), "threads on /a/ and on /b/: two destinations")
+        assert(sameFrame(onA, frameNode("panel", "/a/threads")), "the same absolute destination: kept")
+        window.location.href = "https://app.test/players"
+
         // --- a resize measures once a frame --------------------------------------------
 
         const frames = []

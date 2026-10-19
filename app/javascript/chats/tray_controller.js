@@ -455,21 +455,26 @@ function adopt(target, source, managed = new Set()) {
 }
 
 // Whether the new page's +node+ is the frame +frame+ already is: the same id,
-// rendered with the same src (resolved, query included) as the page that
-// rendered +frame+. Where the frame went since (a link followed inside it)
-// is the viewer's, and stays; a different src is another frame (another
-// thread), and replaces it.
+// rendered with the same destination (the src resolved, query included) as
+// the page that rendered +frame+. Where the frame went since (a link followed
+// inside it) is the viewer's, and stays; another destination is another
+// frame (another thread), and replaces it.
+//
+// Each src is resolved against the page that rendered it, at the moment it
+// renders: +frame+'s when it connected (rendered), +node+'s now, on
+// turbo:before-render, when Turbo has already moved the address to the new
+// page. So `src="threads"` on /a/ and on /b/ are two destinations.
 function sameFrame(frame, node) {
   return node.matches?.("turbo-frame") && node.id === frame.id &&
-    resolved(frame.renderedSrc) === resolved(node.getAttribute("src"))
+    frame.renderedSrc === resolved(node.getAttribute("src"))
 }
 
-// What the page rendered a frame with, remembered on it (and on the frames
-// inside it) before Turbo navigates it.
+// The absolute destination the page rendered a frame with, remembered on it
+// (and on the frames inside it) before Turbo navigates it.
 function rendered(node) {
   const frames = node.matches?.("turbo-frame") ? [node] : []
   frames.push(...(node.querySelectorAll?.("turbo-frame") || []))
-  frames.forEach((frame) => { frame.renderedSrc ??= frame.getAttribute("src") })
+  frames.forEach((frame) => { frame.renderedSrc ??= resolved(frame.getAttribute("src")) })
   return node
 }
 

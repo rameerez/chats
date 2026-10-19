@@ -189,6 +189,23 @@ class SubscribersTest < ActiveSupport::TestCase
     assert_equal %w[Alice], received, "once, after the commit"
   end
 
+  test "a consuming read and then an empty advance in one transaction: emitted once, after the commit" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "hola")
+    received.clear
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      # Nothing left to consume, through ANOTHER instance of the same seat.
+      conversation.participant_for(@alice).read!(at: 1.minute.from_now)
+    end
+
+    assert_equal %w[Alice], received
+    assert_empty Chats::Participant.unread_consumed, "nothing left waiting"
+  end
+
   test "unread_changed never fires for a seat that left" do
     received = []
     Chats.on(:unread_changed) { |messager:, **| received << messager.name }
