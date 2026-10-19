@@ -27,10 +27,10 @@ Gem::Specification.new do |spec|
       # A built package (*.gem) never ships inside the next one, even if one
       # gets committed again (.gitignore keeps them out of git already).
       (f == gemspec) || f.end_with?(".gem") ||
-        # The README's screenshots are repo furniture: GitHub serves them over
-        # https, nothing inside the gem reads them, and they are most of a
-        # megabyte. They stay out of the package.
-        f.start_with?(*%w[bin/ test/ spec/ features/ docs/screenshots/ .git .github appveyor Gemfile])
+        # docs/ is repo furniture: the README's screenshots (GitHub serves them
+        # over https) and the design notes. Nothing inside the gem reads any of
+        # it, so none of it ships.
+        f.start_with?(*%w[bin/ test/ spec/ features/ docs/ .git .github appveyor Gemfile])
     end
   end
   spec.bindir = "exe"

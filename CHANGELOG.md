@@ -28,6 +28,8 @@ Intended as **0.7.2**. **No migration, nothing to configure.**
   in the reader's language by `chats--thread` (`menuLabel`).
 
 ### Changed
+- The package leaves all of `docs/` behind, the design notes with the
+  screenshots: nothing inside the gem reads them.
 
 - **Choosing a link in the menu closes it**, as a form button did: the dock
   is carried from page to page, and its popup stayed open over the next one.
