@@ -13,7 +13,7 @@ class SubscribersTest < ActiveSupport::TestCase
   # --- registration ---------------------------------------------------------
 
   test "every documented event is registrable and unknown ones fail loudly" do
-    assert_equal %i[message_created conversation_created participant_left conversation_read],
+    assert_equal %i[message_created conversation_created participant_left conversation_read unread_changed],
                  Chats::Subscribers::EVENTS.keys
 
     Chats::Subscribers::EVENTS.each_key { |event| Chats.on(event) { nil } }
@@ -145,6 +145,138 @@ class SubscribersTest < ActiveSupport::TestCase
   end
 
   # --- the deprecated single hook -------------------------------------------
+
+  test "unread_changed: every seat but the sender's on any message, system ones included, and a consuming read" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, conversation:| received << [messager.name, conversation] }
+    conversation = @alice.chat_with(@bob)
+
+    @bob.message!(conversation, "hola")
+    assert_equal [["Alice", conversation]], received, "the sender's own count doesn't move"
+
+    received.clear
+    conversation.post_system_message!("Ride cancelled")
+    assert_equal [%w[Alice Bob], [conversation, conversation]], received.sort_by(&:first).transpose,
+                 "a system message is unread for everyone, and message_created skips it"
+
+    received.clear
+    conversation.mark_read_by!(@alice)
+    assert_equal [["Alice", conversation]], received
+    received.clear
+    conversation.participant_for(@alice).read!(at: 1.minute.from_now)
+    assert_empty received, "a read with nothing left to consume moves nothing"
+  end
+
+  test "unread_changed for a read fires once it commits, and never for one that rolls back" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "hola")
+    received.clear
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      assert_empty received, "not inside the transaction"
+      raise ActiveRecord::Rollback
+    end
+    assert_empty received, "a read that rolled back moved nothing"
+    assert conversation.participant_for(@alice).reload.unread?
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      assert_empty received, "still not inside it"
+    end
+    assert_equal %w[Alice], received, "once, after the commit"
+  end
+
+  test "a consuming read and then an empty advance in one transaction: emitted once, after the commit" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "hola")
+    received.clear
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      # Nothing left to consume, through ANOTHER instance of the same seat.
+      conversation.participant_for(@alice).read!(at: 1.minute.from_now)
+    end
+
+    assert_equal %w[Alice], received
+  end
+
+  test "a consuming read in a transaction survives a savepoint of the same seat that rolls back" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "hola")
+    received.clear
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      Chats::Participant.transaction(requires_new: true) do
+        conversation.participant_for(@alice).read!(at: 1.minute.from_now)
+        raise ActiveRecord::Rollback
+      end
+      assert_empty received
+    end
+
+    assert_equal %w[Alice], received, "the outer commit announces the outer read"
+  end
+
+  test "a seat destroyed after its consuming read in the same transaction: once at the commit, nothing left" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "hola")
+    received.clear
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      conversation.participant_for(@alice).destroy!
+    end
+    assert_equal %w[Alice], received
+
+    Chats::Participant.transaction { conversation.participant_for(@bob).mute! }
+    assert_equal %w[Alice], received, "a later, unrelated commit announces nothing more"
+  end
+
+  test "with no transaction open the read is announced at once, and twice in one transaction once" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "one")
+    received.clear
+    seat = conversation.participant_for(@alice)
+
+    # The test's own wrapper is not joinable, so outside a block of ours a
+    # read's write commits on its own, as it would with nothing open.
+    seat.read!
+    assert_equal %w[Alice], received, "at once"
+
+    received.clear
+    Chats::Participant.transaction do
+      @bob.message!(conversation, "two")
+      seat.read!(at: 1.minute.from_now)
+      @bob.message!(conversation, "three")
+      seat.read!(at: 2.minutes.from_now)
+    end
+    # Bob's two messages announce Alice's count on their own (their fan-out);
+    # the two consuming reads of her seat in one transaction, once.
+    assert_equal %w[Alice Alice Alice], received
+  end
+
+  test "unread_changed never fires for a seat that left" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+
+    group = @alice.chat_with(@bob, @carol, title: "Trip")
+    group.participant_for(@carol).leave!
+
+    @alice.message!(group, "hola")
+
+    assert_equal %w[Bob], received
+  end
 
   test "config.notifier receives the 0.1.1 events only, and says it is deprecated" do
     events = []

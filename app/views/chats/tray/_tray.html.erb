@@ -1,0 +1,27 @@
+<%# The tray: the items a host puts in the corner (`chats_dock { … }`, or
+    `chats_tray { … }` on its own), left to right in the block's order,
+    between the dock's windows and its panel. Each item is a
+    `chats_tray_item`; the chats--tray controller (tray_controller.js) runs
+    them all: one open at a time, the phone sheet, Escape, memory, badges.
+
+    Locals: tray (the items' HTML), owner (whose memory: the viewer's key,
+    or "guest"), standalone (true when there is no dock around it). %>
+<% standalone = local_assigns.fetch(:standalone, false) %>
+<%# The id names the owner, as the corner's and the dock's do: the tray rides
+    along with them from page to page (data-turbo-permanent), and on each
+    visit chats--tray reconciles its items with the ones the new page rendered
+    under the same id (by key: one still there keeps its state). %>
+<%= tag.div tray,
+      id: "chats_tray_items_#{owner}",
+      class: "chats-tray",
+      data: {
+        controller: "chats--tray",
+        "chats--dock-target": ("tray" unless standalone),
+        "chats--tray-owner-value": owner,
+        "chats--tray-standalone-value": standalone,
+        action: "keydown->chats--tray#keydown " \
+                "turbo:before-render@document->chats--tray#reconcile " \
+                "turbo:before-cache@document->chats--tray#releaseSheet " \
+                "turbo:load@document->chats--tray#pageChanged turbo:render@document->chats--tray#pageChanged " \
+                "turbo:frame-load@document->chats--tray#frameLoaded"
+      } %>

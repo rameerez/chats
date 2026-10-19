@@ -1,5 +1,6 @@
 import { Controller } from "@hotwired/stimulus"
 import { recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
+import { around, fitViewport, holdInert, lockScroll, releaseInert } from "chats/sheet"
 
 // chats--dock: the messaging dock (`chats_dock`) — LinkedIn / Steam style
 // floating conversation windows in the bottom-right corner.
@@ -51,6 +52,12 @@ import { recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"
 //                  photo, an edit, the window menu, then the window
 //                  (minimized), the panel (closed); on a phone, the window
 //                  back to the list, then the list closed
+//   * the tray     the items a host puts in `chats_dock { … }` sit between
+//                  the windows and the panel (chats--tray runs them). The
+//                  windows' room is what the tray leaves (measured, so an
+//                  item opening reflows them like a narrower screen), and
+//                  one menu is open at a time: an item opening closes the
+//                  panel, the panel opening closes the item
 //
 // The element is data-turbo-permanent: Turbo Drive carries it, windows and
 // all, from page to page, and may detach and reattach it, so connect()
@@ -74,7 +81,8 @@ const LIST_DELAY_MS = 300
 
 export default class extends Controller {
   static targets = [
-    "windows", "window", "panel", "list", "badge", "signal", "announcer", "loadingShell", "failedShell", "composer"
+    "windows", "window", "panel", "list", "badge", "signal", "announcer", "loadingShell", "failedShell", "composer",
+    "tray"
   ]
   static values = {
     windows: { type: Number, default: 3 },
@@ -94,7 +102,6 @@ export default class extends Controller {
   initialize() {
     this.openers = new WeakMap()
     this.announced = {}
-    this.inerted = []
     this.closed = this.read(this.storageKey)?.closed || {}
   }
 
@@ -104,6 +111,11 @@ export default class extends Controller {
     window.addEventListener("resize", this.resized)
     window.visualViewport?.addEventListener("resize", this.fitViewport)
     window.visualViewport?.addEventListener("scroll", this.fitViewport)
+    // An item opening or closing changes the tray's width, and so the room.
+    if (this.hasTrayTarget && window.ResizeObserver) {
+      this.trayObserver = new ResizeObserver(this.resized)
+      this.trayObserver.observe(this.trayTarget)
+    }
 
     // A window always names its viewer. One that doesn't match never stays:
     // nothing of one account may surface in another's page.
@@ -125,7 +137,9 @@ export default class extends Controller {
     window.removeEventListener("resize", this.resized)
     window.visualViewport?.removeEventListener("resize", this.fitViewport)
     window.visualViewport?.removeEventListener("scroll", this.fitViewport)
+    this.trayObserver?.disconnect()
     this.releaseSheet()
+
     this.stopRecovery?.()
   }
 
@@ -388,10 +402,16 @@ export default class extends Controller {
   }
 
   // What the row may take: the viewport, less the right inset, the panel
-  // and the 8px left margin the spec keeps (the fit formula's 312px).
+  // and the 8px left margin the spec keeps (the fit formula's 312px), and
+  // the tray with its gap when it holds anything.
   get room() {
     const panel = this.panelTarget.offsetWidth || this.pixels("--chats-dock-panel-width", 288)
-    return window.innerWidth - this.pixels("--chats-dock-inset", 16) - panel - this.gap
+    return window.innerWidth - this.pixels("--chats-dock-inset", 16) - panel - this.gap - this.trayWidth
+  }
+
+  get trayWidth() {
+    const width = this.hasTrayTarget ? this.trayTarget.offsetWidth : 0
+    return width ? width + this.gap : 0
   }
 
   get gap() {
@@ -500,6 +520,7 @@ export default class extends Controller {
   }
 
   panelToggled() {
+    if (this.panelTarget.open) this.closeTray()
     if (this.panelTarget.open && this.listStale) {
       this.listStale = false
       this.listTarget.reload()
@@ -509,6 +530,25 @@ export default class extends Controller {
     }
     this.syncSheet()
     this.save()
+  }
+
+  // --- The tray ----------------------------------------------------------------
+  //
+  // One menu open at a time in the corner. An item of the tray opened
+  // (chats--tray dispatches `chats--tray:open`): the panel closes, and on a
+  // phone the window in front goes back, so the item's sheet is the only one.
+  // Synchronous, so the dock's sheet is released before the tray's is held.
+  trayOpened() {
+    this.panelTarget.open = false
+    if (this.compact) this.windowTargets.forEach((frame) => frame.classList.remove(FRONT))
+    this.syncSheet()
+  }
+
+  // The panel opened: whatever item of the tray was open closes.
+  closeTray() {
+    if (!this.hasTrayTarget) return
+
+    this.trayTarget.querySelectorAll(".chats-tray__item[open]").forEach((item) => { item.open = false })
   }
 
   // A send from one of our windows: the draft is gone, the list reorders.
@@ -960,49 +1000,30 @@ export default class extends Controller {
     })
   }
 
-  // Full-screen on a phone means the VISIBLE viewport: with the keyboard up
-  // it is shorter than 100dvh, and the composer must sit on the keys.
-  fitViewport = () => {
-    const viewport = window.visualViewport
-    if (!viewport) return
-
-    this.element.style.setProperty("--chats-vvh", `${viewport.height}px`)
-    this.element.style.setProperty("--chats-vv-top", `${viewport.offsetTop}px`)
-    this.element.classList.toggle("chats-dock--keyboard", this.compact && window.innerHeight - viewport.height > 150)
-  }
+  // Full-screen on a phone means the VISIBLE viewport (chats/sheet).
+  fitViewport = () => fitViewport(this.element, this.compact)
 
   // On a phone, an open sheet is modal: the page behind can't scroll or
   // take the focus — and neither can the list behind a window in front of
-  // it, until Back.
+  // it, until Back. Everything on the page but the dock (chats/sheet's
+  // `around`: a host may wrap the dock in a layout element) is held inert
+  // by the dock for as long as its sheet is open; the tray's own sheet
+  // holds its share separately.
   syncSheet() {
     const front = Boolean(this.compact) && this.windowTargets.some((frame) => frame.classList.contains(FRONT))
     const open = Boolean(this.compact) && !this.element.hidden && (this.panelTarget.open || front)
     this.panelTarget.inert = open && front
-    document.documentElement.classList.toggle("chats-dock-sheet-open", open)
     if (open) {
-      if (this.inerted.length) return
-      this.inerted = this.pageAround().filter((node) => !node.inert)
-      this.inerted.forEach((node) => { node.inert = true })
+      holdInert(this, around(this.element))
+      lockScroll(this, true)
     } else {
       this.releaseSheet()
     }
   }
 
-  // Everything on the page but the dock: the siblings of the dock and of
-  // each of its ancestors, up to <body>. A host may render the dock inside
-  // a layout wrapper, and inerting the wrapper would inert the sheet too.
-  pageAround() {
-    const around = []
-    for (let node = this.element; node?.parentElement && node !== document.body; node = node.parentElement) {
-      around.push(...Array.from(node.parentElement.children).filter((sibling) => sibling !== node))
-    }
-    return around
-  }
-
   releaseSheet() {
-    this.inerted?.forEach((node) => { node.inert = false })
-    this.inerted = []
-    if (this.compact !== undefined) document.documentElement.classList.remove("chats-dock-sheet-open")
+    releaseInert(this)
+    if (this.compact !== undefined) lockScroll(this, false)
   }
 
   // --- Lookups ---------------------------------------------------------------------

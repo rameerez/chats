@@ -19,16 +19,20 @@ class DockControllerTest < ActiveSupport::TestCase
       "node",
       "-",
       Chats::Engine.root.join("app/javascript/chats/dock_controller.js").to_s,
+      Chats::Engine.root.join("app/javascript/chats/sheet.js").to_s,
       stdin_data: <<~"JAVASCRIPT"
         const fs = require("fs")
         const assert = require("assert")
 
         let sourceText = fs.readFileSync(process.argv[2], "utf8")
+        // The sheet the dock shares with the tray: the real module, inlined.
+        const sheet = fs.readFileSync(process.argv[3], "utf8").replace(/^export /gm, "")
         sourceText = sourceText
           .replace('import { Controller } from "@hotwired/stimulus"', "class Controller {}")
           // Catching up is chats/recovery's, tested on its own (recovery_test.rb).
           .replace('import { recoverMissedBroadcasts, renderStreamFrom } from "chats/recovery"',
                    "const recoverMissedBroadcasts = () => () => {}, renderStreamFrom = () => {}")
+          .replace('import { around, fitViewport, holdInert, lockScroll, releaseInert } from "chats/sheet"', sheet)
           .replace("export default class extends Controller", "return class DockController extends Controller")
 
         const stored = {}
@@ -125,11 +129,43 @@ class DockControllerTest < ActiveSupport::TestCase
         assert.strictEqual(dock({ width: 2560 }).fit, 3, "never more than windows:")
         assert.strictEqual(dock({ compact: true, width: 390 }).fit, 3, "a phone shows one at a time, keeps up to the cap")
 
+        // --- the tray takes its width from the windows' row -------------------
+
+        function withTray(controller, width) {
+          controller.hasTrayTarget = true
+          controller.trayTarget = { offsetWidth: width, querySelectorAll: () => [] }
+          return controller
+        }
+        assert.strictEqual(withTray(dock({ width: 1280 }), 0).fit, 2, "an empty tray takes nothing")
+        assert.strictEqual(withTray(dock({ width: 1280 }), 132).fit, 2, "a closed tab leaves two at 1280px")
+        assert.strictEqual(withTray(dock({ width: 1280 }), 336).fit, 1, "an open item leaves one")
+        assert.strictEqual(withTray(dock({ width: 1440 }), 132).fit, 2, "the tab costs the third window at 1440px…")
+        assert.strictEqual(withTray(dock({ width: 1600 }), 132).fit, 3, "…which comes back from 1484px")
+
+        // One menu open at a time: the panel opening closes the open item…
+        const items = [{ open: true }]
+        let controller = dock()
+        controller.hasTrayTarget = true
+        controller.trayTarget = { querySelectorAll: (selector) => (selector === ".chats-tray__item[open]" ? items : []) }
+        controller.panelTarget.open = true
+        controller.listStale = false
+        controller.save = () => {}
+        controller.panelToggled()
+        assert.strictEqual(items[0].open, false, "the panel opening closes the tray's open item")
+        // …and an item opening closes the panel, and on a phone the window in front.
+        controller = dock({ compact: true, width: 390, open: [frame("1")] })
+        windows[0].classes.add("chats-window--front")
+        controller.panelTarget.open = true
+        controller.trayOpened()
+        assert.strictEqual(controller.panelTarget.open, false)
+        assert(!windows[0].classes.has("chats-window--front"), "the item's sheet is the only one up")
+
         // --- making room: least recently used, never the focused one, drafts kept
 
-        let controller = dock({
+        controller = dock({
           open: [frame("1", { usedAt: 30, draft: "half a thought" }), frame("2", { usedAt: 10 }), frame("3", { usedAt: 20 })]
         })
+
         document.activeElement = windows[1].input || windows[1] // window 2 has the focus
         windows[1].contains = () => true
         assert.strictEqual(controller.makeRoom(null, { force: false }), false,

@@ -95,15 +95,75 @@ module Chats
     #   windows:   how many windows may be open at once (3, and never more
     #              than fit beside the panel: 2 at 1280px, 1 at 768px)
     #   recent:    how many conversations the panel lists (10)
-    #   launcher:  false drops the phone's floating button, for a host that
-    #              opens the sheet from its own nav (see chats_dock_toggle)
-    def chats_dock(windows: 3, recent: 10, launcher: true, everywhere: false)
-      viewer = chats_viewer
-      return if viewer.nil?
+    #   launcher:  false drops the phone's floating buttons (the dock's and
+    #              the tray's), for a host that opens the sheet from its own
+    #              nav (see chats_dock_toggle)
+    #
+    # The block is the TRAY: items other surfaces put in the corner, beside
+    # the bar (`chats_tray_item`; support_desk's `support_launcher` is one):
+    #
+    #   <%= chats_dock do %>
+    #     <%= support_launcher %>
+    #   <% end %>
+    #
+    # With nobody signed in there is no dock, but the block's items still
+    # render, in a corner of their own (chats_tray). On the engine's own
+    # pages nothing does, tray included: those pages hide the dock anyway.
+    def chats_dock(windows: 3, recent: 10, launcher: true, everywhere: false, &tray)
       return if chats_engine_page? && !everywhere
 
+      viewer = chats_viewer
+      items = chats_tray_items(&tray)
+      return chats_tray_corner(items, launcher: launcher) if viewer.nil?
+
       render(partial: "chats/dock/dock",
-             locals: { viewer: viewer, windows: windows, recent: recent, launcher: launcher, everywhere: everywhere })
+             locals: { viewer: viewer, windows: windows, recent: recent, launcher: launcher, everywhere: everywhere,
+                       tray: items })
+    end
+
+    # The tray on its own, for a host with no messaging dock (or a page with
+    # nobody signed in): the dock's corner, same look and same variables,
+    # holding only +block+'s items.
+    #
+    #   <%= chats_tray do %>
+    #     <%= chats_tray_item :help, label: "Help", icon: help_icon do %>…<% end %>
+    #   <% end %>
+    #
+    # Inside a `chats_dock` block it renders the items alone, so a launcher
+    # helper can always wrap itself in chats_tray and work in both places.
+    # Renders nothing when the block renders nothing.
+    def chats_tray(launcher: true, &block)
+      return capture(&block) if @chats_tray_open
+
+      items = chats_tray_items(&block)
+      chats_tray_corner(items, launcher: launcher) if items
+    end
+
+    # One item of the tray: closed, a tab on the bottom edge beside the bar
+    # (a round button on a phone); open, a panel with the dock's skin (the
+    # full-screen sheet on a phone). The block is the panel's content.
+    #
+    #   key:        its stable name ("help"): its id, its memory
+    #   label:      the closed tab's words ("Need help?")
+    #   title:      the open panel's title (HTML allowed; the label by default)
+    #   icon:       HTML for the tab and the round button
+    #   badge:      HTML: a `chats_tray_badge` and the stream that replaces it
+    #   badge_url:  a GET answering that replace, asked when the stream may
+    #               have missed one
+    #
+    # The content may carry `data-chats-tray-refresh` (its frame reloads when
+    # the badge's count moves) and a frame `data-chats-tray-home="url"` (where
+    # it goes back to rather than show a conversation the page already does).
+    def chats_tray_item(key, label:, icon: nil, title: label, badge: nil, badge_url: nil, &block)
+      render(partial: "chats/tray/item",
+             locals: { key: key, label: label, title: title, icon: icon, badge: badge, badge_url: badge_url,
+                       body: block ? capture(&block) : nil })
+    end
+
+    # An item's badge, hidden at zero: what its owner's stream replaces (by
+    # +id+) when the count moves.
+    def chats_tray_badge(count, id:)
+      render(partial: "chats/tray/badge", locals: { count: count.to_i, id: id })
     end
 
     # The data that makes ANY link to a conversation — a recent-list row, a
@@ -379,6 +439,28 @@ module Chats
     def chats_viewer
       method_name = Chats.config.current_messager_method
       respond_to?(method_name) ? send(method_name) : nil
+    end
+
+    # The tray block's items, or nil when it renders nothing. Captured as
+    # "inside a tray", so a chats_tray in it renders its items alone.
+    def chats_tray_items(&block)
+      return if block.nil?
+
+      outer = @chats_tray_open
+      @chats_tray_open = true
+      capture(&block).presence
+    ensure
+      @chats_tray_open = outer
+    end
+
+    # The tray in a corner of its own, remembered under the viewer's key (or
+    # "guest"): nothing without items.
+    def chats_tray_corner(items, launcher:)
+      return if items.nil?
+
+      viewer = chats_viewer
+      render(partial: "chats/tray/corner",
+             locals: { tray: items, owner: viewer ? Chats.messager_key(viewer) : "guest", launcher: launcher })
     end
 
     # Whether this view is one of the engine's own screens.

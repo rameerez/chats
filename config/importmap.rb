@@ -18,8 +18,12 @@ pin "controllers/chats/refresh_inbox_controller", to: "chats/refresh_inbox_contr
 pin "controllers/chats/dock_controller", to: "chats/dock_controller.js"
 pin "controllers/chats/unread_badge_controller", to: "chats/unread_badge_controller.js"
 pin "controllers/chats/split_controller", to: "chats/split_controller.js"
+pin "controllers/chats/tray_controller", to: "chats/tray_controller.js"
 
 # Not a controller: what the inbox, thread, badge and dock controllers share
 # to catch up on broadcasts they missed. Outside controllers/ so the eager
 # loader never tries to register it.
 pin "chats/recovery", to: "chats/recovery.js"
+# What the dock's sheet and the tray's share: the page's inert and its scroll
+# lock, held by owner.
+pin "chats/sheet", to: "chats/sheet.js"

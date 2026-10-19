@@ -1,0 +1,44 @@
+<%# One item of the tray (`chats_tray_item`): closed, a tab on the bottom
+    edge (a round button on a phone); open, a panel with the dock's skin and
+    the dock's bar on top (a full-screen sheet on a phone). A <details>: it
+    opens and closes with no JavaScript, like the dock's own panel.
+
+    data-chats-active / data-chats-minimized are the read gate chats' thread
+    controller obeys in a dock window: a thread inside a closed item never
+    marks anything read (chats--tray keeps the pair in step and dispatches
+    `chats:activated` when the item opens).
+
+    Locals: key, label (the closed tab's words), title (the open panel's,
+    HTML allowed), icon (HTML), badge (HTML: `chats_tray_badge` and the
+    stream that replaces it), badge_url (where a missed badge is asked
+    again), body (the panel's content). %>
+<%= tag.details id: "chats_tray_#{key}",
+      class: "chats-tray__item",
+      data: {
+        "chats--tray-target": "item",
+        chats_tray_key: key,
+        chats_tray_badge_url: badge_url,
+        chats_active: "true",
+        chats_minimized: true,
+        action: "toggle->chats--tray#toggled"
+      } do %>
+  <%# The summary reads "Need help?, 2 unread" from its own text closed,
+      and the panel's title open. %>
+  <summary class="chats-tray__launcher">
+    <% if icon %><span class="chats-tray__icon" aria-hidden="true"><%= icon %></span><% end %>
+    <span class="chats-tray__label"><%= label %></span>
+    <span class="chats-tray__title"><%= title %></span>
+    <%= badge %>
+    <span class="chats-tray__chevron" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round" focusable="false"><path d="m6 15 6-6 6 6" /></svg>
+    </span>
+    <span class="chats-tray__close-glyph" aria-hidden="true">
+
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           focusable="false"><path d="M6 6l12 12M18 6 6 18" /></svg>
+    </span>
+  </summary>
+
+  <%= tag.div body, class: "chats-tray__body", role: "region", "aria-label": strip_tags(title.to_s).squish %>
+<% end %>

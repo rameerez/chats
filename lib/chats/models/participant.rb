@@ -90,11 +90,24 @@ module Chats
     #     read in a notification center the moment the thread is read, so a
     #     bell badge doesn't keep advertising messages the user has already
     #     seen). Same notify hook as :message_created; error-isolated.
+    #   - `:unread_changed`, in the same case, once the read has COMMITTED
+    #     (inside a host's transaction that rolls back, never): it promises
+    #     subscribers the count they read is the one that stands.
     def read!(at: Time.current)
       return self if last_read_at && last_read_at >= at
 
       had_unread = unread?
-      update!(last_read_at: at)
+      connection = Chats::AfterCommit.connection_for(self.class) # the one this read writes on
+      # The transaction owns the announcement (Chats::AfterCommit), the one the
+      # write is in: it runs at the real commit, never for a rollback, once per
+      # seat per transaction, whatever else happens to the seat meanwhile.
+      self.class.transaction do
+        update!(last_read_at: at)
+        if had_unread
+          seat = { messager: messager, conversation: conversation } # whatever becomes of the row
+          Chats::AfterCommit.run(connection, key: [:unread_consumed, id]) { Chats.notify(:unread_changed, **seat) }
+        end
+      end
       broadcast_read_state if Chats.config.read_receipts
       Chats::Broadcasts.refresh_inbox_of(messager)
       Chats::Broadcasts.update_badge_of(messager)

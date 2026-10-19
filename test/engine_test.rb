@@ -15,7 +15,8 @@ class EngineTest < ActiveSupport::TestCase
       "controllers/chats/refresh_inbox_controller" => "chats/refresh_inbox_controller.js",
       "controllers/chats/dock_controller" => "chats/dock_controller.js",
       "controllers/chats/unread_badge_controller" => "chats/unread_badge_controller.js",
-      "controllers/chats/split_controller" => "chats/split_controller.js"
+      "controllers/chats/split_controller" => "chats/split_controller.js",
+      "controllers/chats/tray_controller" => "chats/tray_controller.js"
     }.each do |name, path|
       pin = packages[name]
 
@@ -31,17 +32,31 @@ class EngineTest < ActiveSupport::TestCase
     assert_equal "chats/recovery.js", pin.path
     assert_empty Rails.application.importmap.packages.keys.grep(%r{\Acontrollers/.*recovery})
 
-    %w[thread_controller refresh_inbox_controller unread_badge_controller dock_controller].each do |controller|
+    %w[thread_controller refresh_inbox_controller unread_badge_controller dock_controller
+       tray_controller].each do |controller|
       source = File.read(Chats::Engine.root.join("app/javascript/chats/#{controller}.js"))
       assert_match(/^import \{ [^}]+ \} from "chats\/recovery"$/, source, controller)
+    end
+  end
+
+  test "pins the sheet the dock and the tray share outside controllers/ too" do
+    pin = Rails.application.importmap.packages["chats/sheet"]
+
+    assert pin, "the dock's sheet and the tray's hold the page's inert through chats/sheet"
+    assert_equal "chats/sheet.js", pin.path
+    %w[dock_controller tray_controller].each do |controller|
+      source = File.read(Chats::Engine.root.join("app/javascript/chats/#{controller}.js"))
+      assert_match(/^import \{ [^}]+ \} from "chats\/sheet"$/, source, controller)
     end
   end
 
   test "serves engine javascript and stylesheets through the host asset pipeline" do
     paths = Rails.application.config.assets.paths.map(&:to_s)
 
-    assert(paths.any? { |path| path.end_with?("chats/app/javascript") })
-    assert(paths.any? { |path| path.end_with?("chats/app/assets/stylesheets") })
+    # The engine's own directories, wherever the gem is checked out (a
+    # worktree need not be named "chats").
+    assert_includes paths, Chats::Engine.root.join("app/javascript").to_s
+    assert_includes paths, Chats::Engine.root.join("app/assets/stylesheets").to_s
 
     assert File.exist?(Chats::Engine.root.join("app/javascript/chats/thread_controller.js"))
     assert File.exist?(Chats::Engine.root.join("app/assets/stylesheets/chats.css"))

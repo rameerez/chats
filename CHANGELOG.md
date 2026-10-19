@@ -4,6 +4,88 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-20
+
+Intended as **0.7.0**: the tray. **No migration, nothing changes until you
+use it.**
+
+### Added
+- **The tray: other launchers beside the dock's bar.** `chats_dock { … }`
+  now takes a block, and what it renders sits in the dock's own row, between
+  the windows and the Messages bar: support_desk's "Need help?", a feedback
+  box, anything built with the new `chats_tray_item(key, label:, title:,
+  icon:, badge:, badge_url:) { panel }`. Closed, an item is a tab on the
+  bottom edge as tall as the bar; open, a panel with the dock's skin (the
+  window's width, the panel's height). One owner for the corner: the
+  windows get the width the tray leaves (measured with a ResizeObserver, so
+  an item opening reflows them like a narrower screen: idle windows close,
+  ones in use fold, drafts are kept), one menu is open at a time (an item
+  opening closes the Messages panel, and the other way round), and nothing
+  ever overlaps. On a phone the items are 48px round buttons stacked above
+  the dock's, an open one is the dock's full-screen sheet, and
+  `launcher: false` takes them away with the dock's button. Escape closes
+  the open item, focus back on its tab; the open item is remembered on a
+  desk (`chats:tray:v1:<key>`). Run by the new `chats--tray` controller.
+- **`chats_tray { … }`: the tray on its own**, for a host with no messaging
+  dock, and what `chats_dock { … }` renders when nobody is signed in: the
+  same corner (`.chats-dock.chats-dock--tray-only`, `data-turbo-permanent`),
+  the same variables, holding only the items. Inside a `chats_dock` block it
+  renders its items alone, so a launcher helper can always wrap itself in it.
+  It hides on pages carrying `data-chats-dock-hide`, as the dock does.
+- **The tray follows the page it is carried to.** The dock and the tray-only
+  corner are `data-turbo-permanent`, so Turbo keeps the old tray on a visit;
+  `chats--tray` reconciles it with the items the new page rendered, by key: one
+  the page no longer renders goes, a new one comes in, and one still there
+  takes the page's words, badge, badge URL, stream and panel, keeping only
+  its open state and, while open, a frame of its panel the page renders the
+  same way (the same id and `src`, resolved, query included; where it went
+  since is the viewer's): what is being read or written. Its class and style
+  are the page's too, but for the sheet and the room the controller set. A
+  resize measures once a frame.
+- **Room.** An open item is as wide as the corner leaves it (the screen less
+  the insets, the Messages panel and every other item, measured as it opens:
+  `--chats-tray-room`); with less than `--chats-tray-min-width` (280px) it
+  opens as the full-screen sheet, as on a phone (`.chats-tray__item--sheet`,
+  which now carries the tray's sheet layout on phones too).
+- **Badge URLs are same-origin.** The catch-up applies what a badge URL
+  answers to the page, so `chats--tray` resolves it against the page and
+  refuses (with a console error) one on another origin.
+- **What an item's content can count on**, declared in markup: the read
+  gate a dock window has (`data-chats-active`, `data-chats-minimized` while
+  closed, `chats:activated` on open: a chats thread inside a closed item
+  never marks anything read); `chats_tray_badge(count, id:)`, the badge an
+  item's own stream replaces, asked again from `badge_url:` when that stream
+  may have missed a broadcast (chats/recovery); `data-chats-tray-refresh`
+  (its frame reloads when the badge's count moves); a frame's
+  `data-chats-tray-home` (where it goes back to rather than show a
+  conversation the page or a dock window already shows); and the
+  `chats--tray:open` / `chats--tray:close` events.
+- **`:unread_changed` (`messager:, conversation:`)**: a messager's unread
+  count in a conversation may have moved: every message, system ones
+  included (which `:message_created` skips on purpose), for every active
+  seat but the sender's, and a read that consumed unread content. Product
+  gems keep their own badges live from it (support_desk's launcher does). It
+  fires after the write commits (a read's is owned by the transaction it
+  wrote in, `Chats::AfterCommit`, so a host's rollback or a rolled-back
+  savepoint never loses or invents one; once per seat per transaction), once per eligible seat,
+  synchronously in the write's `after_commit`
+  (a message in a 100-person group: 99 calls), so subscribers filter cheaply
+  and enqueue or coalesce.
+- `--chats-tray-panel-width`, `--chats-tray-panel-height`,
+  `--chats-tray-launcher-size`, declared with the dock's on `.chats-dock`.
+
+### Changed
+- The dock's phone sheet and the tray's share `chats/sheet` (pinned outside
+  `controllers/`): the page's `inert` and its scroll lock are held by owner,
+  so one sheet closing never frees what another still holds. Same behaviour
+  for the dock alone; a node the host made inert itself is still never
+  touched. Both release it before Turbo caches the page (`turbo:before-cache`)
+  and hold it again after the visit renders, so a cached snapshot never comes
+  back inert.
+- The engine test that checked the asset paths by directory name now checks
+  the engine's own directories, so it passes from a checkout not named
+  `chats`.
+
 ## [0.6.2] - 2026-10-18
 
 ### Fixed

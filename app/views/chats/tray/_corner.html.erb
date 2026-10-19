@@ -1,0 +1,16 @@
+<%# The tray on its own (`chats_tray`, or `chats_dock` with a block and no
+    viewer): the dock's corner without messaging — same element class, so
+    the same `--chats-dock-*` variables, position, z-index and phone layout
+    — holding only the tray.
+
+    data-turbo-permanent, as the dock is: an open item, and whatever its
+    frame shows, ride along from page to page. The id names the owner, so a
+    visit that lands on another account's page (or a sign in) starts fresh.
+
+    Locals: tray, owner, launcher (false: no round buttons on a phone). %>
+<%= chats_styles %>
+<%= tag.div id: "chats_tray_#{owner}",
+      class: ["chats-dock", "chats-dock--tray-only", ("chats-dock--no-launcher" unless launcher)],
+      data: { turbo_permanent: true } do %>
+  <%= render "chats/tray/tray", tray: tray, owner: owner, standalone: true %>
+<% end %>

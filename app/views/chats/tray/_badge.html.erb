@@ -1,0 +1,12 @@
+<%# An item's badge (`chats_tray_badge`): hidden at zero, number kept. Its
+    owner's stream replaces it by +id+ (and the item's badge_url answers the
+    same replace when that stream missed one); chats--tray notices the count
+    move and reloads the item's [data-chats-tray-refresh] content. Not a
+    live region: it would chatter on every read. %>
+<%= tag.span id: id,
+      class: "chats-badge chats-tray__badge",
+      hidden: !count.positive?,
+      data: { "chats--tray-target": "badge", count: count } do %>
+  <span aria-hidden="true"><%= count > 99 ? "99+" : count %></span>
+  <span class="chats-visually-hidden"><%= count %> <%= t("chats.dock.unread_suffix") %></span>
+<% end %>

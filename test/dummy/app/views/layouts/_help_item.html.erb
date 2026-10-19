@@ -1,0 +1,23 @@
+<%# A host's own launcher in the dock's tray: what support_desk's "Need
+    help?" is, with a static panel, for the browser tests and the README's
+    screenshots. Its words and badge follow the `dock_tray_label` and
+    `dock_tray` cookies, so a test can visit a page that renders them
+    differently; its panel is a frame (what an item's live content is). %>
+<%= chats_tray_item :help,
+      label: cookies[:dock_tray_label].presence || "Need help?",
+      title: "Help centre",
+      icon: tag.svg(tag.path(d: "M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z"),
+                    viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2,
+                    "stroke-linecap": "round", "stroke-linejoin": "round", focusable: "false"),
+      badge: chats_tray_badge(count, id: "dummy_help_badge") do %>
+  <% if (thread = cookies[:dock_tray_frame].presence) %>
+    <%= turbo_frame_tag "dummy_help_frame", src: "/tray_frame/#{thread}", class: "dummy-help" %>
+  <% else %>
+    <%= turbo_frame_tag "dummy_help_frame", class: "dummy-help", data: { chats_tray_refresh: true } do %>
+      <p>Questions about an order, a payment or your account? We usually answer within a day.</p>
+      <label for="dummy_help_question">Your question</label>
+      <textarea id="dummy_help_question" rows="3"></textarea>
+      <a href="/">Read the guides</a>
+    <% end %>
+  <% end %>
+<% end %>

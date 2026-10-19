@@ -14,14 +14,22 @@ function loadRecovery() {
   return new Function(`${source}\nreturn { afterRendering, cancelStreamsFor, recoverMissedBroadcasts, renderStreamFrom }`)()
 }
 
+// chats/sheet's exports (the dock's and the tray's shared sheet).
+function loadSheet() {
+  const source = read("sheet.js").replace(/^export /gm, "")
+  return new Function(`${source}\nreturn { around, holdInert, releaseInert, lockScroll, fitViewport }`)()
+}
+
 // A controller class, extending +Controller+ (a bare class by default),
-// importing from +recovery+ (the real module by default).
-function loadController(name, { Controller = class {}, recovery = loadRecovery() } = {}) {
+// importing from +recovery+ and +sheet+ (the real modules by default).
+function loadController(name, { Controller = class {}, recovery = loadRecovery(), sheet = loadSheet() } = {}) {
   const source = read(name)
     .replace('import { Controller } from "@hotwired/stimulus"', "")
     .replace(/import \{ ([^}]+) \} from "chats\/recovery"/, "const { $1 } = recovery")
+    .replace(/import \{ ([^}]+) \} from "chats\/sheet"/, "const { $1 } = sheet")
     .replace("export default class extends Controller", "return class extends Controller")
-  return new Function("Controller", "recovery", source)(Controller, recovery)
+  return new Function("Controller", "recovery", "sheet", source)(Controller, recovery, sheet)
 }
 
-module.exports = { loadRecovery, loadController }
+module.exports = { loadRecovery, loadSheet, loadController }
+
