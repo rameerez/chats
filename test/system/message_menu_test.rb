@@ -210,12 +210,8 @@ class MessageMenuBrowserTest < ActionDispatch::SystemTestCase
     long = "a long message that wraps across the whole dock window, to its widest " * 2
     theirs = @bob.message!(@conversation, long)
     mine = @alice.message!(@conversation, long)
-    open_thread(visit_thread: false)
-    visit "/"
-    find(".chats-dock__bar").click
-    find("#chats_dock_list a", text: "Bob").click
-    window = "turbo-frame.chats-window[data-conversation-id='#{@conversation.id}']"
-    using_wait_time(10) { assert_selector "#{window} ##{dom_id(mine)}.chats-message--own" }
+    window = open_dock_window
+    assert_selector "#{window} ##{dom_id(mine)}.chats-message--own"
     assert_equal 336, rect(window)["right"].round - rect(window)["left"].round
 
     [theirs, mine].each do |message|
@@ -269,6 +265,46 @@ class MessageMenuBrowserTest < ActionDispatch::SystemTestCase
     ActionController::Base.allow_forgery_protection = false
   end
 
+  test "a dock window closed with its menu open takes the menu's keys with it: Tab moves on the page again" do
+    window = open_dock_window
+    find("#{window} ##{dom_id(@theirs)} .chats-message__bubble").hover
+    find("#{window} ##{dom_id(@theirs)} [data-chats-message-menu-trigger]").click
+    assert_selector "#{window} .chats-popup.chats-popup--open"
+
+    # The dock's own way out (dropWindow), under the open menu.
+    page.execute_script("document.querySelector(arguments[0]).click()", "#{window} .chats-window__close")
+    assert_no_selector window
+
+    page.execute_script("window.__before = document.activeElement")
+    press :tab
+    moved = "document.activeElement !== window.__before && document.activeElement !== document.body"
+    assert page.evaluate_script(moved),
+           "Tab moved the focus: no listener left to swallow it"
+  end
+
+  test "a cloned form carries the page's token: a native submit, Turbo off around the thread, passes" do
+    open_thread(visit_thread: false)
+    ActionController::Base.allow_forgery_protection = true
+    visit "/messages/#{@conversation.id}"
+    assert_selector "##{dom_id(@mine)}.chats-message--own"
+    live = @bob.message!(@conversation, "live one")
+    stream("append", dom_id(@conversation, :messages), bubble_html(live)) # rendered outside any session
+    page.execute_script("document.querySelector('.chats-thread').dataset.turbo = 'false'")
+
+    page.execute_script("window.__samePage = true") # a Turbo visit keeps it, a native submit's page load does not
+    find("##{dom_id(live)} .chats-message__bubble").right_click
+    within(".chats-popup--open .chats-popup__menu") do
+      token = find("form[data-dummy-slot='message_menu_form'] input[name='authenticity_token']", visible: :all).value
+      assert_equal page.evaluate_script("document.querySelector('meta[name=csrf-token]').content"), token
+      click_on "Pin"
+    end
+    assert_selector ".dummy-home h1", text: "Dummy host"
+    assert_equal "pinned=#{live.id}", URI(page.current_url).query
+    assert_nil page.evaluate_script("window.__samePage"), "a native submit, not Turbo's"
+  ensure
+    ActionController::Base.allow_forgery_protection = false
+  end
+
   # Starting a browser once tells whether this machine can run these.
   def self.chrome?
     return @chrome if defined?(@chrome)
@@ -302,6 +338,17 @@ class MessageMenuBrowserTest < ActionDispatch::SystemTestCase
 
     visit "/messages/#{@conversation.id}"
     assert_selector "##{dom_id(@mine)}.chats-message--own" # the thread controller has classified the bubbles
+  end
+
+  # The conversation with Bob in a dock window on a host page, its bubbles classified.
+  def open_dock_window
+    open_thread(visit_thread: false)
+    visit "/"
+    find(".chats-dock__bar").click
+    find("#chats_dock_list a", text: "Bob").click
+    window = "turbo-frame.chats-window[data-conversation-id='#{@conversation.id}']"
+    using_wait_time(10) { assert_selector "#{window} ##{dom_id(@mine)}.chats-message--own" }
+    window
   end
 
   # What a broadcast hands the page: the bubble rendered once, by the host's renderer.

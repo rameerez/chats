@@ -42,6 +42,13 @@ Intended as **0.7.2**. **No migration, nothing to configure.**
 - **Choosing a link in the menu closes it**, as a form button did: the dock
   is carried from page to page, and its popup stayed open over the next one.
 - **A menu the visibility gates leave empty is not drawn** (no empty card).
+- **A cloned form carries the page's CSRF token.** The menu's forms are
+  rendered once, often by a broadcast outside any session; the popup now puts
+  the page's `csrf-token` in each cloned form's hidden input (adding one if
+  there was none), so a native submit, with Turbo off around the thread,
+  passes forgery protection too.
+- **The popup's keys go with it**, however it goes: a dock window closed with
+  its menu open left a document listener swallowing the page's Tab.
 
 If you ejected `chats/messages/_message.html.erb`, it keeps working; copy
 the new `button.chats-message__menu-trigger` (after `.chats-message__bubble`)

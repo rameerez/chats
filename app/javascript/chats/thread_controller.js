@@ -972,7 +972,13 @@ export default class extends Controller {
     if (!template) return
 
     const own = bubble.dataset.senderKey === this.meValue
+    // A close's teardown still pending (reopened within its 260ms morph)
+    // must not take this popup down with it.
+    clearTimeout(this.popupCloseTimer)
+    this.teardownPopup()
+
     const content = template.content.cloneNode(true)
+    this.stampPageToken(content)
     // Cosmetic visibility gates (the server still authorizes for real):
     // own-only items (edit/delete) vanish on foreign bubbles; other-only
     // items (e.g. a host report link — you don't report yourself) on own.
@@ -1121,7 +1127,12 @@ export default class extends Controller {
     }
   }
 
+  // Every way the popup goes ends here (closed, Escape, the backdrop, an
+  // item chosen, the thread itself leaving: a dock window closed under it),
+  // so this is where its keys are let go: a document listener outliving the
+  // popup would go on swallowing the page's Tab.
   teardownPopup(visual = this.popupVisual) {
+    document.removeEventListener("keydown", this.popupKeydown)
     if (!this.hasPopupTarget) return
     this.popupTarget.hidden = true
     this.popupTarget.classList.remove("chats-popup--open")
@@ -1138,6 +1149,28 @@ export default class extends Controller {
     }
     visual?.classList?.remove("chats-message--lifted")
     this.popupVisual = null
+  }
+
+  // The menu's forms (the gem's reactions and Delete, a host's button_to)
+  // were rendered once, for everybody, often by a broadcast outside any
+  // viewer's session: whatever token they carry is not this page's. Turbo
+  // would send the page's own in a header, but a host can turn Turbo off
+  // around a thread and submit natively, so each cloned form gets the page's
+  // token (the csrf-param / csrf-token metas) in its own hidden input.
+  stampPageToken(content) {
+    const param = document.querySelector('meta[name="csrf-param"]')?.content
+    const token = csrfToken()
+    if (!param || !token) return
+
+    content.querySelectorAll("form").forEach((form) => {
+      if (form.method === "get") return
+      let input = [...form.querySelectorAll("input")].find((field) => field.name === param)
+      if (!input) {
+        input = Object.assign(document.createElement("input"), { type: "hidden", name: param })
+        form.prepend(input)
+      }
+      input.value = token
+    })
   }
 
   popupMenuClicked(event) {
