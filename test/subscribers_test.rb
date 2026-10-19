@@ -167,6 +167,28 @@ class SubscribersTest < ActiveSupport::TestCase
     assert_empty received, "a read with nothing left to consume moves nothing"
   end
 
+  test "unread_changed for a read fires once it commits, and never for one that rolls back" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "hola")
+    received.clear
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      assert_empty received, "not inside the transaction"
+      raise ActiveRecord::Rollback
+    end
+    assert_empty received, "a read that rolled back moved nothing"
+    assert conversation.participant_for(@alice).reload.unread?
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      assert_empty received, "still not inside it"
+    end
+    assert_equal %w[Alice], received, "once, after the commit"
+  end
+
   test "unread_changed never fires for a seat that left" do
     received = []
     Chats.on(:unread_changed) { |messager:, **| received << messager.name }

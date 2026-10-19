@@ -14,6 +14,7 @@ Rails.application.routes.draw do
 
   get "/wrapped", to: "sessions#wrapped" # the host page in a layout that wraps the dock
   get "/test_status/:status", to: "sessions#status" # an answer with any status (the dock's failure paths)
+  get "/tray_frame/:name", to: "sessions#tray_frame" # what the help item's frame loads (the tray's visits)
 
   root to: "sessions#home"
 end

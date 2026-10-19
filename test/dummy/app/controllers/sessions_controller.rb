@@ -24,6 +24,17 @@ class SessionsController < ApplicationController
     head params[:status].to_i
   end
 
+  # What the tray's help item's frame loads when the `dock_tray_frame` cookie
+  # names it: a thread of its own, for the tests of a visit that renders the
+  # same frame or another one.
+  def tray_frame
+    name = params[:name].to_s.gsub(/[^a-z0-9]/i, "")
+    render html: helpers.turbo_frame_tag("dummy_help_frame") {
+      helpers.safe_join([helpers.tag.p("Thread #{name}", class: "dummy-thread"),
+                         helpers.text_area_tag(:dummy_reply, nil, id: "dummy_help_reply")])
+    }
+  end
+
   # The same page in a layout that wraps the dock in a shell element.
   def wrapped
     home

@@ -33,7 +33,7 @@ class TrayControllerTest < ActiveSupport::TestCase
           .replace('import { around, fitViewport, holdInert, lockScroll, releaseInert } from "chats/sheet"', sheet)
           .replace("export default class extends Controller", "const TrayController = class extends Controller")
         // The controller and the sheet it shares with the dock, from one module scope.
-        sourceText += "\\nreturn { TrayController, holdInert, releaseInert, lockScroll }"
+        sourceText += "\\nreturn { TrayController, holdInert, releaseInert, lockScroll, adopt, sameFrame, rendered }"
 
         const stored = {}
         let storage = {
@@ -60,7 +60,8 @@ class TrayControllerTest < ActiveSupport::TestCase
         global.clearTimeout = () => { timers = [] }
         const runTimers = () => { const pending = timers; timers = []; pending.forEach((callback) => callback()) }
         global.CustomEvent = class { constructor(type) { this.type = type } }
-        const { TrayController, holdInert, releaseInert, lockScroll } = new Function("asked", sourceText)(asked)
+        const { TrayController, holdInert, releaseInert, lockScroll, adopt, sameFrame, rendered } =
+          new Function("asked", sourceText)(asked)
 
         // --- fakes -----------------------------------------------------------
 
@@ -343,6 +344,68 @@ class TrayControllerTest < ActiveSupport::TestCase
         assert.deepStrictEqual(appended.map((node) => node.imported || node.dataset.chatsTrayKey), ["changelog", "support"],
                                "a new one comes in, the one still there is kept as it is, in the page's order")
         controller.reconcile({ detail: { newBody: { querySelector: () => null } } })
+
+        // --- a kept item takes the new page's attributes, class and style --------------
+
+        function element(attrs) {
+          const map = new Map(Object.entries(attrs))
+          const node = {
+            get attributes() { return Array.from(map, ([name, value]) => ({ name, value })) },
+            hasAttribute: (name) => map.has(name),
+            getAttribute: (name) => (map.has(name) ? map.get(name) : null),
+            setAttribute: (name, value) => map.set(name, String(value)),
+            removeAttribute: (name) => map.delete(name),
+            classList: {
+              contains: (name) => (map.get("class") || "").split(" ").includes(name),
+              add: (name) => { if (!node.classList.contains(name)) map.set("class", `${map.get("class") || ""} ${name}`.trim()) }
+            },
+            style: {
+              getPropertyValue: (name) => ((map.get("style") || "").match(new RegExp(`${name}: ([^;]+)`)) || [])[1] || "",
+              setProperty: (name, value) => map.set("style", `${map.get("style") || ""}; ${name}: ${value}`.replace(/^; /, ""))
+            },
+            map
+          }
+          return node
+        }
+        const keptItem = element({ open: "", "data-chats-active": "true", class: "chats-tray__item old chats-tray__item--sheet",
+                                   style: "--chats-tray-room: 300px", "data-chats-tray-badge-url": "/old", "data-gone": "x" })
+        const freshItem = element({ class: "chats-tray__item new", style: "color: red", "data-chats-tray-badge-url": "/new" })
+        adopt(keptItem, freshItem, new Set(["open", "data-chats-minimized", "data-chats-active"]))
+        assert.strictEqual(keptItem.getAttribute("data-chats-tray-badge-url"), "/new")
+        assert(!keptItem.hasAttribute("data-gone"), "an attribute the new page doesn't carry goes")
+        assert(keptItem.hasAttribute("open") && keptItem.getAttribute("data-chats-active") === "true", "what the controller manages stays")
+        assert.strictEqual(keptItem.getAttribute("class"), "chats-tray__item new chats-tray__item--sheet",
+                           "the new page's classes, and the sheet the controller set")
+        assert.strictEqual(keptItem.getAttribute("style"), "color: red; --chats-tray-room: 300px",
+                           "the new page's style, and the room the controller measured")
+        const keptBody = element({ class: "chats-tray__body", "aria-label": "Old", "data-old": "1" })
+        adopt(keptBody, element({ class: "chats-tray__body", "aria-label": "New" }))
+        assert.deepStrictEqual(Array.from(keptBody.map.keys()).sort(), ["aria-label", "class"], "the body's too, absent ones removed")
+        assert.strictEqual(keptBody.getAttribute("aria-label"), "New")
+
+        // --- an open frame is kept only when the new page renders the same one --------
+
+        const frameNode = (id, src) => Object.assign(element(src ? { id, src } : { id }), { id, matches: (s) => s === "turbo-frame" })
+        const live = rendered(frameNode("panel", "/support/"))
+        live.setAttribute("src", "/support/tickets/T-1") // followed a link inside it: the viewer's
+        assert(sameFrame(live, frameNode("panel", "https://app.test/support/")), "same id, same src as its page rendered (resolved)")
+        assert(!sameFrame(live, frameNode("panel", "/support/tickets/T-2")), "same id, another src: another frame")
+        assert(!sameFrame(live, frameNode("panel", "/support/?q=1")), "the query counts")
+        assert(!sameFrame(live, frameNode("other", "/support/")), "another id")
+        assert(sameFrame(rendered(frameNode("static")), frameNode("static")), "no src either side: the same")
+
+        // --- a resize measures once a frame --------------------------------------------
+
+        const frames = []
+        global.requestAnimationFrame = (callback) => frames.push(callback)
+        global.cancelAnimationFrame = () => frames.splice(0)
+        const resizing = item("help", { open: true })
+        controller = tray([resizing])
+        let measured = 0
+        controller.fit = () => { measured += 1 }
+        for (let i = 0; i < 10; i += 1) controller.resized()
+        frames.splice(0).forEach((callback) => callback())
+        assert.strictEqual(measured, 1, "ten resize events, one measurement")
 
         // --- a browser refusing storage only forgets ----------------------------------
 

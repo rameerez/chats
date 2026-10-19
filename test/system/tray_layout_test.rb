@@ -188,6 +188,27 @@ class TrayLayoutTest < ActionDispatch::SystemTestCase
     assert page.evaluate_script("document.getElementById('dummy_help_frame') !== window.__frame")
   end
 
+  test "an open frame stays only while the new page renders the same one: same id and src" do
+    sign_in_at(1280)
+    set_cookie("dock_tray_frame", "a")
+    page.execute_script("Turbo.visit('/')")
+    find(".chats-tray__launcher").click
+    assert_selector "#dummy_help_frame .dummy-thread", text: "Thread a"
+    find("#dummy_help_reply").send_keys("half a reply")
+    page.execute_script("window.__frame = document.getElementById('dummy_help_frame')")
+
+    page.execute_script("Turbo.visit('/')") # the same frame: the element and what was typed survive
+    assert_selector ".chats-tray__item[open] #dummy_help_frame .dummy-thread", text: "Thread a"
+    assert page.evaluate_script("document.getElementById('dummy_help_frame') === window.__frame")
+    assert_equal "half a reply", find("#dummy_help_reply").value
+
+    set_cookie("dock_tray_frame", "b") # the same id, another thread
+    page.execute_script("Turbo.visit('/')")
+    assert_selector ".chats-tray__item[open] #dummy_help_frame .dummy-thread", text: "Thread b"
+    assert page.evaluate_script("document.getElementById('dummy_help_frame') !== window.__frame")
+    assert_equal "", find("#dummy_help_reply").value
+  end
+
   test "two items in the corner at 700px: closed they fit; opened, one takes the sheet, and at 1280 it fits beside" do
     sign_in_at(700, items: "2")
 

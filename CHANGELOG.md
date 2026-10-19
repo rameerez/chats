@@ -37,8 +37,11 @@ use it.**
   `chats--tray` reconciles it with the items the new page rendered, by key: one
   the page no longer renders goes, a new one comes in, and one still there
   takes the page's words, badge, badge URL, stream and panel, keeping only
-  its open state and, while open, a frame of its panel the page renders too
-  (by id): what is being read or written.
+  its open state and, while open, a frame of its panel the page renders the
+  same way (the same id and `src`, resolved, query included; where it went
+  since is the viewer's): what is being read or written. Its class and style
+  are the page's too, but for the sheet and the room the controller set. A
+  resize measures once a frame.
 - **Room.** An open item is as wide as the corner leaves it (the screen less
   the insets, the Messages panel and every other item, measured as it opens:
   `--chats-tray-room`); with less than `--chats-tray-min-width` (280px) it
@@ -62,7 +65,9 @@ use it.**
   included (which `:message_created` skips on purpose), for every active
   seat but the sender's, and a read that consumed unread content. Product
   gems keep their own badges live from it (support_desk's launcher does). It
-  fires once per eligible seat, synchronously in the write's `after_commit`
+  fires after the write commits (a read's from its own `after_commit`, so
+  never for one a host's transaction rolls back), once per eligible seat,
+  synchronously in the write's `after_commit`
   (a message in a 100-person group: 99 calls), so subscribers filter cheaply
   and enqueue or coalesce.
 - `--chats-tray-panel-width`, `--chats-tray-panel-height`,

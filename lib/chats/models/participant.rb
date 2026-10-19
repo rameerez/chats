@@ -33,6 +33,10 @@ module Chats
     belongs_to :conversation, class_name: "Chats::Conversation", inverse_of: :participants
     belongs_to :messager, polymorphic: true
 
+    # A read that consumed unread content (read!) is announced once it commits.
+    after_update_commit :announce_unread_consumed
+    after_rollback { @unread_consumed = false }
+
     scope :active, -> { where(left_at: nil) }
     scope :muted, -> { where.not(muted_at: nil) }
 
@@ -90,18 +94,19 @@ module Chats
     #     read in a notification center the moment the thread is read, so a
     #     bell badge doesn't keep advertising messages the user has already
     #     seen). Same notify hook as :message_created; error-isolated.
+    #   - `:unread_changed`, in the same case, once the read has COMMITTED
+    #     (inside a host's transaction that rolls back, never): it promises
+    #     subscribers the count they read is the one that stands.
     def read!(at: Time.current)
       return self if last_read_at && last_read_at >= at
 
       had_unread = unread?
+      @unread_consumed = had_unread
       update!(last_read_at: at)
       broadcast_read_state if Chats.config.read_receipts
       Chats::Broadcasts.refresh_inbox_of(messager)
       Chats::Broadcasts.update_badge_of(messager)
-      if had_unread
-        Chats.notify(:conversation_read, conversation: conversation, participant: self)
-        Chats.notify(:unread_changed, messager: messager, conversation: conversation)
-      end
+      Chats.notify(:conversation_read, conversation: conversation, participant: self) if had_unread
       self
     end
 
@@ -216,6 +221,13 @@ module Chats
 
     def broadcast_read_state
       Chats::Broadcasts.read_state(conversation)
+    end
+
+    def announce_unread_consumed
+      return unless @unread_consumed
+
+      @unread_consumed = false
+      Chats.notify(:unread_changed, messager: messager, conversation: conversation)
     end
   end
 end

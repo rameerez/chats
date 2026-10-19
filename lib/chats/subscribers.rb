@@ -28,10 +28,13 @@ module Chats
     #   :unread_changed        messager:, conversation:    a messager's unread count there may
     #                                                      have moved (any message, system ones
     #                                                      included, or a read that consumed some).
-    #                                                      ONCE PER ELIGIBLE SEAT: a message in a
-    #                                                      100-seat group calls it 99 times,
-    #                                                      synchronously, in the after_commit of
-    #                                                      the write. Subscribers stay cheap
+    #                                                      Always after the write commits (a
+    #                                                      message's fan-out, a read's own
+    #                                                      after_commit), never for one that
+    #                                                      rolls back. ONCE PER ELIGIBLE SEAT: a
+    #                                                      message in a 100-seat group calls it
+    #                                                      99 times, synchronously, in that
+    #                                                      after_commit. Subscribers stay cheap
     #                                                      (filter on the conversation first, no
     #                                                      query) and enqueue, or coalesce.
     EVENTS = {

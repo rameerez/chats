@@ -55,8 +55,11 @@ import { around, fitViewport, holdInert, lockScroll, releaseInert } from "chats/
 const SHEET = "(max-width: 699.98px), (max-height: 499.98px)" // keep in step with chats.css
 const AS_SHEET = "chats-tray__item--sheet"
 const REFRESH_DELAY_MS = 300
-// What a visit refreshes on a retained item, and what it never touches.
-const KEPT_ATTRIBUTES = new Set(["open", "data-chats-minimized", "data-chats-active", "class", "style"])
+// What this controller manages on an item, which a visit never takes from
+// the new page (refreshItem): its attributes, its classes, its properties.
+const MANAGED_ATTRIBUTES = new Set(["open", "data-chats-minimized", "data-chats-active"])
+const MANAGED_CLASSES = [AS_SHEET]
+const MANAGED_PROPERTIES = ["--chats-tray-room"]
 
 export default class extends Controller {
   static targets = ["item", "badge"]
@@ -92,6 +95,7 @@ export default class extends Controller {
     window.visualViewport?.removeEventListener("resize", this.fitViewport)
     window.visualViewport?.removeEventListener("scroll", this.fitViewport)
     clearTimeout(this.refreshTimer)
+    cancelAnimationFrame(this.resizeFrame)
     this.releaseSheet()
     this.stopRecovery?.()
   }
@@ -102,6 +106,7 @@ export default class extends Controller {
     item.dataset.chatsActive = "true"
     item.toggleAttribute("data-chats-minimized", !item.open)
     if (this.compact) item.classList.add(AS_SHEET)
+    rendered(item) // its frames, as the page rendered them (refreshItem)
   }
 
   // Every item's `toggle` (it doesn't bubble: each item names this action).
@@ -231,17 +236,14 @@ export default class extends Controller {
   }
 
   // A retained item takes the new page's version of itself: its attributes
-  // (the badge URL among them), its tab (words, icon, badge, the badge's
-  // stream) and its panel. It keeps only what the viewer did: whether it is
-  // open, and, while it is open, a frame of its panel the new page renders
-  // too (by id), live, where it is: what they are reading or writing.
+  // (class, style and the badge URL among them), its tab (words, icon,
+  // badge, the badge's stream) and its panel. It keeps only what this
+  // controller manages (MANAGED_*: open or not, the read gate, the sheet and
+  // the room it measured) and, while it is open, a frame of its panel that
+  // the new page renders as the previous page did, live and in place: what
+  // is being read or written there.
   refreshItem(kept, fresh) {
-    Array.from(kept.attributes).forEach(({ name }) => {
-      if (!KEPT_ATTRIBUTES.has(name) && !fresh.hasAttribute(name)) kept.removeAttribute(name)
-    })
-    Array.from(fresh.attributes).forEach(({ name, value }) => {
-      if (!KEPT_ATTRIBUTES.has(name)) kept.setAttribute(name, value)
-    })
+    adopt(kept, fresh, MANAGED_ATTRIBUTES)
 
     const summary = kept.querySelector(":scope > summary")
     const freshSummary = fresh.querySelector(":scope > summary")
@@ -254,19 +256,28 @@ export default class extends Controller {
     const body = kept.querySelector(":scope > .chats-tray__body")
     const freshBody = fresh.querySelector(":scope > .chats-tray__body")
     if (!body || !freshBody) return
-    Array.from(freshBody.attributes).forEach(({ name, value }) => body.setAttribute(name, value))
+    adopt(body, freshBody)
 
-    const live = new Map()
-    if (kept.open) body.querySelectorAll(":scope > turbo-frame[id]").forEach((frame) => live.set(frame.id, frame))
-    const staying = new Set(Array.from(freshBody.children).filter((node) => live.has(node.id)).map((node) => live.get(node.id)))
+    const staying = new Set()
+    const keep = new Map()
+    if (kept.open) {
+      const live = new Map(Array.from(body.querySelectorAll(":scope > turbo-frame[id]"), (frame) => [frame.id, frame]))
+      Array.from(freshBody.children).forEach((node) => {
+        const frame = live.get(node.id)
+        if (frame && sameFrame(frame, node)) {
+          staying.add(frame)
+          keep.set(node, frame)
+        }
+      })
+    }
     Array.from(body.childNodes).forEach((node) => { if (!staying.has(node)) node.remove() })
     let anchor = body.firstChild
     Array.from(freshBody.childNodes).forEach((node) => {
-      const frame = node.id && live.get(node.id)
-      if (frame && staying.has(frame)) {
+      const frame = keep.get(node)
+      if (frame) {
         anchor = frame.nextSibling // it stays where it is
       } else {
-        body.insertBefore(document.importNode(node, true), anchor)
+        body.insertBefore(rendered(document.importNode(node, true)), anchor)
       }
     })
   }
@@ -320,12 +331,16 @@ export default class extends Controller {
   }
 
   // The viewport changed size: the open item fits again (or becomes the sheet).
+  // At most once a frame, as the dock reflows (a resize fires many times).
   resized = () => {
-    const item = this.openItem
-    if (!item) return
+    cancelAnimationFrame(this.resizeFrame)
+    this.resizeFrame = requestAnimationFrame(() => {
+      const item = this.openItem
+      if (!item) return
 
-    this.fit(item)
-    this.syncSheet()
+      this.fit(item)
+      this.syncSheet()
+    })
   }
 
   // How wide +item+ may open: the screen less the insets, the dock's panel
@@ -419,6 +434,51 @@ export default class extends Controller {
   flash(element, className, duration) {
     element.classList.add(className)
     setTimeout(() => element.classList.remove(className), duration)
+  }
+}
+
+// +target+ takes +source+'s attributes: every one it carries, and none it
+// doesn't, except the +managed+ ones (kept as they are); its class and style
+// are the source's too, plus the classes and properties this controller
+// manages.
+function adopt(target, source, managed = new Set()) {
+  const classes = MANAGED_CLASSES.filter((name) => target.classList.contains(name))
+  const properties = MANAGED_PROPERTIES.map((name) => [name, target.style.getPropertyValue(name)]).filter(([, v]) => v)
+  Array.from(target.attributes).forEach(({ name }) => {
+    if (!managed.has(name) && !source.hasAttribute(name)) target.removeAttribute(name)
+  })
+  Array.from(source.attributes).forEach(({ name, value }) => {
+    if (!managed.has(name)) target.setAttribute(name, value)
+  })
+  classes.forEach((name) => target.classList.add(name))
+  properties.forEach(([name, value]) => target.style.setProperty(name, value))
+}
+
+// Whether the new page's +node+ is the frame +frame+ already is: the same id,
+// rendered with the same src (resolved, query included) as the page that
+// rendered +frame+. Where the frame went since (a link followed inside it)
+// is the viewer's, and stays; a different src is another frame (another
+// thread), and replaces it.
+function sameFrame(frame, node) {
+  return node.matches?.("turbo-frame") && node.id === frame.id &&
+    resolved(frame.renderedSrc) === resolved(node.getAttribute("src"))
+}
+
+// What the page rendered a frame with, remembered on it (and on the frames
+// inside it) before Turbo navigates it.
+function rendered(node) {
+  const frames = node.matches?.("turbo-frame") ? [node] : []
+  frames.push(...(node.querySelectorAll?.("turbo-frame") || []))
+  frames.forEach((frame) => { frame.renderedSrc ??= frame.getAttribute("src") })
+  return node
+}
+
+function resolved(src) {
+  if (!src) return ""
+  try {
+    return new URL(src, window.location.href).toString()
+  } catch {
+    return src
   }
 }
 
