@@ -203,7 +203,67 @@ class SubscribersTest < ActiveSupport::TestCase
     end
 
     assert_equal %w[Alice], received
-    assert_empty Chats::Participant.unread_consumed, "nothing left waiting"
+  end
+
+  test "a consuming read in a transaction survives a savepoint of the same seat that rolls back" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "hola")
+    received.clear
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      Chats::Participant.transaction(requires_new: true) do
+        conversation.participant_for(@alice).read!(at: 1.minute.from_now)
+        raise ActiveRecord::Rollback
+      end
+      assert_empty received
+    end
+
+    assert_equal %w[Alice], received, "the outer commit announces the outer read"
+  end
+
+  test "a seat destroyed after its consuming read in the same transaction: once at the commit, nothing left" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "hola")
+    received.clear
+
+    Chats::Participant.transaction do
+      conversation.mark_read_by!(@alice)
+      conversation.participant_for(@alice).destroy!
+    end
+    assert_equal %w[Alice], received
+
+    Chats::Participant.transaction { conversation.participant_for(@bob).mute! }
+    assert_equal %w[Alice], received, "a later, unrelated commit announces nothing more"
+  end
+
+  test "with no transaction open the read is announced at once, and twice in one transaction once" do
+    received = []
+    Chats.on(:unread_changed) { |messager:, **| received << messager.name }
+    conversation = @alice.chat_with(@bob)
+    @bob.message!(conversation, "one")
+    received.clear
+    seat = conversation.participant_for(@alice)
+
+    # The test's own wrapper is not joinable, so outside a block of ours a
+    # read's write commits on its own, as it would with nothing open.
+    seat.read!
+    assert_equal %w[Alice], received, "at once"
+
+    received.clear
+    Chats::Participant.transaction do
+      @bob.message!(conversation, "two")
+      seat.read!(at: 1.minute.from_now)
+      @bob.message!(conversation, "three")
+      seat.read!(at: 2.minutes.from_now)
+    end
+    # Bob's two messages announce Alice's count on their own (their fan-out);
+    # the two consuming reads of her seat in one transaction, once.
+    assert_equal %w[Alice Alice Alice], received
   end
 
   test "unread_changed never fires for a seat that left" do

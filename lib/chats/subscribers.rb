@@ -29,9 +29,9 @@ module Chats
     #                                                      have moved (any message, system ones
     #                                                      included, or a read that consumed some).
     #                                                      Always after the write commits (a
-    #                                                      message's fan-out, a read's own
-    #                                                      after_commit), never for one that
-    #                                                      rolls back. ONCE PER ELIGIBLE SEAT: a
+    #                                                      message's fan-out; a read's, by its
+    #                                                      transaction: Chats::AfterCommit),
+    #                                                      never for one that rolls back. ONCE PER ELIGIBLE SEAT: a
     #                                                      message in a 100-seat group calls it
     #                                                      99 times, synchronously, in that
     #                                                      after_commit. Subscribers stay cheap

@@ -65,8 +65,9 @@ use it.**
   included (which `:message_created` skips on purpose), for every active
   seat but the sender's, and a read that consumed unread content. Product
   gems keep their own badges live from it (support_desk's launcher does). It
-  fires after the write commits (a read's from its own `after_commit`, so
-  never for one a host's transaction rolls back), once per eligible seat,
+  fires after the write commits (a read's is owned by the transaction it
+  wrote in, `Chats::AfterCommit`, so a host's rollback or a rolled-back
+  savepoint never loses or invents one; once per seat per transaction), once per eligible seat,
   synchronously in the write's `after_commit`
   (a message in a 100-person group: 99 calls), so subscribers filter cheaply
   and enqueue or coalesce.

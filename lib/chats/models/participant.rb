@@ -33,20 +33,6 @@ module Chats
     belongs_to :conversation, class_name: "Chats::Conversation", inverse_of: :participants
     belongs_to :messager, polymorphic: true
 
-    # A read that consumed unread content (read!) is announced once it commits.
-    after_update_commit :announce_unread_consumed
-    after_rollback { Participant.unread_consumed.delete(id) }
-
-    # The seats whose read consumed unread content in a transaction not yet
-    # committed, by id: a fact about the ROW, not about one Ruby instance (a
-    # transaction may read the same seat through two instances, and Active
-    # Record runs the commit callbacks on the first or the last of them,
-    # depending on the host's `run_commit_callbacks_on_first_saved_instances_in_transaction`).
-    # Per thread/fiber, as transactions are.
-    def self.unread_consumed
-      ActiveSupport::IsolatedExecutionState[:chats_unread_consumed] ||= Set.new
-    end
-
     scope :active, -> { where(left_at: nil) }
     scope :muted, -> { where.not(muted_at: nil) }
 
@@ -111,16 +97,16 @@ module Chats
       return self if last_read_at && last_read_at >= at
 
       had_unread = unread?
-      # Accumulated: within one transaction, a read that consumed unread
-      # content followed by one that found nothing is still a consuming read.
-      # Cleared once announced (after the commit) or rolled back, or here when
-      # the write itself fails (it never joined a transaction to roll back).
-      marked = had_unread && Participant.unread_consumed.add?(id)
-      begin
+      connection = Chats::AfterCommit.connection_for(self.class) # the one this read writes on
+      # The transaction owns the announcement (Chats::AfterCommit), the one the
+      # write is in: it runs at the real commit, never for a rollback, once per
+      # seat per transaction, whatever else happens to the seat meanwhile.
+      self.class.transaction do
         update!(last_read_at: at)
-      rescue StandardError
-        Participant.unread_consumed.delete(id) if marked
-        raise
+        if had_unread
+          seat = { messager: messager, conversation: conversation } # whatever becomes of the row
+          Chats::AfterCommit.run(connection, key: [:unread_consumed, id]) { Chats.notify(:unread_changed, **seat) }
+        end
       end
       broadcast_read_state if Chats.config.read_receipts
       Chats::Broadcasts.refresh_inbox_of(messager)
@@ -240,12 +226,6 @@ module Chats
 
     def broadcast_read_state
       Chats::Broadcasts.read_state(conversation)
-    end
-
-    def announce_unread_consumed
-      return unless Participant.unread_consumed.delete?(id)
-
-      Chats.notify(:unread_changed, messager: messager, conversation: conversation)
     end
   end
 end
