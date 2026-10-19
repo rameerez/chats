@@ -313,6 +313,8 @@ Chats.on(:message_created)      { |message| NewMessageNotifier.with(record: mess
 Chats.on(:conversation_created) { |conversation| Analytics.track("chat_started", conversation) }
 Chats.on(:participant_left)     { |participant| AuditLog.log("chat_left", participant) }
 Chats.on(:conversation_read)    { |conversation:, participant:| Bell.mark_read(participant.messager, conversation) }
+Chats.on(:unread_changed)       { |messager:, conversation:| MyBadge.refresh(messager) }
+
 ```
 
 | event | block arguments | when |
@@ -321,7 +323,7 @@ Chats.on(:conversation_read)    { |conversation:, participant:| Bell.mark_read(p
 | `:conversation_created` | `conversation` | once per conversation, never when an existing one is resumed |
 | `:participant_left` | `participant` | someone left a group |
 | `:conversation_read` | `conversation:, participant:` | a read advanced the horizon past unread content |
-
+| `:unread_changed` | `messager:, conversation:` | a messager's unread count there may have moved: any message (system ones included) for every seat but the sender's, and a read that consumed some. What a badge chats doesn't draw (a product gem's, a native app's) listens to |
 
 Four properties, all of which matter the first time something goes wrong at 3am:
 
@@ -655,7 +657,8 @@ It needs `chats_dock` on the same page: without the dock, the button's response 
 
 ```erb
 <%= chats_dock windows: 2, recent: 8 %>   <%# at most this many windows (3), conversations in the panel (10) %>
-<%= chats_dock launcher: false %>         <%# no round button on phones: your nav opens the sheet (chats_dock_toggle) %>
+<%= chats_dock launcher: false %>         <%# no round buttons on phones (the tray's either): your nav opens the sheet (chats_dock_toggle) %>
+
 <%= chats_dock everywhere: true %>        <%# also on the engine's own pages (see below) %>
 ```
 
@@ -683,6 +686,54 @@ It needs `chats_dock` on the same page: without the dock, the button's response 
 ```
 
 The `dock_panel_footer` [slot](#-view-slots) puts your own link next to "See all messages". `rails generate chats:views` ejects the dock's partials (`chats/dock/`) along with everything else. All labels are localized under `chats.dock.*`. The window's unread count (`chats.dock.window_unread`) is pluralized in the browser with `Intl.PluralRules` in the page's `<html lang>`: the gem ships `one`/`other`, so add the forms your languages need (`zero`, `two`, `few`, `many`) in your own locale file, e.g. Polish `few: "%{count} nowe wiadomości"`, `many: "%{count} nowych wiadomości"`.
+
+### The tray: other launchers beside the bar
+
+A product often has more than one thing living in that corner: a "Need help?" launcher, a feedback box, a changelog. Two floating buttons that ignore each other overlap, fight over the z-index and cover the windows. The **tray** gives them one owner: whatever the block of `chats_dock` renders sits in the dock's own row, between the windows and the Messages bar.
+
+```erb
+<%= chats_dock do %>
+  <%= support_launcher %>   <%# support_desk's "Need help?" is one; anything built with chats_tray_item is %>
+<% end %>
+```
+
+![The tray: a launcher beside the bar](docs/screenshots/tray-bar.png)
+
+- **Closed**, an item is a tab on the bottom edge, as tall as the bar: its icon, its words, its badge. **Open**, it is a panel with the dock's skin (the window's width, the panel's height) and its title on the bar.
+- **Nothing overlaps.** The windows get the width the tray leaves, measured: an item opening takes its room the way a narrower screen would (an idle window closes, one in use folds, unsent text is kept). **One menu at a time**: opening an item closes the Messages panel and the other way round. Windows stay.
+- **On a phone** the items are 48px round buttons stacked above the dock's, and an open one is the same full-screen sheet as the dock's: everything around it `inert`, the page still, the composer on the keyboard. `launcher: false` takes the tray's buttons away with the dock's.
+- **Escape** closes the open item and gives the focus back to its tab. Which item was open is remembered on a desk (`chats:tray:v1:<key>`), never on a phone.
+- **Signed out**, or with no dock at all, the items still render, in a corner of their own: `chats_dock { … }` with nobody signed in renders its block alone, and `chats_tray { … }` is that corner for a host with no messaging dock. Same element class, so the same variables and the same place. On the engine's own pages, and on any page with `data-chats-dock-hide`, the tray goes with the dock.
+
+![The tray: an item open beside a window](docs/screenshots/tray-desktop.png)
+
+<img src="docs/screenshots/tray-phone-buttons.png" alt="A phone: the tray's round button above the dock's" width="240"> <img src="docs/screenshots/tray-phone-sheet.png" alt="A phone: an open item fills the screen" width="240">
+
+**Build an item** with `chats_tray_item`; the block is the panel:
+
+```erb
+<%= chats_tray_item :help,
+      label: "Need help?",                 # the closed tab
+      title: "Help centre",                # the open panel's bar (HTML allowed)
+      icon: help_icon,                     # HTML: the tab's and the round button's
+      badge: safe_join([turbo_stream_from(current_user, :help), chats_tray_badge(count, id: "help_badge")]),
+      badge_url: help_badge_path do %>     # a GET answering the badge's replace, for what the stream missed
+  <%= turbo_frame_tag "help_panel", src: help_path, loading: :lazy, data: { chats_tray_home: help_path } %>
+<% end %>
+```
+
+What an item's content can count on, all declared in markup:
+
+| | |
+|---|---|
+| `data-chats-active` / `data-chats-minimized` on the item | the read gate a dock window has: a chats thread inside a closed item never marks anything read, and a read that waited happens when it opens |
+| `chats_tray_badge(count, id:)` | hidden at zero; your stream replaces it by `id` |
+| `badge_url:` | asked again (a Turbo Stream) when the item's stream may have missed a broadcast: a reconnect, a return to the tab |
+| `data-chats-tray-refresh` on content | its frame reloads when the badge's count moves (now if open, when it opens if closed) |
+| `turbo-frame[data-chats-tray-home]` | goes back to that URL rather than show a conversation the page (or a dock window) already shows: a thread's ids must exist once |
+| `chats--tray:open` / `chats--tray:close` | dispatched on the item (`detail: { key }`), for your own code |
+
+The tray's variables sit with the dock's on `.chats-dock`: `--chats-tray-panel-width` (a window's, 336px), `--chats-tray-panel-height` (the panel's, 560px) and `--chats-tray-launcher-size` (48px, the round buttons). The classes are its own (`.chats-tray__launcher`, `.chats-tray__title`…), so a host's selectors for the dock's bar still find exactly one.
 
 ## 🔗 Profile links
 
@@ -718,7 +769,7 @@ Want full control? Eject the views Devise-style and restyle with your own stack 
 rails generate chats:views
 ```
 
-Override any bundled Stimulus controller by pinning the same importmap key — host pins win. The current keys are `controllers/chats/thread_controller`, `controllers/chats/composer_controller`, `controllers/chats/debounced_submit_controller`, `controllers/chats/refresh_inbox_controller`, `controllers/chats/unread_badge_controller`, `controllers/chats/dock_controller`, and `controllers/chats/split_controller`. What the inbox, thread, badge and dock controllers share to catch up on missed broadcasts is `chats/recovery` (`recoverMissedBroadcasts`, `renderStreamFrom`); a controller of your own can import it too.
+Override any bundled Stimulus controller by pinning the same importmap key — host pins win. The current keys are `controllers/chats/thread_controller`, `controllers/chats/composer_controller`, `controllers/chats/debounced_submit_controller`, `controllers/chats/refresh_inbox_controller`, `controllers/chats/unread_badge_controller`, `controllers/chats/dock_controller`, `controllers/chats/split_controller`, and `controllers/chats/tray_controller`. What the inbox, thread, badge, dock and tray controllers share to catch up on missed broadcasts is `chats/recovery` (`recoverMissedBroadcasts`, `renderStreamFrom`); a controller of your own can import it too. The dock's sheet and the tray's share `chats/sheet` (`around`, `holdInert`, `releaseInert`, `lockScroll`, `fitViewport`).
 
 ## Configuration reference
 
@@ -898,6 +949,8 @@ All available in the bundled views **and** in your own templates:
 | `chats_unread_badge(messager = viewer)` | the live unread badge with its own stream; the viewer's own also [catches up](#what-happens-when-a-broadcast-is-missed) on updates it missed |
 | `chats_dock(windows: 3, recent: 10, launcher: true, everywhere: false)` | the [messaging dock](#-messaging-dock): bar, panel and floating windows |
 | `chats_dock_opener(conversation)` / `chats_dock_toggle` | data for your own links: open that conversation's dock window, or open the dock's panel |
+| `chats_dock { … }` / `chats_tray(launcher: true) { … }` | the [tray](#the-tray-other-launchers-beside-the-bar): the block's items beside the bar, or in a corner of their own |
+| `chats_tray_item(key, label:, title:, icon:, badge:, badge_url:) { … }` / `chats_tray_badge(count, id:)` | one item of the tray, and its badge |
 | `chats_muted?(conversation, viewer)` | whether the viewer muted it (read from the preloaded seats) |
 | `chats_messager_name(messager, css_class:)` | the name, linked through `messager_url`, badged when verified |
 | `chats_messager_avatar(messager)` / `chats_conversation_avatar(conversation, viewer)` | avatar (URL, attachment, variant or initials) |
@@ -935,7 +988,7 @@ rails generate chats:upgrade   # 0.2.0: message authorship columns · 0.4.0: the
 rails db:migrate
 ```
 
-0.6.0 needs no migration: the messaging page becomes [two panes](#-two-panes) on wide screens by itself; `config.inbox_layout = :stacked` keeps the separate pages. Views you ejected before 0.6 keep rendering as they are (the separate pages); the [CHANGELOG](CHANGELOG.md) lists the templates that changed. 0.5.1 needs no migration and nothing to configure: every live surface now [catches up](#what-happens-when-a-broadcast-is-missed) on missed broadcasts by itself. If you wrapped the inbox in a reconciler of your own, remove it; if you ejected the inbox, the thread or the message partial, read the 0.5.1 [CHANGELOG](CHANGELOG.md) entry. 0.5.0 needs no migration: the messaging dock is opt-in (`chats_dock`). A few things change on their own: a conversation with no messages is no longer listed (it used to show as a "No messages yet" row), a thread the host's policy no longer allows shows the notice in the composer's place, a Turbo hover prefetch no longer marks a thread read, and the thread body moved into `chats/conversations/_thread.html.erb`. Read the 0.5.0 [CHANGELOG](CHANGELOG.md) entry if you ejected `show.html.erb` or the unread badge. 0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
+0.7.0 needs no migration and changes nothing by itself: the [tray](#the-tray-other-launchers-beside-the-bar) is the block you may now give `chats_dock`, and `:unread_changed` is a new event. If you ejected `chats/dock/_dock.html.erb`, re-eject it (or copy the tray's line and the `chats--tray:open` action) to use the tray. 0.6.0 needs no migration: the messaging page becomes [two panes](#-two-panes) on wide screens by itself; `config.inbox_layout = :stacked` keeps the separate pages. Views you ejected before 0.6 keep rendering as they are (the separate pages); the [CHANGELOG](CHANGELOG.md) lists the templates that changed. 0.5.1 needs no migration and nothing to configure: every live surface now [catches up](#what-happens-when-a-broadcast-is-missed) on missed broadcasts by itself. If you wrapped the inbox in a reconciler of your own, remove it; if you ejected the inbox, the thread or the message partial, read the 0.5.1 [CHANGELOG](CHANGELOG.md) entry. 0.5.0 needs no migration: the messaging dock is opt-in (`chats_dock`). A few things change on their own: a conversation with no messages is no longer listed (it used to show as a "No messages yet" row), a thread the host's policy no longer allows shows the notice in the composer's place, a Turbo hover prefetch no longer marks a thread read, and the thread body moved into `chats/conversations/_thread.html.erb`. Read the 0.5.0 [CHANGELOG](CHANGELOG.md) entry if you ejected `show.html.erb` or the unread badge. 0.4.0 needs that migration (one nullable JSON column, `chats_messages.action`) and nothing else: actions and the `composer_actions` slot are opt-in. The generator is guarded: it doesn't write the action migration where the column already exists (a fresh 0.4.0 install), and re-running it is harmless. Rolling that migration back keeps the column, because a migration must never drop a column it may not have added. If you ejected the composer, read the 0.4.0 [CHANGELOG](CHANGELOG.md) entry: its DOM changed shape. 0.3.x needs no migration and no new configuration: `verified: true` (0.3.0) and `Chats::SendRateLimited` (0.3.2) are opt-in. Nothing in 0.2.0 changes behaviour until you set an option.
 
 ## Database support
 
