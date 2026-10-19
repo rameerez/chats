@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-10-19
+
+### Changed
+
+- **The package no longer carries the README's screenshots.** They are
+  repository furniture: GitHub serves them, nothing inside the gem reads
+  them, and they were 900 KB of a 1.1 MB package. The README now loads them
+  from the repository, so they render on rubygems.org too. The gem is a
+  fifth of its former size. No code change; `0.7.0` was never published.
+- The tray layout system test settles by a bounded synchronous poll: on
+  CI's Linux Chrome the async callback armed after the launcher's click
+  never came back and every job died as a script timeout, which is how
+  `0.7.0` was tagged on a red run.
+
 ## [0.7.0] - 2026-10-20
 
 Intended as **0.7.0**: the tray. **No migration, nothing changes until you
