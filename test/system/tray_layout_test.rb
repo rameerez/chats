@@ -299,13 +299,22 @@ class TrayLayoutTest < ActionDispatch::SystemTestCase
     settle
   end
 
-  # Until every animation (a sheet rising, a panel's body) has finished.
+  # Until every finite animation (a sheet rising, a panel's body) has
+  # finished, or two seconds, whichever comes first: nothing here runs longer
+  # than 600ms. A synchronous poll on purpose. An async script's callback,
+  # armed right after the launcher's click, never came back on CI's Linux
+  # Chrome, even with its own two-second timer, and every job died as a
+  # script timeout. A sync query answers or raises; it cannot be lost.
   def settle
-    page.evaluate_async_script(<<~JS)
-      const done = arguments[arguments.length - 1]
-      const finite = document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity)
-      Promise.all(finite.map((a) => a.finished.catch(() => {}))).then(() => done())
-    JS
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+    loop do
+      running = page.evaluate_script(<<~JS)
+        document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity && a.playState !== "finished").length
+      JS
+      break if running.zero? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.05
+    end
   end
 
   def resize(width, height: 900, mobile: false)
