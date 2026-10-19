@@ -505,7 +505,7 @@ desk.message!(user, "Your invoice is ready", author: lucia, action: { label: "Pa
 conversation.post_system_message!("Your ride was cancelled", action: { label: "Book another", url: new_ride_path })
 ```
 
-<img src="docs/screenshots/thread-actions-phone.png" alt="A thread on a phone: a received message with a dark Join my room button, and your own dark bubble with a white Open my lobby button" width="320">
+<img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/thread-actions-phone.png" alt="A thread on a phone: a received message with a dark Join my room button, and your own dark bubble with a white Open my lobby button" width="320">
 
 *One action per message: accent-filled under someone else's message, reversed in your own bubble.*
 
@@ -590,13 +590,13 @@ An engine mounted on top of chats ships its own `app/views/chats/slots/…`; the
 
 `/messages` is LinkedIn's messaging page: the conversation list on the left, the open conversation on the right. `/messages/:id` is that same page with its conversation open and its row highlighted, so a link to a conversation, a reload, back and forward all land where they should.
 
-![Two panes](docs/screenshots/split-inbox.png)
+![Two panes](https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/split-inbox.png)
 
 Each row is a real link to `/messages/:id` (keeping the list's search or stack in its query, so the page's URL always names the list it shows). On a wide screen it opens the conversation in the right pane, a `turbo_frame_tag "chats_conversation"` whose `data-turbo-action="advance"` moves the address bar and history with it, and the server answers that frame with the pane alone. The pane's thread sits in a `data-turbo-permanent` element keyed by the conversation (and the viewer), so the inbox's live refreshes (Turbo 8 morphs of the whole page) re-render the list and leave the conversation alone: its draft, scroll position, read state and stream subscription. Opening one takes you into it, as on LinkedIn: the focus goes to its composer (on a touch screen, to its title, so the keyboard waits until you ask for it), inside a pane a screen reader names after the conversation.
 
 **On a phone** (under 700px wide, where the dock turns into a full-screen sheet) it is one column, exactly the separate pages as before: `/messages` is the list, and a row opens the conversation's page, with its back link to the list. One media query decides, so the layout holds before JavaScript runs and without it; with JavaScript off a row always opens the page.
 
-<img src="docs/screenshots/split-inbox-phone-list.png" alt="A phone: the messaging page is the conversation list" width="240"> <img src="docs/screenshots/split-inbox-phone-thread.png" alt="A phone: a conversation fills the screen, with its back link to the list" width="240">
+<img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/split-inbox-phone-list.png" alt="A phone: the messaging page is the conversation list" width="240"> <img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/split-inbox-phone-thread.png" alt="A phone: a conversation fills the screen, with its back link to the list" width="240">
 
 **Reads** happen when you open a conversation: a row clicked, a link, a reload. The page's own refreshes never read (one may arrive in a background tab), and a conversation the page renders unread reads itself as soon as it's on screen.
 
@@ -624,7 +624,7 @@ LinkedIn and Steam don't send you to another page to answer a message: chats liv
 <%= chats_dock %>
 ```
 
-![The messaging dock](docs/screenshots/dock-desktop.png)
+![The messaging dock](https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/dock-desktop.png)
 
 *Two conversations in floating windows (one with an action button) and the panel of recent conversations. The rows open in a window carry the accent bar.*
 
@@ -638,7 +638,7 @@ LinkedIn and Steam don't send you to another page to answer a message: chats liv
 
 On a phone (under 700px wide or 500px tall) the bar becomes a round button with the badge, the panel a full-screen sheet, and a conversation **one full-screen window**, with ← back to the list. While a window is up, the list behind it is out of the tab order; Back returns the focus to it. The sheet holds the focus while it's open (everything around it is made `inert`, siblings of the dock and of each of its ancestors, so a layout that wraps the dock works too), the page behind it doesn't scroll, and the composer sits on the keyboard. This layout is one media query, so it applies before JavaScript runs and without it.
 
-<img src="docs/screenshots/dock-phone-button.png" alt="A phone: the dock is a round button with an unread badge in the corner" width="240"> <img src="docs/screenshots/dock-phone-panel.png" alt="A phone: the dock's panel fills the screen with the recent conversations" width="240"> <img src="docs/screenshots/dock-phone-window.png" alt="A phone: one conversation fills the screen, with the composer at the bottom" width="240">
+<img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/dock-phone-button.png" alt="A phone: the dock is a round button with an unread badge in the corner" width="240"> <img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/dock-phone-panel.png" alt="A phone: the dock's panel fills the screen with the recent conversations" width="240"> <img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/dock-phone-window.png" alt="A phone: one conversation fills the screen, with the composer at the bottom" width="240">
 
 **Open a window from your own pages.** `dock: true` on the Message button opens the conversation in the dock instead of navigating to it (a conversation already open in a window is focused, with its draft intact):
 
@@ -697,7 +697,7 @@ A product often has more than one thing living in that corner: a "Need help?" la
 <% end %>
 ```
 
-![The tray: a launcher beside the bar](docs/screenshots/tray-bar.png)
+![The tray: a launcher beside the bar](https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/tray-bar.png)
 
 - **Closed**, an item is a tab on the bottom edge, as tall as the bar: its icon, its words, its badge. **Open**, it is a panel with the dock's skin (the window's width, the panel's height) and its title on the bar.
 - **Nothing overlaps.** The windows get the width the tray leaves, measured: an item opening takes its room the way a narrower screen would (an idle window closes, one in use folds, unsent text is kept). **One menu at a time**: opening an item closes the Messages panel and the other way round. Windows stay.
@@ -707,9 +707,9 @@ A product often has more than one thing living in that corner: a "Need help?" la
 - **Visits.** The tray rides along with the dock from page to page, and takes each new page's items: one the page no longer renders goes, a new one comes in, and one still there takes the page's words, badge, badge URL, stream and panel. Only its open state stays, and, while it is open, a frame of its panel the new page renders the same way (the same id and the same `src`, resolved): what is being read or written there. A frame with the same id and another `src` is another thread, and replaces it.
 - **Signed out**, or with no dock at all, the items still render, in a corner of their own: `chats_dock { … }` with nobody signed in renders its block alone, and `chats_tray { … }` is that corner for a host with no messaging dock. Same element class, so the same variables and the same place. On the engine's own pages, and on any page with `data-chats-dock-hide`, the tray goes with the dock.
 
-![The tray: an item open beside a window](docs/screenshots/tray-desktop.png)
+![The tray: an item open beside a window](https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/tray-desktop.png)
 
-<img src="docs/screenshots/tray-phone-buttons.png" alt="A phone: the tray's round button above the dock's" width="240"> <img src="docs/screenshots/tray-phone-sheet.png" alt="A phone: an open item fills the screen" width="240">
+<img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/tray-phone-buttons.png" alt="A phone: the tray's round button above the dock's" width="240"> <img src="https://raw.githubusercontent.com/rameerez/chats/main/docs/screenshots/tray-phone-sheet.png" alt="A phone: an open item fills the screen" width="240">
 
 **Build an item** with `chats_tray_item`; the block is the panel:
 

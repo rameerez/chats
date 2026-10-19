@@ -21,10 +21,22 @@ class GemspecTest < ActiveSupport::TestCase
     assert_empty SPEC.files.grep(%r{\A(test|bin|\.github)/})
   end
 
-  test "the package stays small: code, views, locales and the README's screenshots" do
+  test "the package holds none of the README's screenshots" do
+    assert_empty SPEC.files.grep(%r{\Adocs/screenshots/}), "GitHub serves those; the gem never reads them"
+    assert_empty SPEC.files.grep(/\.(png|jpe?g|gif|webp)\z/)
+  end
+
+  test "the README loads its screenshots from the repository, not from the package" do
+    readme = File.read(File.expand_path("../README.md", __dir__))
+
+    assert_empty readme.scan(%r{(?<![/\w])docs/screenshots/\S+}),
+                 "a relative image path renders on GitHub only; rubygems.org shows a broken image"
+  end
+
+  test "the package stays small: code, views and locales" do
     root = File.expand_path("..", __dir__)
     bytes = SPEC.files.sum { |file| File.size(File.join(root, file)) }
 
-    assert_operator bytes, :<, 2 * 1024 * 1024, "#{bytes} bytes before compression: what is in there?"
+    assert_operator bytes, :<, 768 * 1024, "#{bytes} bytes before compression: what is in there?"
   end
 end
