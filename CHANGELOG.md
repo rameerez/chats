@@ -23,14 +23,22 @@ Intended as **0.7.2**. **No migration, nothing to configure.**
   fine)`: a touch screen never draws it and long-presses. Keyboard: the
   thread's "⋯" buttons are one tab stop (roving tabindex: the newest
   message's), ArrowUp / ArrowDown move along them, Enter opens the menu with
-  the focus on its first item, Escape closes it and returns the focus. The
+  the focus on its first item, Escape closes it and returns the focus. A
+  stream replacing the focused "⋯"'s bubble (an edit, a reaction) leaves the
+  focus on the replacement's, a removal on the nearest message's. The
   markup stays viewer-agnostic; the name (`chats.message.menu`) is stamped
-  in the reader's language by `chats--thread` (`menuLabel`).
+  in the reader's language by `chats--thread` (`menuLabel`). A touch laptop
+  whose main pointer is a trackpad shows it too; its screen long-presses.
+- **The popup keeps the focus.** It was already `role="dialog"
+  aria-modal="true"` (its backdrop covers the thread, on touch as on a
+  desk), but Tab walked out to the page behind it. Tab / Shift+Tab now cycle
+  its reactions and items, ArrowUp / ArrowDown / Home / End move along the
+  items (`role="menu"`), and the dialog is named (`chats.message.menu`).
 
 ### Changed
+
 - The package leaves all of `docs/` behind, the design notes with the
   screenshots: nothing inside the gem reads them.
-
 - **Choosing a link in the menu closes it**, as a form button did: the dock
   is carried from page to page, and its popup stayed open over the next one.
 - **A menu the visibility gates leave empty is not drawn** (no empty card).

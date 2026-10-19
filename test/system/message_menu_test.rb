@@ -43,6 +43,10 @@ class MessageMenuBrowserTest < ActionDispatch::SystemTestCase
       skip "Chrome is not available"
     end
     self.class.ran += 1
+    # Capybara shares one browser between the classes, and another's device
+    # metrics outlive its tests: these measure a 1280 × 900 desk.
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 1280, height: 900, deviceScaleFactor: 1, mobile: false)
 
     @alice = create_user(name: "Alice")
     @bob = create_user(name: "Bob")
@@ -144,6 +148,127 @@ class MessageMenuBrowserTest < ActionDispatch::SystemTestCase
     assert_equal "reported=#{@theirs.id}", URI(page.current_url).query
   end
 
+  test "the focused ⋯ outlives its bubble: an edit's or a reaction's replacement gets it, a removal hands it on" do
+    open_thread
+    theirs = "##{dom_id(@theirs)} [data-chats-message-menu-trigger]"
+    mine = "##{dom_id(@mine)} [data-chats-message-menu-trigger]"
+    page.execute_script("document.querySelector('.chats-thread__scroll').focus()")
+    press :tab
+    press :arrow_up
+    assert focused?(theirs)
+
+    @theirs.edit!("hola, edited")
+    replace_bubble(@theirs)
+    assert_selector "##{dom_id(@theirs)}", text: "hola, edited"
+    wait_until { focused?(theirs) }
+    assert page.evaluate_script("!document.querySelector(#{theirs.to_json}).dataset.stale"), "the NEW bubble's ⋯"
+
+    Chats::Reaction.toggle!(message: @theirs, reactor: @alice, emoji: "👍")
+    replace_bubble(@theirs)
+    assert_selector "##{dom_id(@theirs)} .chats-reaction"
+    wait_until { focused?(theirs) }
+
+    later = @bob.message!(@conversation, "a message arriving")
+    stream("append", dom_id(@conversation, :messages), bubble_html(later))
+    assert_selector "##{dom_id(later)}"
+    assert focused?(theirs), "an append leaves the focus where it is"
+
+    stream("remove", dom_id(@theirs))
+    assert_no_selector "##{dom_id(@theirs)}"
+    wait_until { focused?(mine) } # nothing older: the next one
+  end
+
+  test "the open menu keeps the focus: Tab cycles its controls, the arrows its items; a named modal dialog" do
+    open_thread
+    trigger = "##{dom_id(@theirs)} [data-chats-message-menu-trigger]"
+    page.execute_script("document.querySelector(#{trigger.to_json}).focus()")
+    press :enter
+    assert_selector ".chats-popup.chats-popup--open"
+
+    dialog = find(".chats-popup", visible: :all)
+    assert_equal ["dialog", "true", "Message options"], [dialog["role"], dialog["aria-modal"], dialog["aria-label"]]
+    assert_equal "Copy", active_text
+    press :arrow_down
+    assert_equal "Report", active_text
+    press :end
+    assert_equal "Pin", active_text
+    press :arrow_down
+    assert_equal "Copy", active_text, "round the end"
+
+    press :end
+    press :tab # from the last control…
+    assert page.evaluate_script(<<~JS), "…to the first, never out to the page behind"
+      document.activeElement === document.querySelector(".chats-popup__reaction")
+    JS
+    page.driver.browser.action.key_down(:shift).send_keys(:tab).key_up(:shift).perform
+    assert_equal "Pin", active_text
+    9.times { press :tab }
+    assert page.evaluate_script("document.querySelector('.chats-popup').contains(document.activeElement)")
+  end
+
+  test "in a 336px dock window the ⋯ stays inside the window and the popup inside the screen" do
+    long = "a long message that wraps across the whole dock window, to its widest " * 2
+    theirs = @bob.message!(@conversation, long)
+    mine = @alice.message!(@conversation, long)
+    open_thread(visit_thread: false)
+    visit "/"
+    find(".chats-dock__bar").click
+    find("#chats_dock_list a", text: "Bob").click
+    window = "turbo-frame.chats-window[data-conversation-id='#{@conversation.id}']"
+    using_wait_time(10) { assert_selector "#{window} ##{dom_id(mine)}.chats-message--own" }
+    assert_equal 336, rect(window)["right"].round - rect(window)["left"].round
+
+    [theirs, mine].each do |message|
+      find("#{window} ##{dom_id(message)} .chats-message__bubble").hover
+      trigger = rect("#{window} ##{dom_id(message)} [data-chats-message-menu-trigger]")
+      scroller = rect("#{window} .chats-thread__scroll")
+      assert_operator trigger["left"], :>=, scroller["left"], "inside the window's left edge"
+      assert_operator trigger["right"], :<=, scroller["right"], "inside the window's right edge"
+    end
+    scroller = "document.querySelector(#{"#{window} .chats-thread__scroll".to_json})"
+    assert_equal 0, page.evaluate_script("#{scroller}.scrollWidth - #{scroller}.clientWidth"), "no sideways scroll"
+
+    find("#{window} ##{dom_id(theirs)} .chats-message__bubble").hover
+    find("#{window} ##{dom_id(theirs)} [data-chats-message-menu-trigger]").click
+    assert_selector "#{window} .chats-popup.chats-popup--open"
+    sleep 0.4 # the morph
+    viewport = page.evaluate_script("({ width: innerWidth, height: innerHeight })")
+    %w[.chats-popup__slot--reactions .chats-popup__slot--bubble .chats-popup__slot--menu].each do |slot|
+      box = rect("#{window} #{slot}")
+      assert_operator box["left"], :>=, 0, "#{slot} on the screen"
+      assert_operator box["top"], :>=, 0, "#{slot} on the screen"
+      assert_operator box["right"], :<=, viewport["width"], "#{slot} on the screen"
+      assert_operator box["bottom"], :<=, viewport["height"], "#{slot} on the screen"
+    end
+  end
+
+  test "a cloned button_to posts with forgery protection on, from a page's bubble and from a broadcast's" do
+    open_thread(visit_thread: false)
+    ActionController::Base.allow_forgery_protection = true
+    visit "/messages/#{@conversation.id}"
+    assert_selector "##{dom_id(@mine)}.chats-message--own"
+
+    find("##{dom_id(@theirs)} .chats-message__bubble").right_click
+    within(".chats-popup--open .chats-popup__menu") do
+      assert_selector "form[data-dummy-slot='message_menu_form'] input[name='authenticity_token']", visible: :all
+      click_on "Pin"
+    end
+    assert_selector ".dummy-home h1", text: "Dummy host"
+    assert_equal "pinned=#{@theirs.id}", URI(page.current_url).query
+
+    # A live bubble: rendered once for everybody, outside any viewer's session.
+    visit "/messages/#{@conversation.id}"
+    assert_selector "##{dom_id(@mine)}.chats-message--own"
+    live = @bob.message!(@conversation, "live one")
+    stream("append", dom_id(@conversation, :messages), bubble_html(live))
+    find("##{dom_id(live)} .chats-message__bubble").right_click
+    within(".chats-popup--open .chats-popup__menu") { click_on "Pin" }
+    assert_selector ".dummy-home h1", text: "Dummy host"
+    assert_equal "pinned=#{live.id}", URI(page.current_url).query
+  ensure
+    ActionController::Base.allow_forgery_protection = false
+  end
+
   # Starting a browser once tells whether this machine can run these.
   def self.chrome?
     return @chrome if defined?(@chrome)
@@ -166,15 +291,37 @@ class MessageMenuBrowserTest < ActionDispatch::SystemTestCase
     %w[1 true yes].include?(ENV["CI"].to_s.downcase)
   end
 
-  def open_thread
+  def open_thread(visit_thread: true)
     visit "/"
     page.evaluate_async_script(<<~JS, @alice.to_global_id.to_s)
       const done = arguments[arguments.length - 1];
       localStorage.clear();
       fetch("/test_login", { method: "POST", body: new URLSearchParams({ messager_gid: arguments[0] }) }).then(() => done());
     JS
+    return unless visit_thread
+
     visit "/messages/#{@conversation.id}"
     assert_selector "##{dom_id(@mine)}.chats-message--own" # the thread controller has classified the bubbles
+  end
+
+  # What a broadcast hands the page: the bubble rendered once, by the host's renderer.
+  def bubble_html(message)
+    ApplicationController.render(partial: "chats/messages/message", locals: { message: message.reload })
+  end
+
+  def replace_bubble(message)
+    page.execute_script("document.getElementById(arguments[0]).querySelector('[data-chats-message-menu-trigger]')" \
+                        ".dataset.stale = 'old'", dom_id(message))
+    stream("replace", dom_id(message), bubble_html(message))
+  end
+
+  def stream(action, target, html = "")
+    markup = %(<turbo-stream action="#{action}" target="#{target}"><template>#{html}</template></turbo-stream>)
+    page.execute_script("Turbo.renderStreamMessage(arguments[0])", markup)
+  end
+
+  def active_text
+    page.evaluate_script("document.activeElement.textContent.trim()")
   end
 
   def press(key)

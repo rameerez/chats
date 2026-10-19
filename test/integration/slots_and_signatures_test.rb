@@ -44,11 +44,14 @@ class SlotsAndSignaturesTest < ActionDispatch::IntegrationTest
     get "/messages/#{conversation.id}"
 
     menu = css_select("##{ActionView::RecordIdentifier.dom_id(message)} template[data-chats-message-menu]").first
-    items = Nokogiri::HTML::DocumentFragment.parse(menu.inner_html).css(".chats-popup__menu > *")
-    assert_equal "message_menu", items.last["data-dummy-slot"], "the host's item comes last"
-    assert_equal "/?reported=#{message.id}", items.last["href"]
-    assert_equal "true", items.last["data-chats-other-only"]
-    assert_operator items.size, :>, 1, "the gem's own items are still there"
+    items = Nokogiri::HTML::DocumentFragment.parse(menu.inner_html).css(".chats-popup__menu > *").to_a
+    assert_equal %w[message_menu message_menu_form], items.last(2).map { |item| item["data-dummy-slot"] },
+                 "the host's items come last"
+    report, pin = items.last(2)
+    assert_equal "/?reported=#{message.id}", report["href"]
+    assert_equal "true", report["data-chats-other-only"]
+    assert_equal "/test_pin/#{message.id}", pin["action"]
+    assert_operator items.size, :>, 2, "the gem's own items are still there"
   end
 
   test "the message_menu slot renders in a broadcast bubble too" do

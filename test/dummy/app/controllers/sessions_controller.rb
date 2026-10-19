@@ -19,6 +19,13 @@ class SessionsController < ApplicationController
     @dock_options[:launcher] = false if params[:dock_launcher] == "0"
   end
 
+  # What the message_menu fixture's Pin posts to: back home, saying so. With
+  # forgery protection on (one browser test turns it on), reaching this at
+  # all proves the cloned form's token was accepted.
+  def pin
+    redirect_to "/?pinned=#{params[:id].to_i}", status: :see_other
+  end
+
   # Any status, for the browser tests of a window whose load fails.
   def status
     head params[:status].to_i

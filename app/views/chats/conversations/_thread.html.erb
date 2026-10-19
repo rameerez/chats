@@ -95,9 +95,12 @@
       pressed bubble's clone morphs to the center, the reactions pill sits
       above it and the contextual menu below. Slots are filled by cloning
       the bubble's <template data-chats-message-menu>. %>
+  <%# Modal on every screen (the backdrop covers the thread; a tap or a
+      click on it closes): chats--thread keeps the focus inside while open. %>
   <div class="chats-popup"
        role="dialog"
        aria-modal="true"
+       aria-label="<%= t("chats.message.menu") %>"
        data-chats--thread-target="popup"
        hidden>
     <div class="chats-popup__backdrop" data-action="click->chats--thread#closePopup"></div>

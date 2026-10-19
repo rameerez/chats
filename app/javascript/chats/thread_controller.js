@@ -142,6 +142,18 @@ export default class extends Controller {
     this.element.addEventListener("chats:caught-up", this.caughtUp)
     this.stopRecovery = recoverMissedBroadcasts(this.element, () => this.refreshThread(), { stale: () => this.stale })
     this.watchScreenPresence()
+    // Which message's "⋯" has the focus, so a stream replacing (or
+    // removing) that bubble can hand it on instead of dropping it on the
+    // body. focusin, because a removed element's focus leaves silently; a
+    // pointer press means the reader moved on.
+    this.trackMenuFocus = (event) => {
+      const trigger = event.target.closest?.("[data-chats-message-menu-trigger]")
+      this.focusedMenuMessage = trigger && this.element.contains(trigger) ? trigger.closest(".chats-message") : null
+      if (this.focusedMenuMessage) this.setMenuTabStop(trigger)
+    }
+    this.forgetMenuFocus = () => { this.focusedMenuMessage = null }
+    document.addEventListener("focusin", this.trackMenuFocus)
+    document.addEventListener("pointerdown", this.forgetMenuFocus, true)
   }
 
   disconnect() {
@@ -164,6 +176,8 @@ export default class extends Controller {
     this.presenceObserver?.disconnect()
     this.gate?.removeEventListener("chats:activated", this.flushPendingRead)
     this.element.removeEventListener("click", this.suppressClickCapture, true)
+    document.removeEventListener("focusin", this.trackMenuFocus)
+    document.removeEventListener("pointerdown", this.forgetMenuFocus, true)
     clearTimeout(this.pressTimer)
     this.teardownPopup()
     clearTimeout(this.typingTimer)
@@ -176,9 +190,17 @@ export default class extends Controller {
 
   // The tab stop left with its bubble (removed, trimmed): the newest takes over.
   messageTargetDisconnected(element) {
-    if (!this.menuTabStop || !element.contains(this.menuTabStop)) return
-    this.menuTabStop = null
-    this.syncMenuTabStop()
+    if (this.menuTabStop && element.contains(this.menuTabStop)) {
+      this.menuTabStop = null
+      this.syncMenuTabStop()
+    }
+    // The focused "⋯" went with its bubble (an edit, a reaction, a
+    // deletion broadcast): once the stream is done, the focus goes to the
+    // same message's new "⋯", or the nearest message's if it is gone.
+    if (element === this.focusedMenuMessage && this.focusDropped()) {
+      this.focusedMenuMessage = null
+      requestAnimationFrame(() => this.refocusMenu(element))
+    }
   }
 
   messageTargetConnected(element) {
@@ -890,6 +912,26 @@ export default class extends Controller {
     if (trigger) trigger.tabIndex = 0
   }
 
+  focusDropped() {
+    return !document.activeElement || document.activeElement === document.body
+  }
+
+  // The bubble that replaced `gone` (same id), else the message created
+  // nearest before it, else the one after.
+  refocusMenu(gone) {
+    if (!this.focusDropped()) return
+
+    const created = Number(gone.dataset.createdAtUs)
+    const messages = this.messageTargets.filter((message) => message.querySelector("[data-chats-message-menu-trigger]"))
+    const same = messages.find((message) => message.id === gone.id)
+    const before = messages.filter((message) => Number(message.dataset.createdAtUs) <= created).pop()
+    const after = messages.find((message) => Number(message.dataset.createdAtUs) > created)
+    const trigger = (same || before || after)?.querySelector("[data-chats-message-menu-trigger]")
+    if (!trigger) return
+    this.setMenuTabStop(trigger)
+    trigger.focus({ preventScroll: true })
+  }
+
   moveMenuFocus(event) {
     const step = { ArrowUp: -1, ArrowDown: 1 }[event.key]
     if (!step) return
@@ -915,7 +957,7 @@ export default class extends Controller {
     if (!this.popupOpenFor) return
 
     this.setMenuTabStop(event.currentTarget)
-    this.popupReturnFocus = event.currentTarget
+    this.popupReturnFocus = { trigger: event.currentTarget, message: bubble.id }
     const first = this.popupMenuTarget.querySelector(".chats-popup__item") ||
                   this.popupReactionsTarget.querySelector(".chats-popup__reaction")
     first?.focus({ preventScroll: true })
@@ -1004,8 +1046,44 @@ export default class extends Controller {
 
     this.popupKeydown = (event) => {
       if (event.key === "Escape") this.closePopup()
+      else if (event.key === "Tab") this.cyclePopupFocus(event)
+      else if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) this.moveInPopupMenu(event)
     }
     document.addEventListener("keydown", this.popupKeydown)
+  }
+
+  // The popup is modal (role="dialog" aria-modal, on touch as on a desk:
+  // its backdrop covers the thread and a tap on it closes the menu), so the
+  // focus stays in it: Tab / Shift+Tab cycle the reactions and the menu's
+  // items, never reaching the page behind, nor the lifted bubble's clone
+  // (a picture of the message, not a control).
+  popupControls() {
+    return [...this.popupReactionsTarget.querySelectorAll(".chats-popup__reaction"),
+            ...this.popupMenuTarget.querySelectorAll(".chats-popup__item")]
+  }
+
+  cyclePopupFocus(event) {
+    event.preventDefault()
+    const controls = this.popupControls()
+    if (!controls.length) return
+
+    const step = event.shiftKey ? -1 : 1
+    const index = controls.indexOf(document.activeElement)
+    const next = index === -1 ? (step > 0 ? 0 : controls.length - 1) : (index + step + controls.length) % controls.length
+    controls[next].focus()
+  }
+
+  // A menu's own keys (role="menu"): ArrowUp / ArrowDown along its items,
+  // round the ends, Home / End to the first and the last.
+  moveInPopupMenu(event) {
+    const items = [...this.popupMenuTarget.querySelectorAll(".chats-popup__item")]
+    const index = items.indexOf(document.activeElement)
+    if (index === -1) return
+
+    event.preventDefault()
+    const last = items.length - 1
+    const next = { ArrowUp: index === 0 ? last : index - 1, ArrowDown: index === last ? 0 : index + 1, Home: 0, End: last }
+    items[next[event.key]].focus()
   }
 
   closePopup() {
@@ -1031,10 +1109,14 @@ export default class extends Controller {
     document.removeEventListener("keydown", this.popupKeydown)
     // Back to the "⋯" the menu was opened from, if the focus is still in
     // the popup (or was dropped on the page by a click on the backdrop).
-    const returnFocus = this.popupReturnFocus
+    // A trigger replaced while the menu was open (a reaction chosen from
+    // it re-renders the bubble) is found again by its message's id.
+    const opener = this.popupReturnFocus
     const focused = document.activeElement
     this.popupReturnFocus = null
-    if (returnFocus?.isConnected && (!focused || focused === document.body || this.popupTarget.contains(focused))) {
+    const returnFocus = opener?.trigger.isConnected ? opener.trigger : opener &&
+      this.element.querySelector(`#${CSS.escape(opener.message)} [data-chats-message-menu-trigger]`)
+    if (returnFocus && (!focused || focused === document.body || this.popupTarget.contains(focused))) {
       returnFocus.focus({ preventScroll: true })
     }
   }

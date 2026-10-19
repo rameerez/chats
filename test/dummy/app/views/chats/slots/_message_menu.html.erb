@@ -1,7 +1,13 @@
-<%# Slot fixture: a host's item in a message's menu, the way a Report is
-    added. A plain link (it survives the popup's clone of the template), off
-    the viewer's own messages (data-chats-other-only), and out of whatever
-    frame the thread sits in (the two-pane page's pane is one). %>
+<%# Slot fixture: a host's items in a message's menu, the two kinds an item
+    can be. Both survive the popup's clone of the template, and both leave
+    whatever frame the thread sits in (the two-pane page's pane is one):
+      * a link, the way a Report is added, kept off the viewer's own
+        messages (data-chats-other-only);
+      * a button_to form (Pin), whose POST must pass forgery protection from
+        inside the clone. %>
 <%= link_to "Report", "/?reported=#{message.id}",
       class: "chats-popup__item", role: "menuitem",
       data: { dummy_slot: "message_menu", chats_other_only: true, turbo_frame: "_top" } %>
+<%= button_to "Pin", "/test_pin/#{message.id}",
+      class: "chats-popup__item", role: "menuitem",
+      form: { data: { dummy_slot: "message_menu_form", turbo_frame: "_top" } } %>

@@ -12,11 +12,12 @@ module Chats
     # `message_menu` renders inside a <template>: a message's menu
     # (long-press, right-click, the desktop "⋯"), which chats--thread
     # CLONES into the popup. Items are `chats-popup__item` links or
-    # `button_to` forms (both survive the clone; a form's CSRF token is baked
-    # in), and the partial gets `message:` only: the bubble is one render per
-    # broadcast for every viewer. `data-chats-other-only` keeps an item off
-    # the viewer's own messages (a Report), `data-chats-own-only` off the
-    # others'. A link leaving the thread wants `data-turbo-frame="_top"`.
+    # `button_to` forms (both survive the clone; Turbo submits a form with
+    # the page's CSRF token), and the partial gets `message:` only: the
+    # bubble is one render per broadcast for every viewer.
+    # `data-chats-other-only` keeps an item off the viewer's own messages
+    # (a Report), `data-chats-own-only` off the others'. A link leaving the
+    # thread wants `data-turbo-frame="_top"`.
     SLOTS = %w[
       inbox_top
       inbox_empty
