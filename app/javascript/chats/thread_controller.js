@@ -90,6 +90,7 @@ export default class extends Controller {
     daySeparatorClass: { type: String, default: "chats-day-separator" },
     typingSuffix: String,
     copiedLabel: String,
+    menuLabel: String,
     group: Boolean,
     readPending: Boolean
   }
@@ -115,6 +116,7 @@ export default class extends Controller {
       this.renderReceipts()
       this.renderDaySeparators()
       this.renderMessageGroups()
+      this.syncMenuTabStop()
       if (this.readPendingValue) this.queueRead()
     })
 
@@ -172,10 +174,18 @@ export default class extends Controller {
 
   // --- Bubbles ---------------------------------------------------------------
 
+  // The tab stop left with its bubble (removed, trimmed): the newest takes over.
+  messageTargetDisconnected(element) {
+    if (!this.menuTabStop || !element.contains(this.menuTabStop)) return
+    this.menuTabStop = null
+    this.syncMenuTabStop()
+  }
+
   messageTargetConnected(element) {
     this.trackLegacyCursor(element)
     this.classify(element)
     if (this.booting) return
+    this.syncMenuTabStop()
     // Live appends can land out of order (multi-worker hosts broadcast from
     // concurrent jobs). Re-slot the bubble if its predecessor is newer; the
     // move re-fires this callback, which then proceeds in order.
@@ -208,6 +218,11 @@ export default class extends Controller {
   classify(element) {
     const own = element.dataset.senderKey && element.dataset.senderKey === this.meValue
     element.classList.toggle("chats-message--own", own)
+
+    // The "⋯" trigger's name in the READER's language: the bubble may be
+    // a broadcast rendered in the sender's.
+    const trigger = element.querySelector("[data-chats-message-menu-trigger]")
+    if (trigger && this.menuLabelValue) trigger.setAttribute("aria-label", this.menuLabelValue)
 
     const receipt = element.querySelector("[data-chats-message-receipt]")
     const label = element.querySelector("[data-chats-message-receipt-label]")
@@ -855,6 +870,57 @@ export default class extends Controller {
     if (!this.popupOpenFor) this.openPopup(bubble)
   }
 
+  // The "⋯" buttons are ONE tab stop for the thread (roving tabindex):
+  // all render tabindex="-1" and this keeps one at 0, the newest message's
+  // or the one the keyboard is on, so a long thread never puts hundreds of
+  // stops before its composer. ArrowUp / ArrowDown move along them.
+  // https://www.w3.org/WAI/ARIA/apg/practices/keyboard-interface/#kbd_roving_tabindex
+  syncMenuTabStop() {
+    const stop = this.menuTabStop
+    if (stop?.isConnected && document.activeElement === stop) return
+
+    const triggers = this.element.querySelectorAll("[data-chats-message-menu-trigger]")
+    this.setMenuTabStop(triggers[triggers.length - 1])
+  }
+
+  setMenuTabStop(trigger) {
+    if (this.menuTabStop === trigger) return
+    if (this.menuTabStop) this.menuTabStop.tabIndex = -1
+    this.menuTabStop = trigger
+    if (trigger) trigger.tabIndex = 0
+  }
+
+  moveMenuFocus(event) {
+    const step = { ArrowUp: -1, ArrowDown: 1 }[event.key]
+    if (!step) return
+
+    event.preventDefault()
+    const triggers = [...this.element.querySelectorAll("[data-chats-message-menu-trigger]")]
+    const next = triggers[triggers.indexOf(event.currentTarget) + step]
+    if (!next) return
+    this.setMenuTabStop(next)
+    next.focus()
+  }
+
+  // The bubble's "⋯" (desktop only, see chats.css): a click, Enter or
+  // Space opens the popup with the focus in the menu, and closing gives it
+  // back. Nothing to suppress: this click IS the gesture.
+  openMenu(event) {
+    const bubble = event.currentTarget.closest(".chats-message")
+    if (!bubble || this.popupOpenFor) return
+
+    event.preventDefault()
+    this.openPopup(bubble)
+    this.suppressNextClick = false
+    if (!this.popupOpenFor) return
+
+    this.setMenuTabStop(event.currentTarget)
+    this.popupReturnFocus = event.currentTarget
+    const first = this.popupMenuTarget.querySelector(".chats-popup__item") ||
+                  this.popupReactionsTarget.querySelector(".chats-popup__reaction")
+    first?.focus({ preventScroll: true })
+  }
+
   openPopup(bubble) {
     this.cancelPress()
     if (!this.hasPopupTarget) return
@@ -872,7 +938,10 @@ export default class extends Controller {
     if (own) content.querySelectorAll("[data-chats-other-only]").forEach((node) => node.remove())
 
     const reactions = content.querySelector(".chats-popup__reactions")
-    const menu = content.querySelector(".chats-popup__menu")
+    // A menu the gates emptied (a photo's, foreign, with nothing of the
+    // host's left for it) is no menu at all, not an empty card.
+    let menu = content.querySelector(".chats-popup__menu")
+    if (menu && !menu.firstElementChild) menu = null
     this.popupReactionsTarget.replaceChildren(...(reactions ? [reactions] : []))
     this.popupMenuTarget.replaceChildren(...(menu ? [menu] : []))
 
@@ -960,6 +1029,14 @@ export default class extends Controller {
     clearTimeout(this.popupCloseTimer)
     this.popupCloseTimer = setTimeout(() => this.teardownPopup(visual), POPUP_TRANSITION_MS)
     document.removeEventListener("keydown", this.popupKeydown)
+    // Back to the "⋯" the menu was opened from, if the focus is still in
+    // the popup (or was dropped on the page by a click on the backdrop).
+    const returnFocus = this.popupReturnFocus
+    const focused = document.activeElement
+    this.popupReturnFocus = null
+    if (returnFocus?.isConnected && (!focused || focused === document.body || this.popupTarget.contains(focused))) {
+      returnFocus.focus({ preventScroll: true })
+    }
   }
 
   teardownPopup(visual = this.popupVisual) {
@@ -982,7 +1059,7 @@ export default class extends Controller {
   }
 
   popupMenuClicked(event) {
-    const item = event.target.closest("[data-chats-action], form button, form input[type=submit]")
+    const item = event.target.closest("[data-chats-action], form button, form input[type=submit], a[href]")
     if (!item) return
 
     const action = item.dataset.chatsAction
@@ -993,9 +1070,11 @@ export default class extends Controller {
       event.preventDefault()
       this.beginEditFromPopup()
     } else {
-      // A real form submission (reaction toggle, delete): let it fire, then
-      // get out of the way — Telegram closes on selection too. The cloned
-      // form's request has already started by the time we tear down.
+      // A real form submission (reaction toggle, delete, a host's
+      // button_to) or a host's link: let it fire, then get out of the way —
+      // Telegram closes on selection too. The request (or visit) has started
+      // by the time we tear down; a dock's popup would else ride along to
+      // the next page.
       setTimeout(() => this.closePopup(), 60)
     }
   }

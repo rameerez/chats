@@ -8,6 +8,15 @@ module Chats
     # Every slot the bundled views render, and the whole list of them. A
     # host drops `app/views/chats/slots/_<name>.html.erb` in and it appears;
     # a name that isn't here renders nothing.
+    #
+    # `message_menu` renders inside a <template>: a message's menu
+    # (long-press, right-click, the desktop "⋯"), which chats--thread
+    # CLONES into the popup. Items are `chats-popup__item` links or
+    # `button_to` forms (both survive the clone; a form's CSRF token is baked
+    # in), and the partial gets `message:` only: the bubble is one render per
+    # broadcast for every viewer. `data-chats-other-only` keeps an item off
+    # the viewer's own messages (a Report), `data-chats-own-only` off the
+    # others'. A link leaving the thread wants `data-turbo-frame="_top"`.
     SLOTS = %w[
       inbox_top
       inbox_empty
@@ -15,6 +24,7 @@ module Chats
       composer_actions
       locked_composer
       message_meta
+      message_menu
       dock_panel_footer
     ].freeze
 
@@ -299,7 +309,8 @@ module Chats
     #   app/views/chats/slots/_inbox_top.html.erb
     #
     # The slots: inbox_top, inbox_empty, conversation_header_actions,
-    # composer_actions, locked_composer, message_meta, dock_panel_footer.
+    # composer_actions, locked_composer, message_meta, message_menu,
+    # dock_panel_footer.
     def chats_slot(name, **locals)
       return unless chats_slot?(name)
 

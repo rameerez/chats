@@ -345,7 +345,8 @@ turbo-frame[id^="chats_page_"] {
 .chats-message--continuation { margin-top: 0.15rem; }
 .chats-message__avatar { width: 1.9rem; height: 1.9rem; font-size: 0.7rem; }
 .chats-message__content { display: flex; flex-direction: column; min-width: 0; }
-.chats-message__bubble-row { display: flex; align-items: flex-end; gap: 0.5rem; }
+/* relative: the anchor of the menu's "⋯" (see the popup section). */
+.chats-message__bubble-row { position: relative; display: flex; align-items: flex-end; gap: 0.5rem; }
 .chats-message__sender {
   font-size: 0.72rem;
   font-weight: 700;
@@ -719,6 +720,43 @@ turbo-frame[id^="chats_page_"] {
 }
 .chats-popup__item:hover { background: var(--chats-surface); }
 .chats-popup__item--danger { color: #dc2626; }
+
+/* The menu's desktop door: "⋯" on the bubble's inner edge, shown while
+   the pointer is on the message or the button has keyboard focus. A fine,
+   hovering pointer only: a touch screen long-presses. Absolutely placed, so
+   no bubble moves; the transparent border is hit area touching the bubble,
+   so the pointer never crosses a gap that would un-hover it. */
+.chats-message__menu-trigger { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .chats-message__menu-trigger {
+    position: absolute;
+    top: 50%;
+    left: 100%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    padding: 0;
+    border: 0.25rem solid transparent;
+    border-radius: 999px;
+    background: none;
+    background-clip: padding-box;
+    color: var(--chats-text-muted);
+    font: inherit;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .chats-message--own .chats-message__menu-trigger { left: auto; right: 100%; }
+  .chats-message:hover .chats-message__menu-trigger,
+  .chats-message__menu-trigger:focus-visible { opacity: 1; }
+  .chats-message__menu-trigger:hover { background-color: var(--chats-surface); color: var(--chats-text); }
+  .chats-message__menu-trigger:focus-visible { outline: 2px solid var(--chats-accent); outline-offset: -0.25rem; }
+}
 
 /* --- Seen + typing --------------------------------------------------------------------- */
 

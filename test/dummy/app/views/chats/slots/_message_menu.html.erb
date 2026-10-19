@@ -1,0 +1,7 @@
+<%# Slot fixture: a host's item in a message's menu, the way a Report is
+    added. A plain link (it survives the popup's clone of the template), off
+    the viewer's own messages (data-chats-other-only), and out of whatever
+    frame the thread sits in (the two-pane page's pane is one). %>
+<%= link_to "Report", "/?reported=#{message.id}",
+      class: "chats-popup__item", role: "menuitem",
+      data: { dummy_slot: "message_menu", chats_other_only: true, turbo_frame: "_top" } %>
