@@ -1436,15 +1436,27 @@ turbo-frame[id^="chats_page_"] {
   align-items: flex-end;
   gap: var(--chats-dock-gap);
 }
+/* Emptied by a visit to a page that renders no items: no gap left behind. */
+.chats-tray:not(:has(.chats-tray__item)) { display: none; }
 .chats-tray__item {
   position: relative;
   flex-shrink: 0;
   padding-bottom: var(--chats-safe-bottom);
 }
+/* Never wider than what the corner leaves it: the screen less the insets and,
+   in the dock, the Messages panel beside it (a narrow desk, several items). */
 .chats-tray__item[open] {
-  width: var(--chats-tray-panel-width);
+  width: min(var(--chats-tray-panel-width),
+             calc(100vw - 2 * var(--chats-dock-inset) - var(--chats-dock-panel-width) - var(--chats-dock-gap)));
   height: min(var(--chats-tray-panel-height),
               calc(100dvh - var(--chats-dock-offset) - var(--chats-dock-top-clearance)));
+}
+/* A corner of its own has no panel beside it. (Desks only: a phone's sheet is
+   the whole screen, below.) */
+@media (min-width: 700px) and (min-height: 500px) {
+  .chats-dock--tray-only .chats-tray__item[open] {
+    width: min(var(--chats-tray-panel-width), calc(100vw - 2 * var(--chats-dock-inset)));
+  }
 }
 .chats-tray__item:not([open]) .chats-tray__launcher { padding: 0 14px 0 12px; gap: 8px; }
 .chats-tray__icon {

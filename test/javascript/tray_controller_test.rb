@@ -269,6 +269,27 @@ class TrayControllerTest < ActiveSupport::TestCase
         controller.syncSheet()
         assert.strictEqual(page.inert, false, "on a desk an open item is no sheet")
 
+        // --- a visit reconciles the carried tray with the new page's items, by key -----
+
+        const keyed = (key) => ({ dataset: { chatsTrayKey: key }, toggleAttribute() {}, removed: false, remove() { this.removed = true } })
+        const kept = keyed("support")
+        const gone = keyed("feedback")
+        let appended = []
+        controller = tray([kept, gone])
+        controller.element = { id: "chats_tray_items_alice", append: (node) => appended.push(node), closest: () => null }
+        global.document.importNode = (node) => ({ imported: node.dataset.chatsTrayKey })
+        const newPage = (keys) => ({
+          querySelector: (selector) => (selector === '[id="chats_tray_items_alice"]'
+            ? { querySelectorAll: () => keys.map((key) => ({ dataset: { chatsTrayKey: key } })) } : null)
+        })
+        controller.reconcile({ detail: { newBody: newPage(["support", "feedback"]) } })
+        assert.deepStrictEqual(appended, [], "the same items: nothing moves")
+        controller.reconcile({ detail: { newBody: newPage(["changelog", "support"]) } })
+        assert(gone.removed, "an item the new page doesn't render goes")
+        assert.deepStrictEqual(appended.map((node) => node.imported || node.dataset.chatsTrayKey), ["changelog", "support"],
+                               "a new one comes in, the one still there is kept as it is, in the page's order")
+        controller.reconcile({ detail: { newBody: { querySelector: () => null } } })
+
         // --- a browser refusing storage only forgets ----------------------------------
 
         storage = {

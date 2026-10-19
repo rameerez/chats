@@ -181,6 +181,32 @@ export default class extends Controller {
 
   // --- Pages ---------------------------------------------------------------
 
+  // A visit is about to render, and Turbo will keep this (permanent) tray
+  // rather than the one the new page rendered: make its items the new page's,
+  // by key. An item still there stays as it is (open, its frame, its badge);
+  // one the page no longer renders goes; a new one comes in, in its place.
+  reconcile(event) {
+    const find = (id) => event.detail?.newBody?.querySelector?.(`[id="${cssEscape(id)}"]`)
+    // The permanent element the tray rides in (the dock, or its own corner):
+    // only when the new page renders it too does Turbo carry this tray there.
+    const holder = this.element.closest("[data-turbo-permanent]")
+    const newHolder = holder ? find(holder.id) : find(this.element.id)
+    if (!newHolder) return
+
+    const incoming = holder ? newHolder.querySelector(`[id="${cssEscape(this.element.id)}"]`) : newHolder
+    const current = new Map(this.itemTargets.map((item) => [item.dataset.chatsTrayKey, item]))
+    const wanted = incoming ? Array.from(incoming.querySelectorAll(":scope > .chats-tray__item")) : []
+    const keys = new Set(wanted.map((item) => item.dataset.chatsTrayKey))
+    // The usual visit: the same items. Nothing moves (a move would reconnect their streams).
+    if (wanted.map((item) => item.dataset.chatsTrayKey).join("\n") === Array.from(current.keys()).join("\n")) return
+
+    current.forEach((item, key) => { if (!keys.has(key)) item.remove() })
+    wanted.forEach((item) => {
+      const kept = current.get(item.dataset.chatsTrayKey)
+      this.element.append(kept || document.importNode(item, true)) // in the new page's order
+    })
+  }
+
   // After every visit: on its own, hidden on the pages that hide the dock;
   // anywhere, no item keeps a thread the page now shows.
   pageChanged() {

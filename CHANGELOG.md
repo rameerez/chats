@@ -32,6 +32,12 @@ use it.**
   the same variables, holding only the items. Inside a `chats_dock` block it
   renders its items alone, so a launcher helper can always wrap itself in it.
   It hides on pages carrying `data-chats-dock-hide`, as the dock does.
+- **The tray follows the page it is carried to.** The dock and the tray-only
+  corner are `data-turbo-permanent`, so Turbo keeps the old tray on a visit;
+  `chats--tray` reconciles it with the items the new page rendered, by key: an
+  item still there keeps its state (open, its frame, its badge), one the page
+  no longer renders goes, a new one comes in. An open item is never wider than
+  the corner leaves it (the screen less the insets and the Messages panel).
 - **What an item's content can count on**, declared in markup: the read
   gate a dock window has (`data-chats-active`, `data-chats-minimized` while
   closed, `chats:activated` on open: a chats thread inside a closed item
@@ -55,7 +61,9 @@ use it.**
   `controllers/`): the page's `inert` and its scroll lock are held by owner,
   so one sheet closing never frees what another still holds. Same behaviour
   for the dock alone; a node the host made inert itself is still never
-  touched.
+  touched. Both release it before Turbo caches the page (`turbo:before-cache`)
+  and hold it again after the visit renders, so a cached snapshot never comes
+  back inert.
 - The engine test that checked the asset paths by directory name now checks
   the engine's own directories, so it passes from a checkout not named
   `chats`.

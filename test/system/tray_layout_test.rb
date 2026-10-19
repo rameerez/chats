@@ -140,7 +140,6 @@ class TrayLayoutTest < ActionDispatch::SystemTestCase
     assert_no_selector ".chats-tray__item[open]"
     assert_no_selector ".dummy-home[inert]", visible: :all # live again once it closes
     assert_no_selector "html.chats-dock-sheet-open", visible: :all
-
   end
 
   test "on a phone, launcher: false takes the tray's round buttons away with the dock's" do
@@ -148,6 +147,20 @@ class TrayLayoutTest < ActionDispatch::SystemTestCase
 
     assert_no_selector ".chats-tray__item", visible: true
     assert_no_selector ".chats-dock__panel", visible: true
+  end
+
+  test "a Turbo visit to a page that renders other items: the carried tray follows it, by key" do
+    sign_in_at(1280)
+    find(".chats-tray__launcher").click
+    assert_selector ".chats-tray__item[open]"
+
+    page.execute_script("Turbo.visit('/')") # the same item: carried as it is, still open
+    assert_selector ".chats-tray__item[open] .dummy-help"
+
+    page.driver.browser.manage.delete_cookie("dock_tray")
+    page.execute_script("Turbo.visit('/')") # a page without it: the permanent dock stays, the item goes
+    assert_selector ".chats-dock .chats-dock__bar"
+    assert_no_selector ".chats-tray__item", visible: :all
   end
 
   test "signed out, the tab stands alone in the corner" do
@@ -165,6 +178,13 @@ class TrayLayoutTest < ActionDispatch::SystemTestCase
     settle
     assert_selector ".chats-tray__item[open] .dummy-help"
     assert_in_delta 336, rect(".chats-tray__item")["width"], 1
+
+    resize(390, height: 844, mobile: true) # and on a phone, the whole screen
+    page.execute_script("document.querySelector('.chats-tray__item').open = false")
+    find(".chats-tray__launcher").click
+    settle
+    sheet = rect(".chats-tray__item")
+    assert_equal [0, 0, 390, 844], [sheet["left"], sheet["top"], sheet["width"], sheet["height"]].map(&:round)
   end
 
   # Starting a browser once tells whether this machine can run these.

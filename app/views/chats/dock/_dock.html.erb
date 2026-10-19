@@ -55,7 +55,8 @@
                 "turbo:before-stream-render@document->chats--dock#beforeStreamRender " \
                 "turbo:load@document->chats--dock#pageChanged turbo:render@document->chats--dock#pageChanged " \
                 "turbo:frame-load@document->chats--dock#pageFrameLoaded " \
-                "chats--tray:open->chats--dock#trayOpened"
+                "chats--tray:open->chats--dock#trayOpened " \
+                "turbo:before-cache@document->chats--dock#releaseSheet"
       } do %>
   <%= turbo_stream_from viewer, :chats_dock %>
   <%= render "chats/dock/signal" %>

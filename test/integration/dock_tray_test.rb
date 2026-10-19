@@ -39,6 +39,8 @@ class DockTrayTest < ActionDispatch::IntegrationTest
     end
     tray = css_select(".chats-dock > .chats-tray").first
     assert_equal "chats--tray", tray["data-controller"]
+    assert_equal "chats_tray_items_#{Chats.messager_key(@alice)}", tray["id"], "what a visit reconciles it by"
+    assert_includes tray["data-action"], "turbo:before-render@document->chats--tray#reconcile"
     assert_equal "tray", tray["data-chats--dock-target"], "the dock measures it for the windows' room"
     assert_equal Chats.messager_key(@alice), tray["data-chats--tray-owner-value"], "remembered per viewer"
     assert_equal "false", tray["data-chats--tray-standalone-value"], "the dock hides it and fits the viewport"
